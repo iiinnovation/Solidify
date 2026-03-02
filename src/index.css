@@ -1,0 +1,188 @@
+@import "tailwindcss";
+
+/* ===== Indeterminate progress bar ===== */
+@keyframes indeterminate {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(350%); }
+}
+
+/* ===== Tauri Window Drag Region ===== */
+/* 确保 Tauri 窗口可以拖动 */
+[data-tauri-drag-region] {
+  -webkit-app-region: drag;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* 拖动区域内的交互元素不可拖动 */
+[data-tauri-drag-region] button,
+[data-tauri-drag-region] input,
+[data-tauri-drag-region] a,
+[data-tauri-drag-region] [role="button"] {
+  -webkit-app-region: no-drag;
+}
+
+/* ===== Solidify Design Tokens ===== */
+
+:root {
+  --background: #FAFAF8;
+  --background-secondary: #F5F5F0;
+  --surface: #FFFFFF;
+  --surface-hover: #F9F9F6;
+  --surface-active: #F0F0EC;
+
+  --border: #E8E5DE;
+  --border-light: #F0EDE6;
+  --border-focus: #D4A574;
+
+  --text-primary: #1A1A1A;
+  --text-secondary: #6B6560;
+  --text-tertiary: #9B9590;
+  --text-inverse: #FFFFFF;
+  --text-link: #C47B3B;
+
+  --accent: #D4915E;
+  --accent-hover: #C47B3B;
+  --accent-light: #FDF4EC;
+  --accent-subtle: #F5E6D8;
+
+  --success: #5BA37C;
+  --success-light: #EDF7F0;
+  --warning: #D4915E;
+  --warning-light: #FDF4EC;
+  --error: #C75B5B;
+  --error-light: #FDF0F0;
+  --info: #5B8EC7;
+  --info-light: #EDF3FA;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.06);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.08);
+
+  --ease-default: cubic-bezier(0.25, 0.1, 0.25, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --duration-fast: 100ms;
+  --duration-normal: 200ms;
+  --duration-slow: 300ms;
+
+  color-scheme: light;
+}
+
+.dark {
+  --background: #1A1A18;
+  --background-secondary: #222220;
+  --surface: #2A2A28;
+  --surface-hover: #333330;
+  --surface-active: #3E3E3A;
+  --border: #3A3A36;
+  --border-light: #2E2E2A;
+  --border-focus: #D4A574;
+  --text-primary: #EDEDEB;
+  --text-secondary: #A0A09A;
+  --text-tertiary: #737370;
+  --text-inverse: #1A1A1A;
+  --text-link: #D4915E;
+  --accent-light: #3A2E22;
+  --accent-subtle: #332A20;
+  --success-light: #1E2E24;
+  --warning-light: #3A2E22;
+  --error-light: #3A2222;
+  --info-light: #222A3A;
+
+  color-scheme: dark;
+}
+
+/* ===== Tailwind v4 Theme ===== */
+
+@theme {
+  --color-background: var(--background);
+  --color-background-secondary: var(--background-secondary);
+  --color-surface: var(--surface);
+  --color-surface-hover: var(--surface-hover);
+  --color-surface-active: var(--surface-active);
+
+  --color-border: var(--border);
+  --color-border-light: var(--border-light);
+  --color-border-focus: var(--border-focus);
+
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-tertiary: var(--text-tertiary);
+  --color-text-inverse: var(--text-inverse);
+  --color-text-link: var(--text-link);
+
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-light: var(--accent-light);
+  --color-accent-subtle: var(--accent-subtle);
+
+  --color-success: var(--success);
+  --color-success-light: var(--success-light);
+  --color-warning: var(--warning);
+  --color-warning-light: var(--warning-light);
+  --color-error: var(--error);
+  --color-error-light: var(--error-light);
+  --color-info: var(--info);
+  --color-info-light: var(--info-light);
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.06);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.08);
+
+  --font-sans: 'Inter', 'SF Pro Display', -apple-system, BlinkMacSystemFont,
+    'Segoe UI', 'Noto Sans SC', sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', 'Consolas', monospace;
+}
+
+/* ===== Global Styles ===== */
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text-primary);
+  background-color: var(--background);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* 滚动条：极细，暖灰 */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+::-webkit-scrollbar:hover {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--border);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--text-tertiary);
+}
