@@ -39,26 +39,21 @@ Solidify 专为以下人群设计：
 
 ## 🚀 快速开始
 
-### 下载安装
+### 获取方式
 
-#### macOS
+本项目当前仅提供源码，不提供 macOS / Windows 安装包。
 
-```bash
-# 下载 DMG 安装包
-# 从 Releases 页面下载最新版本
-open Solidify_0.1.0_x64.dmg
-```
-
-#### Windows
+请下载源码后在本地自行打包：
 
 ```bash
-# 下载 MSI 安装包
-# 从 Releases 页面下载最新版本
+# Web 构建
+npm run build
+
+# 桌面端构建（Tauri）
+npm run tauri:build
 ```
 
-#### Web 版本
-
-访问 [https://solidify.app](https://solidify.app)（如果已部署）
+构建产物默认输出到 `dist/`（Web）和 `src-tauri/target/release/`（桌面端）。
 
 ### 配置 AI API
 
@@ -241,8 +236,8 @@ Solidify/
 ├── supabase/               # Supabase 配置
 │   ├── functions/         # Edge Functions
 │   └── migrations/        # 数据库迁移
-└── .claude/                # Claude Code 配置
-    └── skills/            # 技能文档
+├── docs/                   # 额外技术文档
+└── .github/                # GitHub 模板与工作流
 ```
 
 ## 🤝 贡献

@@ -39,26 +39,21 @@ Solidify is designed for:
 
 ## 🚀 Quick Start
 
-### Download & Install
+### Distribution
 
-#### macOS
+This project currently provides source code only, with no macOS or Windows installers.
 
-```bash
-# Download DMG installer
-# Get the latest version from Releases page
-open Solidify_0.1.0_x64.dmg
-```
-
-#### Windows
+Clone/download the project and build packages locally:
 
 ```bash
-# Download MSI installer
-# Get the latest version from Releases page
+# Web build
+npm run build
+
+# Desktop build (Tauri)
+npm run tauri:build
 ```
 
-#### Web Version
-
-Visit [https://solidify.app](https://solidify.app) (if deployed)
+Build outputs are generated in `dist/` (web) and `src-tauri/target/release/` (desktop).
 
 ### Configure AI API
 
@@ -241,8 +236,8 @@ Solidify/
 ├── supabase/               # Supabase config
 │   ├── functions/         # Edge Functions
 │   └── migrations/        # Database migrations
-└── .claude/                # Claude Code config
-    └── skills/            # Skill documentation
+├── docs/                   # Additional technical docs
+└── .github/                # GitHub templates and workflows
 ```
 
 ## 🤝 Contributing
