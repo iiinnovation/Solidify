@@ -90,7 +90,7 @@ npm run tauri:build
 ### 安装依赖
 
 ```bash
-git clone https://github.com/your-org/solidify.git
+git clone https://github.com/iiinnovation/Solidify.git
 cd solidify
 npm install
 ```
