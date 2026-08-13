@@ -48,7 +48,7 @@ M1-01/02/03 按照规格要求一起设计并提交，包含：
 | M1-04 | 上下文组装与消息构建 | `src/lib/engine/messages.ts` | 1pd | ✅ |
 | M1-05 | 多 Provider 架构 + 工具 schema 生成 | `src/lib/model/*` + `src/lib/engine/model.ts` | 1pd | ✅ |
 | M1-06 | SSE 解析扩展：支持工具调用增量 | `src/lib/engine/stream-parser.ts` | 1.5pd | ✅ |
-| M1-07 | Edge Function 透传 tools 参数 | `supabase/functions/_shared/ai-providers.ts`、`chat/index.ts` | 0.5pd | 🔲 |
+| M1-07 | Edge Function 透传 tools 参数 | `supabase/functions/_shared/ai-providers.ts`、`chat/index.ts` | 0.5pd | ✅ |
 
 **架构调整说明**：
 
@@ -69,6 +69,14 @@ M1-04/05 实际实现采用了更完整的架构方案：
 - Anthropic：`content_block_start` + `input_json_delta` + `content_block_stop`
 
 输出统一的 `QueryEvent` 格式（`tool_call_start`/`delta`/`end`），供上层消费。
+
+**M1-07 关键实现细节**：
+
+Edge Function 现在支持完整的工具调用流程：
+- 请求体新增 `tools?: ToolDefinition[]` 参数
+- 透传给 provider 的 `createCompletion()` 方法
+- Provider 内部转换为各自的格式（Anthropic/OpenAI）
+- 修复了测试中的类型问题，使 `convertMessages/convertTools` 可测试
 
 ### C. 查询循环（7 pd）
 
