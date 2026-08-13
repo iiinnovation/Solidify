@@ -80,14 +80,37 @@ Edge Function 现在支持完整的工具调用流程：
 
 ### C. 查询循环（7 pd）
 
-| # | 任务 | 产出文件 | 估时 |
-|---|---|---|---|
-| M1-08 | 主循环 async generator | `src/lib/engine/query-loop.ts` | 2pd |
-| M1-09 | 上下文组装 + 裁剪策略 | `src/lib/engine/build-context.ts` | 1.5pd |
-| M1-10 | 大结果句柄化 | `src/lib/engine/handle-store.ts` | 1pd |
-| M1-11 | Tombstoning 全套场景 | `src/lib/engine/tombstone.ts` | 1pd |
-| M1-12 | 中断：AbortSignal 贯穿 + finally 清理 | 循环内 | 1pd |
-| M1-13 | 会话快照与恢复（jsonl 追加） | `src/lib/engine/snapshot.ts` | 0.5pd |
+| # | 任务 | 产出文件 | 估时 | 状态 |
+|---|---|---|---|---|
+| M1-08 | 主循环 async generator | `src/lib/engine/query.ts` | 2pd | ✅ |
+| M1-09 | 上下文组装 + 裁剪策略 | `src/lib/engine/context-budget.ts` | 1.5pd | ✅ |
+| M1-10 | 大结果句柄化 | `src/lib/engine/handle-store.ts` | 1pd | ⏳ 部分 |
+| M1-11 | Tombstoning 全套场景 | 分布式实现，见说明 | 1pd | ✅ |
+| M1-12 | 中断：AbortSignal 贯穿 + finally 清理 | 循环内 | 1pd | |
+| M1-13 | 会话快照与恢复（jsonl 追加） | `src/lib/engine/snapshot.ts` | 0.5pd | |
+
+**实现说明**：
+
+产出文件与计划名不同：主循环在 `query.ts`（非 `query-loop.ts`），上下文组装在 `context-budget.ts` + `messages.ts`（非 `build-context.ts`）。
+
+**Stop reason 处理**（commit 00a8fcc，提交信息误标为 M1-10）：属于规格 §1 的循环逻辑 —— 提取 Anthropic `stop_reason` 映射为统一 `StopReason` 类型，主循环区分模型级 token 耗尽（`stop_reason: max_tokens`）与预算级耗尽（`RunLimits.maxTokens`）。
+
+**M1-10 现状**：`context-budget.ts` 的 `handleizeLargeResult()` 已做超过 8KB 的内联截断兜底，但完整的句柄存储/取回（`handle-store.ts`）依赖 M2 的存储层，暂缓。
+
+**M1-11 关键实现细节**：
+
+规格 §3 的 4 个场景全部落地，墓碑逻辑就近实现在各发生点而非集中在 `tombstone.ts`：
+
+| 场景 | 位置 | 处理 |
+|---|---|---|
+| `tool_use` 参数缺失必填项 | `query.ts` `executeTools()` | 墓碑 + 校验错误回灌（完整 JSON Schema 校验留给 M1-14） |
+| 未知工具名 | `query.ts` `executeTools()` | 墓碑 + 回灌可用工具列表让模型自纠 |
+| SSE 帧解析失败 / 工具输入 JSON 畸形 | `anthropic.ts` 产出 `recoverable` 错误 → `query.ts` 转墓碑跳过 | 会话不中断，账本记录 |
+| 孤儿 tool_result | `context-budget.ts` `removeOrphanToolResults()` | 从上下文剔除（事件流集成留 M1-14 TODO） |
+
+配套改动：
+- `ModelError` 增加 `kind`（parse/validation/network/auth）与 `recoverable` 字段，`query.ts` 据此区分「墓碑跳过」与「致命抛出」
+- 修复 `anthropic.ts` 两处阻塞性 bug：`tool_call_delta` 误用 `event.index` 作 id 导致增量无法归并到 `content_block.id` 开启的调用；`content_block_stop` 从不产出 `tool_call_end` 导致工具调用永远无法完成
 
 ### D. 工具执行（3 pd）
 

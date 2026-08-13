@@ -62,6 +62,10 @@ export interface ModelError {
   message: string
   type: 'api_error' | 'rate_limit' | 'invalid_request' | 'timeout' | 'network' | 'unknown'
   retryable: boolean
+  /** M1-11: Error kind for tombstoning */
+  kind?: 'parse' | 'validation' | 'network' | 'auth'
+  /** M1-11: Whether error is recoverable (skip and continue) */
+  recoverable?: boolean
 }
 
 /**

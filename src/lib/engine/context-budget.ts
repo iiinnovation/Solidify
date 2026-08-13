@@ -136,6 +136,7 @@ export function trimMessages(
 
 /**
  * Process messages with budget constraints
+ * - Remove orphan tool_result (M1-11 tombstoning)
  * - Handleize large tool results
  * - Trim old messages if needed
  */
@@ -145,8 +146,15 @@ export function applyBudget(
 ): ClaudeMessage[] {
   const budget = calculateBudget(ctx)
 
-  // Step 1: Handleize large tool results
-  const processedMessages = messages.map(msg => {
+  // Step 1: M1-11 - Detect and remove orphan tool_results
+  const { cleanedMessages, orphanCount } = removeOrphanToolResults(messages)
+  if (orphanCount > 0) {
+    console.warn(`[context-budget] Removed ${orphanCount} orphan tool_result(s)`)
+    // TODO M1-14: Emit tombstone event when integrated with event stream
+  }
+
+  // Step 2: Handleize large tool results
+  const processedMessages = cleanedMessages.map(msg => {
     if (typeof msg.content === 'string') {
       return msg
     }
@@ -166,13 +174,13 @@ export function applyBudget(
     return { ...msg, content: processedContent }
   })
 
-  // Step 2: Calculate current usage
+  // Step 3: Calculate current usage
   const currentTokens = processedMessages.reduce(
     (sum, msg) => sum + estimateMessageTokens(msg.content),
     0,
   )
 
-  // Step 3: Trim if over budget
+  // Step 4: Trim if over budget
   if (currentTokens > budget.available) {
     console.debug(
       `[context-budget] Trimming messages: ${currentTokens} > ${budget.available}`,
@@ -181,6 +189,52 @@ export function applyBudget(
   }
 
   return processedMessages
+}
+
+/**
+ * Remove orphan tool_result blocks that don't have corresponding tool_use
+ * M1-11: Tombstoning strategy
+ */
+function removeOrphanToolResults(
+  messages: ClaudeMessage[],
+): { cleanedMessages: ClaudeMessage[]; orphanCount: number } {
+  // Collect all tool_use IDs
+  const toolUseIds = new Set<string>()
+  for (const msg of messages) {
+    if (typeof msg.content !== 'string') {
+      for (const part of msg.content) {
+        if (part.type === 'tool_use') {
+          toolUseIds.add(part.id)
+        }
+      }
+    }
+  }
+
+  // Filter out orphan tool_results
+  let orphanCount = 0
+  const cleanedMessages = messages.map(msg => {
+    if (typeof msg.content === 'string') {
+      return msg
+    }
+
+    const filteredContent = msg.content.filter(part => {
+      if (part.type === 'tool_result') {
+        const hasParent = toolUseIds.has(part.tool_use_id)
+        if (!hasParent) {
+          orphanCount++
+          console.debug(
+            `[context-budget] Orphan tool_result detected: ${part.tool_use_id}`,
+          )
+          return false // Remove orphan
+        }
+      }
+      return true
+    })
+
+    return { ...msg, content: filteredContent }
+  })
+
+  return { cleanedMessages, orphanCount }
 }
 
 /**

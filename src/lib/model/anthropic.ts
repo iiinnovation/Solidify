@@ -65,73 +65,127 @@ export class AnthropicProvider implements ModelProvider {
 
       yield { type: 'message_start' }
 
+      // Track tool_use blocks by stream index to accumulate input JSON
+      const toolBlocks = new Map<number, { id: string; json: string }>()
+
       // Convert Anthropic events to unified format
       for await (const event of stream) {
-        switch (event.type) {
-          case 'content_block_start':
-            if (event.content_block.type === 'text') {
-              yield { type: 'content_start' }
-            } else if (event.content_block.type === 'tool_use') {
-              yield {
-                type: 'tool_call_start',
-                id: event.content_block.id,
-                name: event.content_block.name,
+        try {
+          switch (event.type) {
+            case 'content_block_start':
+              if (event.content_block.type === 'text') {
+                yield { type: 'content_start' }
+              } else if (event.content_block.type === 'tool_use') {
+                toolBlocks.set(event.index, {
+                  id: event.content_block.id,
+                  json: '',
+                })
+                yield {
+                  type: 'tool_call_start',
+                  id: event.content_block.id,
+                  name: event.content_block.name,
+                }
               }
-            }
-            break
+              break
 
-          case 'content_block_delta':
-            if (event.delta.type === 'text_delta') {
-              yield { type: 'content_delta', delta: event.delta.text }
-            } else if (event.delta.type === 'input_json_delta') {
-              yield {
-                type: 'tool_call_delta',
-                id: event.index.toString(),
-                delta: event.delta.partial_json,
+            case 'content_block_delta':
+              if (event.delta.type === 'text_delta') {
+                yield { type: 'content_delta', delta: event.delta.text }
+              } else if (event.delta.type === 'input_json_delta') {
+                const block = toolBlocks.get(event.index)
+                if (block) {
+                  block.json += event.delta.partial_json
+                  yield {
+                    type: 'tool_call_delta',
+                    id: block.id,
+                    delta: event.delta.partial_json,
+                  }
+                }
               }
+              break
+
+            case 'content_block_stop': {
+              const block = toolBlocks.get(event.index)
+              if (block) {
+                toolBlocks.delete(event.index)
+                try {
+                  // Empty input (tool with no args) parses as {}
+                  const input = block.json.trim() ? JSON.parse(block.json) : {}
+                  yield { type: 'tool_call_end', id: block.id, input }
+                } catch {
+                  // M1-11: Malformed tool input JSON - recoverable, tombstoned upstream
+                  yield {
+                    type: 'error',
+                    error: {
+                      code: 'tool_input_parse_error',
+                      message: `Failed to parse tool input JSON for call ${block.id}`,
+                      type: 'unknown',
+                      retryable: false,
+                      kind: 'parse',
+                      recoverable: true,
+                    },
+                  }
+                }
+              } else {
+                yield { type: 'content_end' }
+              }
+              break
             }
-            break
 
-          case 'content_block_stop':
-            // Content block ended
-            break
+            case 'message_delta':
+              // Message delta (usage updates)
+              break
 
-          case 'message_delta':
-            // Message delta (usage updates)
-            break
+            case 'message_stop': {
+              const finalMessage = await stream.finalMessage()
 
-          case 'message_stop': {
-            const finalMessage = await stream.finalMessage()
+              // Map Anthropic stop_reason to unified format
+              let stopReason: 'end_turn' | 'max_tokens' | 'stop_sequence' | 'tool_use' | undefined
+              switch (finalMessage.stop_reason) {
+                case 'end_turn':
+                  stopReason = 'end_turn'
+                  break
+                case 'max_tokens':
+                  stopReason = 'max_tokens'
+                  break
+                case 'stop_sequence':
+                  stopReason = 'stop_sequence'
+                  break
+                case 'tool_use':
+                  stopReason = 'tool_use'
+                  break
+              }
 
-            // Map Anthropic stop_reason to unified format
-            let stopReason: 'end_turn' | 'max_tokens' | 'stop_sequence' | 'tool_use' | undefined
-            switch (finalMessage.stop_reason) {
-              case 'end_turn':
-                stopReason = 'end_turn'
-                break
-              case 'max_tokens':
-                stopReason = 'max_tokens'
-                break
-              case 'stop_sequence':
-                stopReason = 'stop_sequence'
-                break
-              case 'tool_use':
-                stopReason = 'tool_use'
-                break
+              yield {
+                type: 'message_end',
+                usage: {
+                  inputTokens: finalMessage.usage.input_tokens,
+                  outputTokens: finalMessage.usage.output_tokens,
+                  totalTokens:
+                    finalMessage.usage.input_tokens + finalMessage.usage.output_tokens,
+                },
+                stopReason,
+              }
+              break
             }
-
-            yield {
-              type: 'message_end',
-              usage: {
-                inputTokens: finalMessage.usage.input_tokens,
-                outputTokens: finalMessage.usage.output_tokens,
-                totalTokens:
-                  finalMessage.usage.input_tokens + finalMessage.usage.output_tokens,
-              },
-              stopReason,
-            }
-            break
           }
+        } catch (eventError) {
+          // M1-11: SSE frame parsing error - yield recoverable error and continue
+          yield {
+            type: 'error',
+            error: {
+              code: 'sse_parse_error',
+              message: eventError instanceof Error
+                ? `Failed to parse SSE event frame: ${eventError.message}`
+                : 'Failed to parse SSE event frame',
+              type: 'unknown',
+              retryable: false,
+              kind: 'parse',
+              recoverable: true,
+            }
+          }
+          // Continue processing next frames
+          continue
         }
       }
     } catch (error) {
