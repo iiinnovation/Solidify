@@ -6,6 +6,7 @@
 
 import type { QueryContext, QueryEvent } from './types'
 import { SimpleRunLogger } from './logger'
+import { buildMessages } from './messages'
 
 /**
  * Main query loop - async generator that yields events
@@ -24,16 +25,20 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       turn++
       logger.log('turn.started', { turn })
 
-      // TODO M1-04: Build messages with context assembly
-      // const messages = await buildMessages(ctx)
+      // Build messages with context assembly
+      const { system, messages } = buildMessages(ctx)
+      logger.log('messages.built', {
+        systemLength: system.length,
+        messageCount: messages.length
+      })
 
       // TODO M1-05: Stream model response
-      // const response = yield* streamModel(ctx, messages)
+      // const response = yield* streamModel(ctx, system, messages)
 
       // Stub: For now just complete immediately
       yield {
         type: 'message.completed',
-        content: 'Query loop stub - M1-04 will implement full loop',
+        content: 'Query loop stub - M1-05 will implement model streaming',
       }
 
       logger.log('turn.completed', { turn })

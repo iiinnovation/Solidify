@@ -33,17 +33,15 @@ export interface RunLimits {
 }
 
 export interface Message {
-  role: 'user' | 'assistant' | 'system' | 'tool'
+  role: 'user' | 'assistant'
   content: string | MessageContent[]
-  name?: string
-  tool_call_id?: string
-  tool_calls?: ToolCall[]
 }
 
 export type MessageContent =
   | { type: 'text'; text: string }
   | { type: 'image_url'; image_url: { url: string } }
-  | { type: 'tool_result'; tool_use_id: string; content: string }
+  | { type: 'tool_use'; id: string; name: string; input: unknown }
+  | { type: 'tool_result'; tool_use_id: string; content: string; is_error?: boolean }
 
 /**
  * Immutable context for one query run
