@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { BarChart3, TrendingUp, DollarSign, Activity } from 'lucide-react'
 import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
+import type { PieLabelRenderProps } from 'recharts'
 import { useUsageStats } from '@/hooks/use-usage'
 import { supabaseConfigured } from '@/lib/supabase'
 
@@ -190,7 +191,10 @@ export function UsagePage() {
                   cx="50%"
                   cy="50%"
                   outerRadius={100}
-                  label={(entry: any) => `${entry.model}: ${formatNumber(entry.tokens)}`}
+                  label={({ payload }: PieLabelRenderProps) => {
+                    const entry = payload as { model?: string; tokens?: number } | undefined
+                    return `${entry?.model ?? ''}: ${formatNumber(entry?.tokens ?? 0)}`
+                  }}
                 >
                   {stats.by_model.map((_, index) => (
                     <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />

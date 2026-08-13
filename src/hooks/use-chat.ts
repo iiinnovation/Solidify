@@ -6,10 +6,10 @@ import { useModelStore } from '@/stores/model-store'
 import { useKnowledgeEnhancementStore } from '@/stores/knowledge-store'
 import { useProjectStore } from '@/stores/project-store'
 import { sendNotification } from '@/lib/tauri'
+import { newId } from '@/lib/id'
 
-let messageIdCounter = 0
 function genId() {
-  return `msg-${Date.now()}-${++messageIdCounter}`
+  return newId('msg')
 }
 
 /* ── 流式 Artifact 解析 ── */
@@ -335,7 +335,7 @@ ${result.content}
                     streamingArtifactId = null
                   } else {
                     addArtifact({
-                      id: `artifact-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                      id: newId('artifact'),
                       title: art.title,
                       type: art.type,
                       content: art.content,
@@ -349,9 +349,9 @@ ${result.content}
                 // 处理正在流式传输的 artifact
                 if (streamingArtifact) {
                   if (!streamingArtifactId) {
-                    const newId = `artifact-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+                    const artifactId = newId('artifact')
                     addArtifact({
-                      id: newId,
+                      id: artifactId,
                       title: streamingArtifact.title,
                       type: streamingArtifact.type,
                       content: streamingArtifact.content,
@@ -359,7 +359,7 @@ ${result.content}
                       version: 1,
                       streaming: true,
                     })
-                    streamingArtifactId = newId
+                    streamingArtifactId = artifactId
                   } else {
                     updateArtifactContent(streamingArtifactId, streamingArtifact.content, true)
                   }
@@ -394,7 +394,7 @@ ${result.content}
             streamingArtifactId = null
           } else {
             addArtifact({
-              id: `artifact-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              id: newId('artifact'),
               title: art.title,
               type: art.type,
               content: art.content,

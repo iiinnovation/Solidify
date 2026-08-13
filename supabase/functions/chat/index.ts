@@ -110,9 +110,9 @@ serve(async (req: Request) => {
 
   try {
     // 验证用户身份（可选，Phase 2 启用后强制要求）
-    const user = await getAuthUser(req)
-    // 如果需要强制登录，取消下面的注释
-    // if (!user) {
+    const _user = await getAuthUser(req)
+    // 如果需要强制登录，取消下面的注释（并把 _user 改回 user）
+    // if (!_user) {
     //   return createErrorResponse('UNAUTHORIZED', 401, '未登录')
     // }
 

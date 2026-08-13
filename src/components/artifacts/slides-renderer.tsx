@@ -196,7 +196,7 @@ function SlideView({ slide, theme }: { slide: SlideItem; theme: SlideTheme }) {
 // ─── Main Component ──────────────────────────────────
 
 export function SlidesRenderer({ content, streaming }: SlidesRendererProps) {
-  const [currentIndex, setCurrentIndex] = useState(0)
+  const [rawIndex, setCurrentIndex] = useState(0)
   const [fullscreen, setFullscreen] = useState(false)
   const theme = defaultTheme
 
@@ -209,9 +209,9 @@ export function SlidesRenderer({ content, streaming }: SlidesRendererProps) {
 
   const total = deck?.slides.length ?? 0
 
-  useEffect(() => {
-    if (total > 0 && currentIndex >= total) setCurrentIndex(total - 1)
-  }, [total, currentIndex])
+  // 幻灯片数量变少时把索引钳回范围内。
+  // 派生而非 effect：effect 里 setState 会多渲染一帧、且中间帧的索引是越界的。
+  const currentIndex = total > 0 ? Math.min(rawIndex, total - 1) : 0
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if (e.key === 'ArrowLeft') setCurrentIndex((i) => Math.max(0, i - 1))

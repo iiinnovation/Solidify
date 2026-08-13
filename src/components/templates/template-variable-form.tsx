@@ -3,7 +3,7 @@
  * 用于使用模板时填写变量值
  */
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { X } from 'lucide-react'
 import type { Template, TemplateVariable } from '@/lib/api/types'
 import { Button } from '@/components/ui/button'
@@ -30,13 +30,18 @@ export function TemplateVariableForm({
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [showPreview, setShowPreview] = useState(false)
 
-  useEffect(() => {
+  // 弹窗打开时重置表单（渲染期调整，理由同 template-editor-dialog）
+  const [prevTemplate, setPrevTemplate] = useState(template)
+  const [prevOpen, setPrevOpen] = useState(open)
+  if (template !== prevTemplate || open !== prevOpen) {
+    setPrevTemplate(template)
+    setPrevOpen(open)
     if (open) {
       setValues(getDefaultValues(template.variables))
       setErrors({})
       setShowPreview(false)
     }
-  }, [template, open])
+  }
 
   const handleSubmit = () => {
     const validation = validateVariableValues(template.variables, values)

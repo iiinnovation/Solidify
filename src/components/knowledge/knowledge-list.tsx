@@ -203,7 +203,7 @@ export function KnowledgeList({ entries, isLoading, onDelete, onDeleteBatch }: K
                   <span className="px-2 py-0.5 rounded bg-background-secondary text-text-tertiary">
                     {getSourceTypeLabel(entry.source_type)}
                   </span>
-                  {entry.metadata?.filename && (
+                  {typeof entry.metadata?.filename === 'string' && (
                     <span className="truncate">
                       来源: {entry.metadata.filename}
                     </span>

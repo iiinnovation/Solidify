@@ -15,6 +15,38 @@ import type {
 } from './types'
 
 /**
+ * RagFlow API 响应结构
+ *
+ * RagFlow 的返回体没有官方 TS 定义，这里按实际用到的字段声明。
+ * 未声明不代表字段不存在，用到时补充即可。
+ */
+interface RagFlowDataset {
+  id: string
+  name: string
+}
+
+interface RagFlowChunk {
+  chunk_id: string
+  document_id: string
+  document_name: string
+  content: string
+  score: number
+  chunk_index: number
+  created_at?: string
+}
+
+interface RagFlowDocument {
+  document_id: string
+  name: string
+  content?: string
+  size?: number
+  status?: string
+  chunk_count?: number
+  created_at: string
+  updated_at: string
+}
+
+/**
  * RagFlow API 客户端
  */
 class RagFlowClient {
@@ -30,7 +62,7 @@ class RagFlowClient {
     }
   }
 
-  private async request(endpoint: string, options: RequestInit = {}) {
+  private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`
     const headers = {
       'Content-Type': 'application/json',
@@ -79,7 +111,7 @@ class RagFlowClient {
    * RagFlow 使用已经切片和向量化的数据进行检索
    */
   async search(query: string, datasetId: string, topK: number = 5) {
-    return this.request('/api/retrieval/search', {
+    return this.request<{ chunks?: RagFlowChunk[] }>('/api/retrieval/search', {
       method: 'POST',
       body: JSON.stringify({
         query,
@@ -90,11 +122,13 @@ class RagFlowClient {
   }
 
   async listDocuments(datasetId: string) {
-    return this.request(`/api/document/list?dataset_id=${datasetId}`)
+    return this.request<{ documents?: RagFlowDocument[] }>(
+      `/api/document/list?dataset_id=${datasetId}`,
+    )
   }
 
   async deleteDocument(documentId: string) {
-    return this.request(`/api/document/delete`, {
+    return this.request<unknown>(`/api/document/delete`, {
       method: 'POST',
       body: JSON.stringify({
         document_id: documentId,
@@ -103,11 +137,12 @@ class RagFlowClient {
   }
 
   async getDatasets() {
-    return this.request('/api/dataset/list')
+    return this.request<{ datasets?: RagFlowDataset[] }>('/api/dataset/list')
   }
 
   async createDataset(name: string, description?: string) {
-    return this.request('/api/dataset/create', {
+    // 注意：创建接口返回的是 dataset_id，与列表接口的 id 字段名不同
+    return this.request<{ dataset_id: string }>('/api/dataset/create', {
       method: 'POST',
       body: JSON.stringify({
         name,
@@ -133,7 +168,7 @@ export class RagFlowProvider implements RAGProvider {
     try {
       // 尝试获取已有的 dataset
       const datasets = await this.client.getDatasets()
-      const existing = datasets.datasets?.find((d: any) => d.name === datasetName)
+      const existing = datasets.datasets?.find((d) => d.name === datasetName)
 
       if (existing) {
         return existing.id
@@ -180,7 +215,7 @@ export class RagFlowProvider implements RAGProvider {
     )
 
     // 转换 RagFlow 结果为统一格式
-    return (result.chunks || []).map((chunk: any) => ({
+    return (result.chunks || []).map((chunk) => ({
       id: chunk.chunk_id,
       title: chunk.document_name,
       content: chunk.content,
@@ -211,9 +246,9 @@ export class RagFlowProvider implements RAGProvider {
     const result = await this.client.listDocuments(datasetId)
 
     // 转换 RagFlow 文档列表为统一格式
-    return (result.documents || []).slice(offset, offset + limit).map((doc: any) => ({
+    return (result.documents || []).slice(offset, offset + limit).map((doc) => ({
       id: doc.document_id,
-      project_id: projectId,
+      project_id: projectId ?? null,
       source_type: 'manual' as const,
       title: doc.name,
       content: doc.content || '',
@@ -243,8 +278,8 @@ export class RagFlowProvider implements RAGProvider {
 
     // 计算统计信息
     const documents = result.documents || []
-    const totalSize = documents.reduce((sum: number, doc: any) => sum + (doc.size || 0), 0)
-    const totalChunks = documents.reduce((sum: number, doc: any) => sum + (doc.chunk_count || 0), 0)
+    const totalSize = documents.reduce((sum: number, doc) => sum + (doc.size || 0), 0)
+    const totalChunks = documents.reduce((sum: number, doc) => sum + (doc.chunk_count || 0), 0)
 
     return {
       total_entries: totalChunks, // 使用 chunk 数量作为条目数

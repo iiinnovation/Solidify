@@ -84,6 +84,13 @@ export function MermaidRenderer({ content, streaming, onSvgReady }: MermaidRende
     setZoom(1)
   }, [content])
 
+  // 用 ref 持有最新回调：让渲染 effect 不依赖 onSvgReady，
+  // 否则调用方传内联函数时每次父组件渲染都会重画图表
+  const onSvgReadyRef = useRef(onSvgReady)
+  useEffect(() => {
+    onSvgReadyRef.current = onSvgReady
+  })
+
   useEffect(() => {
     if (streaming || !content.trim()) {
       setSvg('')
@@ -127,7 +134,7 @@ export function MermaidRenderer({ content, streaming, onSvgReady }: MermaidRende
             ADD_TAGS: ['foreignObject'],
           })
           setSvg(cleanSvg)
-          onSvgReady?.(cleanSvg)
+          onSvgReadyRef.current?.(cleanSvg)
           setError(null)
         }
       } catch (err) {

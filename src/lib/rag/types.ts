@@ -15,7 +15,7 @@ export interface KnowledgeEntry {
   title: string
   content: string
   embedding?: number[]
-  metadata?: Record<string, any>
+  metadata?: Record<string, unknown>
   created_at: string
   updated_at: string
 }
@@ -25,7 +25,7 @@ export interface SearchResult {
   title: string
   content: string
   source_type: string
-  metadata?: Record<string, any>
+  metadata?: Record<string, unknown>
   similarity: number
   created_at: string
 }
@@ -34,7 +34,7 @@ export interface UploadOptions {
   projectId?: string
   sourceType?: 'conversation' | 'artifact' | 'manual'
   sourceId?: string
-  metadata?: Record<string, any>
+  metadata?: Record<string, unknown>
 }
 
 export interface SearchOptions {

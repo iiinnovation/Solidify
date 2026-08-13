@@ -90,7 +90,8 @@ async function extractPdfText(file: File): Promise<string> {
     const page = await pdf.getPage(i)
     const textContent = await page.getTextContent()
     const pageText = textContent.items
-      .map((item: any) => item.str)
+      // items 可能是 TextItem 或 TextMarkedContent，只有前者带 str
+      .map((item) => ('str' in item ? item.str : ''))
       .join(' ')
     textParts.push(pageText)
   }

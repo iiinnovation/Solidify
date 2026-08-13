@@ -238,7 +238,9 @@ function MessageActions({
 }
 
 export function ChatPanel({ conversationId }: { conversationId?: string }) {
-  const [input, setInput] = useState('')
+  // 模板页会先写 pendingInput 再跳转到 /chat，本组件届时重新挂载，
+  // 所以挂载时取一次即可，不需要在 effect 里同步 setState
+  const [input, setInput] = useState(() => useUIStore.getState().pendingInput ?? '')
   const [attachments, setAttachments] = useState<File[]>([])
   const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null)
   const [templateFormOpen, setTemplateFormOpen] = useState(false)
@@ -250,16 +252,15 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
   const incrementUsageMutation = useIncrementTemplateUsage()
 
   const { enabled: knowledgeEnabled, setEnabled: setKnowledgeEnabled } = useKnowledgeEnhancementStore()
-  const { pendingInput, setPendingInput } = useUIStore()
+  const setPendingInput = useUIStore((s) => s.setPendingInput)
 
-  // 从模板页面接收 pendingInput
+  // 消费完 pendingInput 后清空 store 并聚焦输入框（写外部系统，属于 effect 的正当职责）
   useEffect(() => {
-    if (pendingInput) {
-      setInput(pendingInput)
-      setPendingInput(null)
-      setTimeout(() => textareaRef.current?.focus(), 100)
-    }
-  }, [pendingInput, setPendingInput])
+    if (!useUIStore.getState().pendingInput) return
+    setPendingInput(null)
+    const timer = setTimeout(() => textareaRef.current?.focus(), 100)
+    return () => clearTimeout(timer)
+  }, [setPendingInput])
 
   const {
     isOpen: isPaletteOpen,

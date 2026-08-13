@@ -549,7 +549,12 @@ export function DrawioRenderer({ content, streaming, onContentChange }: DrawioRe
   const [error, setError] = useState<string | null>(null)
   const [iframeReady, setIframeReady] = useState(false)
   const [iframeLoading, setIframeLoading] = useState(false)
-  const [renderableXml, setRenderableXml] = useState('')
+
+  // renderableXml 完全派生自 props，用 useMemo 而不是 state + effect
+  const renderableXml = useMemo(() => {
+    if (!content.trim()) return ''
+    return streaming ? completePartialXml(content) : stripCodeFences(content)
+  }, [content, streaming])
 
   // 缩放控制
   const zoomIn = useCallback(() => setZoom(z => Math.min(z + ZOOM_STEP, ZOOM_MAX)), [])
@@ -592,19 +597,16 @@ export function DrawioRenderer({ content, streaming, onContentChange }: DrawioRe
     return () => container.removeEventListener('wheel', handleWheel)
   }, [viewMode])
 
-  // 内容变化时重置
-  useEffect(() => {
+  // 内容变化时重置视图状态
+  // 用「渲染期调整 state」而不是 effect：effect 里同步 setState 会触发级联渲染
+  const [prevContent, setPrevContent] = useState(content)
+  if (content !== prevContent) {
+    setPrevContent(content)
     setZoom(1)
     setViewMode('view')
     setError(null)
     setIframeReady(false)
-  }, [content])
-
-  // 实时处理内容
-  useEffect(() => {
-    if (!content.trim()) { setRenderableXml(''); return }
-    setRenderableXml(streaming ? completePartialXml(content) : stripCodeFences(content))
-  }, [content, streaming])
+  }
 
   // 本地 SVG 渲染（memoized）
   const localSvg = useMemo(() => {
@@ -612,10 +614,13 @@ export function DrawioRenderer({ content, streaming, onContentChange }: DrawioRe
     return generateLocalSvg(renderableXml)
   }, [renderableXml])
 
-  // 验证 XML（仅生成完成后）
+  // 验证 XML（仅生成完成后）；清空与报错都走同一个 debounce，避免流式期间闪烁
   useEffect(() => {
-    if (streaming || !renderableXml?.trim()) { setError(null); return }
     const timer = setTimeout(() => {
+      if (streaming || !renderableXml?.trim()) {
+        setError(null)
+        return
+      }
       const lower = renderableXml.toLowerCase()
       if (!lower.includes('<mxfile') || !lower.includes('<diagram') || !lower.includes('<mxgraphmodel')) {
         setError('Draw.io XML 格式不完整，缺少必要的结构（mxfile、diagram、mxGraphModel）')

@@ -2,7 +2,7 @@
  * 模板创建/编辑对话框
  */
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { X } from 'lucide-react'
 import type { Template, TemplateVariable } from '@/lib/api/types'
 import { Button } from '@/components/ui/button'
@@ -37,7 +37,13 @@ export function TemplateEditorDialog({
   const [skillId, setSkillId] = useState<string>('')
   const [isPublic, setIsPublic] = useState(false)
 
-  useEffect(() => {
+  // template 或 open 变化时填充/清空表单
+  // 渲染期调整而非 effect：effect 里同步 setState 会让用户先看到一帧旧数据
+  const [prevTemplate, setPrevTemplate] = useState(template)
+  const [prevOpen, setPrevOpen] = useState(open)
+  if (template !== prevTemplate || open !== prevOpen) {
+    setPrevTemplate(template)
+    setPrevOpen(open)
     if (template) {
       setName(template.name)
       setDescription(template.description || '')
@@ -53,7 +59,7 @@ export function TemplateEditorDialog({
       setSkillId('')
       setIsPublic(false)
     }
-  }, [template, open])
+  }
 
   const handleInferVariables = () => {
     const inferred = inferVariables(content)

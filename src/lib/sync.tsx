@@ -1,61 +1,10 @@
 /**
- * 离线检测与同步管理
+ * 同步状态指示器
  */
 
-import { useEffect, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { toast } from '@/stores/toast-store'
+import { useAutoSync } from '@/hooks/use-sync'
 
-/**
- * Hook: 检测在线/离线状态
- */
-export function useOnlineStatus() {
-  const [isOnline, setIsOnline] = useState(navigator.onLine)
-
-  useEffect(() => {
-    const handleOnline = () => {
-      setIsOnline(true)
-      toast.success('网络已恢复')
-    }
-
-    const handleOffline = () => {
-      setIsOnline(false)
-      toast.info('网络已断开，将使用本地缓存')
-    }
-
-    window.addEventListener('online', handleOnline)
-    window.addEventListener('offline', handleOffline)
-
-    return () => {
-      window.removeEventListener('online', handleOnline)
-      window.removeEventListener('offline', handleOffline)
-    }
-  }, [])
-
-  return isOnline
-}
-
-/**
- * Hook: 自动同步管理
- * 在线时自动刷新数据
- */
-export function useAutoSync() {
-  const queryClient = useQueryClient()
-  const isOnline = useOnlineStatus()
-
-  useEffect(() => {
-    if (isOnline) {
-      // 网络恢复时，刷新所有查询
-      queryClient.invalidateQueries()
-    }
-  }, [isOnline, queryClient])
-
-  return { isOnline }
-}
-
-/**
- * 同步状态指示器组件
- */
 export function SyncIndicator() {
   const { isOnline } = useAutoSync()
   const queryClient = useQueryClient()
