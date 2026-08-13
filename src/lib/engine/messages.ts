@@ -26,6 +26,7 @@ export type ClaudeContent =
  */
 interface SystemPromptParts {
   base: string
+  skill?: string
   tools?: string
 }
 
@@ -53,6 +54,10 @@ export function buildMessages(ctx: QueryContext): {
 function buildSystemPrompt(ctx: QueryContext): string {
   const parts: SystemPromptParts = {
     base: buildBaseSystemPrompt(ctx),
+  }
+
+  if (ctx.skill?.content.trim()) {
+    parts.skill = ctx.skill.content.trim()
   }
 
   // Add tool definitions if available

@@ -17,6 +17,8 @@ import { isTauri, openFileDialog, readBinaryFile } from '@/lib/tauri'
 import { validateFileSize, validateFileType, formatFileSize } from '@/lib/file-extractor'
 import type { Template } from '@/lib/api/types'
 import { useIncrementTemplateUsage } from '@/hooks/use-templates'
+import { RunTimeline } from '@/components/agent/run-timeline'
+import { RunControls } from '@/components/agent/run-controls'
 
 const typeIcons: Record<ArtifactType, typeof FileText> = {
   document: FileText,
@@ -245,6 +247,8 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
   const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null)
   const [templateFormOpen, setTemplateFormOpen] = useState(false)
   const { messages, isStreaming, error, sendMessage, stopStreaming, regenerate, retry } = useChat(conversationId)
+  const activeRun = [...messages].reverse()
+    .find((message) => message.agentRun?.status === 'running')?.agentRun ?? null
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -505,6 +509,12 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
                     {msg.knowledgeSources && msg.knowledgeSources.length > 0 && (
                       <KnowledgeSourcesCard sources={msg.knowledgeSources} />
                     )}
+                    {msg.agentRun && (
+                      <RunTimeline
+                        run={msg.agentRun}
+                        onStop={msg.agentRun.status === 'running' ? stopStreaming : undefined}
+                      />
+                    )}
                   </>
                 )}
               </div>
@@ -543,19 +553,22 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
         <div className="max-w-2xl mx-auto">
           <div className="mb-1.5 pl-1 flex items-center justify-between">
             <ModelSelector />
-            <button
-              onClick={() => setKnowledgeEnabled(!knowledgeEnabled)}
-              className={cn(
-                "flex items-center gap-1.5 px-2 py-1 rounded-md text-xs transition-colors",
-                knowledgeEnabled
-                  ? "bg-accent-light text-accent hover:bg-accent/20"
-                  : "text-text-tertiary hover:text-text-secondary hover:bg-surface-hover"
-              )}
-              title={knowledgeEnabled ? "知识库增强已启用" : "知识库增强已禁用"}
-            >
-              <Sparkles size={12} strokeWidth={1.75} />
-              <span>知识库</span>
-            </button>
+            <div className="flex items-center gap-2">
+              <RunControls run={activeRun} onStop={stopStreaming} />
+              <button
+                onClick={() => setKnowledgeEnabled(!knowledgeEnabled)}
+                className={cn(
+                  "flex items-center gap-1.5 px-2 py-1 rounded-md text-xs transition-colors",
+                  knowledgeEnabled
+                    ? "bg-accent-light text-accent hover:bg-accent/20"
+                    : "text-text-tertiary hover:text-text-secondary hover:bg-surface-hover"
+                )}
+                title={knowledgeEnabled ? "知识库增强已启用" : "知识库增强已禁用"}
+              >
+                <Sparkles size={12} strokeWidth={1.75} />
+                <span>知识库</span>
+              </button>
+            </div>
           </div>
           <div className="relative">
           {/* 隐藏的文件输入（Web 端） */}

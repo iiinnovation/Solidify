@@ -1,5 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import type { QueryEvent } from '@/lib/engine/types'
+import type { RunState } from '@/lib/engine/run-state'
 
 /* ── 共享类型 ── */
 
@@ -25,6 +27,9 @@ export interface Message {
     title: string
     similarity: number
   }>
+  /** Agent runs persist their source event stream and reduced UI state together. */
+  runEvents?: QueryEvent[]
+  agentRun?: RunState
 }
 
 export interface Conversation {
@@ -53,6 +58,7 @@ interface ChatState {
   deleteConversation: (id: string) => void
   addMessageToConversation: (convId: string, message: Message) => void
   updateMessageInConversation: (convId: string, messageId: string, content: string) => void
+  patchMessageInConversation: (convId: string, messageId: string, patch: Partial<Message>) => void
   removeLastMessageFromConversation: (convId: string) => void
 }
 
@@ -150,6 +156,20 @@ export const useChatStore = create<ChatState>()(
                   ...c,
                   messages: c.messages.map((m) =>
                     m.id === messageId ? { ...m, content } : m,
+                  ),
+                }
+              : c,
+          ),
+        })),
+
+      patchMessageInConversation: (convId, messageId, patch) =>
+        set((state) => ({
+          conversations: state.conversations.map((c) =>
+            c.id === convId
+              ? {
+                  ...c,
+                  messages: c.messages.map((m) =>
+                    m.id === messageId ? { ...m, ...patch } : m,
                   ),
                 }
               : c,

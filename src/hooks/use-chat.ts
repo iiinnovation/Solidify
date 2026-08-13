@@ -7,6 +7,11 @@ import { useKnowledgeEnhancementStore } from '@/stores/knowledge-store'
 import { useProjectStore } from '@/stores/project-store'
 import { sendNotification } from '@/lib/tauri'
 import { newId } from '@/lib/id'
+import { isEnabled } from '@/lib/harness/flags'
+import { runQuery } from '@/lib/engine/query'
+import { applyRunEvent, createRunState } from '@/lib/engine/run-state'
+import { createChatQueryContext } from '@/lib/engine/chat-context'
+import type { QueryEvent } from '@/lib/engine/types'
 
 function genId() {
   return newId('msg')
@@ -91,7 +96,7 @@ export function useChat(conversationId?: string) {
   const updateArtifactContent = useChatStore((s) => s.updateArtifactContent)
   const createConversation = useChatStore((s) => s.createConversation)
   const addMessageToConversation = useChatStore((s) => s.addMessageToConversation)
-  const updateMessageInConversation = useChatStore((s) => s.updateMessageInConversation)
+  const patchMessageInConversation = useChatStore((s) => s.patchMessageInConversation)
   const removeLastMessageFromConversation = useChatStore((s) => s.removeLastMessageFromConversation)
   const getActiveProvider = useModelStore((s) => s.getActiveProvider)
 
@@ -250,6 +255,66 @@ ${result.content}
       let streamingArtifactId: string | null = null
       let completedArtifactCount = 0
 
+      const patchAssistantMessage = (patch: Partial<Message>) => {
+        setMessages((prev) => prev.map((message) =>
+          message.id === assistantMsg.id ? { ...message, ...patch } : message,
+        ))
+        patchMessageInConversation(currentConvId, assistantMsg.id, patch)
+      }
+
+      const consumeArtifactContent = (fullContent: string, final = false) => {
+        const { cleanText, completeArtifacts, streamingArtifact } =
+          processStreamingContent(fullContent)
+
+        while (completedArtifactCount < completeArtifacts.length) {
+          const artifact = completeArtifacts[completedArtifactCount]
+          if (streamingArtifactId) {
+            updateArtifactContent(streamingArtifactId, artifact.content, false)
+            streamingArtifactId = null
+          } else {
+            addArtifact({
+              id: newId('artifact'),
+              title: artifact.title,
+              type: artifact.type,
+              content: artifact.content,
+              messageId: assistantMsg.id,
+              version: 1,
+            })
+          }
+          completedArtifactCount++
+        }
+
+        if (streamingArtifact) {
+          if (!streamingArtifactId) {
+            streamingArtifactId = newId('artifact')
+            addArtifact({
+              id: streamingArtifactId,
+              title: streamingArtifact.title,
+              type: streamingArtifact.type,
+              content: streamingArtifact.content,
+              messageId: assistantMsg.id,
+              version: 1,
+              streaming: true,
+            })
+          } else {
+            updateArtifactContent(streamingArtifactId, streamingArtifact.content, true)
+          }
+        }
+
+        if (final && streamingArtifactId) {
+          const currentContent = useChatStore.getState().artifacts
+            .find((artifact) => artifact.id === streamingArtifactId)?.content ?? ''
+          updateArtifactContent(streamingArtifactId, currentContent, false)
+          streamingArtifactId = null
+        }
+
+        patchAssistantMessage({
+          content: cleanText,
+          ...(final && knowledgeSources.length > 0 ? { knowledgeSources } : {}),
+        })
+        return cleanText
+      }
+
       try {
         const allMessages = [...messages, userMsg].map((m) => ({
           role: m.role,
@@ -266,6 +331,40 @@ ${result.content}
             role: 'user',
             content: enrichedContent
           }
+        }
+
+        if (isEnabled('agentLoop')) {
+          const runId = newId('run')
+          let run = createRunState(runId)
+          const runEvents: QueryEvent[] = []
+          patchAssistantMessage({ agentRun: run, runEvents })
+
+          const context = createChatQueryContext({
+            runId,
+            conversationId: currentConvId,
+            messages: messagesWithFiles,
+            provider: activeProvider,
+            signal: abortController.signal,
+            skillSystemPrompt,
+            skillSkipConfirmation,
+          })
+
+          for await (const event of runQuery(context)) {
+            runEvents.push(event)
+            run = applyRunEvent(run, event)
+            const cleanText = event.type === 'message.delta' || event.type === 'message.completed'
+              ? consumeArtifactContent(run.text)
+              : undefined
+            patchAssistantMessage({
+              ...(cleanText !== undefined ? { content: cleanText } : {}),
+              agentRun: run,
+              runEvents: [...runEvents],
+            })
+          }
+
+          consumeArtifactContent(run.text, true)
+          patchAssistantMessage({ agentRun: run, runEvents: [...runEvents] })
+          return
         }
 
         const response = await fetchChatStream({
@@ -321,60 +420,7 @@ ${result.content}
                   : undefined)
               if (delta) {
                 fullContent += delta
-
-                // 增量 artifact 解析
-                const { cleanText, completeArtifacts, streamingArtifact } =
-                  processStreamingContent(fullContent)
-
-                // 处理新完成的 artifact
-                while (completedArtifactCount < completeArtifacts.length) {
-                  const art = completeArtifacts[completedArtifactCount]
-                  if (streamingArtifactId) {
-                    // 正在流式传输的 artifact 完成了 → 用最终内容更新
-                    updateArtifactContent(streamingArtifactId, art.content, false)
-                    streamingArtifactId = null
-                  } else {
-                    addArtifact({
-                      id: newId('artifact'),
-                      title: art.title,
-                      type: art.type,
-                      content: art.content,
-                      messageId: assistantMsg.id,
-                      version: 1,
-                    })
-                  }
-                  completedArtifactCount++
-                }
-
-                // 处理正在流式传输的 artifact
-                if (streamingArtifact) {
-                  if (!streamingArtifactId) {
-                    const artifactId = newId('artifact')
-                    addArtifact({
-                      id: artifactId,
-                      title: streamingArtifact.title,
-                      type: streamingArtifact.type,
-                      content: streamingArtifact.content,
-                      messageId: assistantMsg.id,
-                      version: 1,
-                      streaming: true,
-                    })
-                    streamingArtifactId = artifactId
-                  } else {
-                    updateArtifactContent(streamingArtifactId, streamingArtifact.content, true)
-                  }
-                }
-
-                // 更新消息为干净文本（去除 artifact 标记）
-                setMessages((prev) => {
-                  const updated = [...prev]
-                  updated[updated.length - 1] = {
-                    ...updated[updated.length - 1],
-                    content: cleanText,
-                  }
-                  return updated
-                })
-                updateMessageInConversation(currentConvId!, assistantMsg.id, cleanText)
+                consumeArtifactContent(fullContent)
               }
             } catch {
               // 非 JSON 行，跳过
@@ -384,63 +430,7 @@ ${result.content}
 
         reader.releaseLock()
 
-        // 流结束后最终解析（安全网）
-        const { cleanText, completeArtifacts } = processStreamingContent(fullContent)
-
-        while (completedArtifactCount < completeArtifacts.length) {
-          const art = completeArtifacts[completedArtifactCount]
-          if (streamingArtifactId) {
-            updateArtifactContent(streamingArtifactId, art.content, false)
-            streamingArtifactId = null
-          } else {
-            addArtifact({
-              id: newId('artifact'),
-              title: art.title,
-              type: art.type,
-              content: art.content,
-              messageId: assistantMsg.id,
-              version: 1,
-            })
-          }
-          completedArtifactCount++
-        }
-
-        // 如果流中断时 artifact 仍在传输，标记为完成
-        if (streamingArtifactId) {
-          updateArtifactContent(streamingArtifactId, useChatStore.getState().artifacts.find(a => a.id === streamingArtifactId)?.content ?? '', false)
-        }
-
-        // 最终更新消息内容（包含知识来源）
-        setMessages((prev) => {
-          const updated = [...prev]
-          updated[updated.length - 1] = {
-            ...updated[updated.length - 1],
-            content: cleanText,
-            knowledgeSources: knowledgeSources.length > 0 ? knowledgeSources : undefined,
-          }
-          return updated
-        })
-
-        // 更新 store 中的消息
-        if (currentConvId) {
-          const conv = useChatStore.getState().conversations.find((c) => c.id === currentConvId)
-          if (conv) {
-            const msgIndex = conv.messages.findIndex(m => m.id === assistantMsg.id)
-            if (msgIndex !== -1) {
-              const updatedMessages = [...conv.messages]
-              updatedMessages[msgIndex] = {
-                ...updatedMessages[msgIndex],
-                content: cleanText,
-                knowledgeSources: knowledgeSources.length > 0 ? knowledgeSources : undefined,
-              }
-              useChatStore.setState((state) => ({
-                conversations: state.conversations.map(c =>
-                  c.id === currentConvId ? { ...c, messages: updatedMessages } : c
-                )
-              }))
-            }
-          }
-        }
+        consumeArtifactContent(fullContent, true)
       } catch (err) {
         if (abortController.signal.aborted) return
         const error = err instanceof Error ? err : new Error('未知错误')
@@ -469,7 +459,7 @@ ${result.content}
         }
       }
     },
-    [messages, isStreaming, addArtifact, updateArtifactContent, createConversation, addMessageToConversation, updateMessageInConversation, removeLastMessageFromConversation, navigate, getActiveProvider],
+    [messages, isStreaming, addArtifact, updateArtifactContent, createConversation, addMessageToConversation, patchMessageInConversation, removeLastMessageFromConversation, navigate, getActiveProvider],
   )
 
   const stopStreaming = useCallback(() => {

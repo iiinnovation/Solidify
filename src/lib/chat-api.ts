@@ -152,7 +152,7 @@ export async function fetchChatStream(body: ChatRequestBody): Promise<Response> 
   })
 }
 
-function getSystemPrompt(skillAddition?: string, skipConfirmation?: boolean): string {
+export function getSystemPrompt(skillAddition?: string, skipConfirmation?: boolean): string {
   const base = `你是 Solidify 的 AI 助手，专门服务于项目实施人员（项目经理、实施工程师、售前顾问）。
 
 你的职责：
