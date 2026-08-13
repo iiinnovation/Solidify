@@ -5,6 +5,7 @@
  */
 
 import type { QueryContext } from './types'
+import { applyBudget } from './context-budget'
 
 /**
  * Message format for Claude API
@@ -39,7 +40,10 @@ export function buildMessages(ctx: QueryContext): {
   const system = buildSystemPrompt(ctx)
   const messages = ctx.messages.map(msg => convertMessage(msg))
 
-  return { system, messages }
+  // Apply budget constraints (handleize large results, trim if needed)
+  const budgetedMessages = applyBudget(ctx, messages)
+
+  return { system, messages: budgetedMessages }
 }
 
 /**
