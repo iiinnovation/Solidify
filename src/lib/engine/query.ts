@@ -4,9 +4,10 @@
  * @see docs/specs/agent-loop.md
  */
 
-import type { QueryContext, QueryEvent } from './types'
+import type { QueryContext, QueryEvent, UsageStats, Message } from './types'
+import type { ToolCall, ToolResult } from '../tools/types'
 import { SimpleRunLogger } from './logger'
-import { buildMessages } from './messages'
+import { streamModel } from './model'
 
 /**
  * Main query loop - async generator that yields events
@@ -15,66 +16,108 @@ import { buildMessages } from './messages'
 export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
   const logger = new SimpleRunLogger(ctx.runId)
   let turn = 0
-  const totalToolCalls = 0
+  let totalToolCalls = 0
+  const usage: UsageStats = {
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    turns: 0,
+    toolCalls: 0,
+  }
+
+  // Current conversation state (reconstructed per turn)
+  let currentMessages = [...ctx.messages]
 
   try {
     yield { type: 'run.started', runId: ctx.runId }
     logger.log('run.started', { runId: ctx.runId, conversationId: ctx.conversationId })
 
+    // Main agent loop: continue until completion or limit reached
     while (turn < ctx.limits.maxTurns) {
       turn++
+      usage.turns = turn
       logger.log('turn.started', { turn })
 
-      // Build messages with context assembly
-      const { system, messages } = buildMessages(ctx)
-      logger.log('messages.built', {
-        systemLength: system.length,
-        messageCount: messages.length
-      })
-
-      // TODO M1-05: Stream model response
-      // const response = yield* streamModel(ctx, system, messages)
-
-      // Stub: For now just complete immediately
-      yield {
-        type: 'message.completed',
-        content: 'Query loop stub - M1-05 will implement model streaming',
+      // Check abort signal
+      if (ctx.signal.aborted) {
+        throw new Error('Aborted')
       }
 
-      logger.log('turn.completed', { turn })
+      // Build messages with context assembly (M1-04)
+      // Note: streamModel() will call buildMessages() internally
+      logger.log('turn.preparing', { turn })
 
-      // Exit after first turn in stub
-      break
+      // Stream model response (M1-05, M1-06, M1-07)
+      const response = yield* streamModelResponse({
+        ...ctx,
+        messages: currentMessages,
+      }, logger)
 
-      // TODO M1-06: Tool execution
-      // if (response.toolCalls.length === 0) {
-      //   yield { type: 'message.completed', content: response.text }
-      //   break
-      // }
+      // Accumulate token usage
+      if (response.usage) {
+        usage.inputTokens += response.usage.inputTokens
+        usage.outputTokens += response.usage.outputTokens
+        usage.totalTokens += response.usage.totalTokens
+      }
+
+      // Check token budget
+      if (usage.totalTokens > ctx.limits.maxTokens) {
+        yield { type: 'run.exhausted', reason: 'max_tokens' }
+        logger.log('run.exhausted', { reason: 'max_tokens', usage })
+        return
+      }
+
+      // If no tool calls, we're done
+      if (response.toolCalls.length === 0) {
+        yield { type: 'message.completed', content: response.text }
+        logger.log('message.completed', { textLength: response.text.length })
+        break
+      }
 
       // Check tool call limit
-      // totalToolCalls += response.toolCalls.length
-      // if (totalToolCalls > ctx.limits.maxToolCalls) {
-      //   yield { type: 'run.exhausted', reason: 'max_tool_calls' }
-      //   return
-      // }
+      totalToolCalls += response.toolCalls.length
+      usage.toolCalls = totalToolCalls
+      if (totalToolCalls > ctx.limits.maxToolCalls) {
+        yield { type: 'run.exhausted', reason: 'max_tool_calls' }
+        logger.log('run.exhausted', { reason: 'max_tool_calls', totalToolCalls })
+        return
+      }
 
-      // const results = yield* executeTools(ctx, response.toolCalls)
-      // ctx = appendResults(ctx, response, results)
+      // Execute tools (M1-14, M1-15, M1-16)
+      const results = yield* executeTools(ctx, response.toolCalls, logger)
+
+      // Append assistant message with tool calls
+      const assistantMessage: Message = {
+        role: 'assistant',
+        content: buildAssistantContent(response.text, response.toolCalls)
+      }
+      currentMessages = [...currentMessages, assistantMessage]
+
+      // Append tool results as next message
+      const toolResultMessage: Message = {
+        role: 'user',
+        content: results.map(r => ({
+          type: 'tool_result' as const,
+          tool_use_id: r.callId,
+          content: r.content,
+          is_error: !r.success
+        }))
+      }
+      currentMessages = [...currentMessages, toolResultMessage]
+
+      logger.log('turn.completed', { turn, toolCalls: response.toolCalls.length })
     }
 
-    yield {
-      type: 'run.completed',
-      usage: {
-        inputTokens: 0,
-        outputTokens: 0,
-        totalTokens: 0,
-        turns: turn,
-        toolCalls: totalToolCalls,
-      },
+    // Check if we hit max turns
+    if (turn >= ctx.limits.maxTurns) {
+      yield { type: 'run.exhausted', reason: 'max_turns' }
+      logger.log('run.exhausted', { reason: 'max_turns', turns: turn })
+      return
     }
 
-    logger.log('run.completed', { turn, totalToolCalls })
+    yield { type: 'run.completed', usage }
+    logger.log('run.completed', { usage })
+
   } catch (error) {
     if (ctx.signal.aborted) {
       yield {
@@ -98,34 +141,188 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
 }
 
 /**
- * Execute tool calls and yield progress events
- * TODO M1-06: Implement tool execution with concurrency control
- * @see docs/specs/agent-loop.md §4
- */
-// async function* _executeTools(
-//   _ctx: QueryContext,
-//   _calls: ToolCall[],
-// ): AsyncGenerator<QueryEvent, ToolResult[]> {
-//   // - Check if all tools are concurrencySafe && readOnly
-//   // - If yes, run in parallel
-//   // - Otherwise, run serially
-//   // - Yield progress events
-//   // - Handle errors with tombstoning
-//   return []
-// }
-
-/**
- * Stream model response and yield text/tool_call deltas
- * TODO M1-05: Implement model gateway streaming
+ * Stream model response and yield text/tool_call events
  * @see docs/specs/agent-loop.md §5
  */
-// async function* _streamModel(
-//   _ctx: QueryContext,
-//   _messages: unknown[],
-// ): AsyncGenerator<QueryEvent, { text: string; toolCalls: ToolCall[] }> {
-//   // - Call gateway.stream()
-//   // - Yield message.delta for text chunks
-//   // - Accumulate tool calls
-//   // - Return final response
-//   return { text: '', toolCalls: [] }
-// }
+async function* streamModelResponse(
+  ctx: QueryContext,
+  logger: SimpleRunLogger
+): AsyncGenerator<QueryEvent, {
+  text: string
+  toolCalls: ToolCall[]
+  usage?: UsageStats
+}> {
+  let accumulatedText = ''
+  const toolCalls: ToolCall[] = []
+  const toolCallBuilders = new Map<string, { id: string; name: string; input: string }>()
+  let usage: UsageStats | undefined
+
+  try {
+    // Call model gateway (M1-05) - streamModel uses ctx internally
+    for await (const chunk of streamModel(ctx)) {
+      // Check abort signal
+      if (ctx.signal.aborted) {
+        throw new Error('Aborted')
+      }
+
+      switch (chunk.type) {
+        case 'content_delta':
+          accumulatedText += chunk.delta
+          yield { type: 'message.delta', text: chunk.delta }
+          break
+
+        case 'tool_call_start':
+          // Start building a new tool call
+          toolCallBuilders.set(chunk.id, {
+            id: chunk.id,
+            name: chunk.name,
+            input: ''
+          })
+          logger.log('tool_call.start', { callId: chunk.id, name: chunk.name })
+          break
+
+        case 'tool_call_delta': {
+          // Accumulate input JSON
+          const builder = toolCallBuilders.get(chunk.id)
+          if (builder) {
+            builder.input += chunk.delta
+          }
+          break
+        }
+
+        case 'tool_call_end': {
+          // Finalize tool call
+          const builder = toolCallBuilders.get(chunk.id)
+          if (builder) {
+            const toolCall: ToolCall = {
+              id: builder.id,
+              name: builder.name,
+              input: chunk.input // Use the parsed input from chunk
+            }
+            toolCalls.push(toolCall)
+            yield { type: 'tool.requested', call: toolCall }
+            logger.log('tool_call.complete', {
+              callId: toolCall.id,
+              name: toolCall.name
+            })
+            toolCallBuilders.delete(chunk.id)
+          }
+          break
+        }
+
+        case 'message_end':
+          if (chunk.usage) {
+            usage = {
+              inputTokens: chunk.usage.inputTokens,
+              outputTokens: chunk.usage.outputTokens,
+              totalTokens: chunk.usage.totalTokens || (chunk.usage.inputTokens + chunk.usage.outputTokens),
+              turns: 0,
+              toolCalls: 0
+            }
+            logger.log('usage', usage)
+          }
+          break
+
+        case 'error':
+          logger.error('stream.error', chunk.error)
+          throw new Error(`Model error: ${chunk.error.message}`)
+
+        // Ignore other event types (message_start, content_start, content_end, ping)
+        default:
+          break
+      }
+    }
+
+    return { text: accumulatedText, toolCalls, usage }
+
+  } catch (error) {
+    logger.error('stream.failed', error)
+    throw error
+  }
+}
+
+/**
+ * Execute tool calls and yield progress events
+ * TODO M1-14: Implement actual tool execution with validation
+ * TODO M1-15: Implement concurrency control
+ * TODO M1-16: Implement timeout and retry
+ * @see docs/specs/agent-loop.md §4
+ */
+async function* executeTools(
+  _ctx: QueryContext,
+  calls: ToolCall[],
+  logger: SimpleRunLogger
+): AsyncGenerator<QueryEvent, Array<ToolResult & { callId: string }>> {
+  logger.log('tools.executing', { count: calls.length })
+
+  // Stub implementation: just return placeholder results
+  // M1-14 will implement actual execution
+  const results: Array<ToolResult & { callId: string }> = []
+
+  for (const call of calls) {
+    // Yield tool execution started
+    yield {
+      type: 'tool.progress',
+      callId: call.id,
+      progress: { phase: 'executing', current: 0 }
+    }
+
+    // Stub result
+    const result: ToolResult & { callId: string } = {
+      callId: call.id,
+      success: false,
+      content: `Tool execution not yet implemented (M1-14). Called: ${call.name}`,
+      error: {
+        kind: 'runtime',
+        message: 'Tool execution stub - M1-14 will implement',
+        recoverable: false
+      },
+      metadata: {
+        durationMs: 0
+      }
+    }
+
+    results.push(result)
+
+    // Yield completion
+    yield {
+      type: 'tool.completed',
+      callId: call.id,
+      result
+    }
+
+    logger.log('tool.completed', {
+      callId: call.id,
+      name: call.name,
+      success: result.success
+    })
+  }
+
+  return results
+}
+
+/**
+ * Build assistant message content with text and tool calls
+ */
+function buildAssistantContent(text: string, toolCalls: ToolCall[]) {
+  if (toolCalls.length === 0) {
+    return text
+  }
+
+  const content = []
+
+  if (text.trim()) {
+    content.push({ type: 'text' as const, text })
+  }
+
+  for (const call of toolCalls) {
+    content.push({
+      type: 'tool_use' as const,
+      id: call.id,
+      name: call.name,
+      input: call.input
+    })
+  }
+
+  return content
+}
