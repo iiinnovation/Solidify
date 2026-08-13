@@ -60,6 +60,13 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
         usage.totalTokens += response.usage.totalTokens
       }
 
+      // Handle stop reason (M1-10)
+      if (response.stopReason === 'max_tokens') {
+        yield { type: 'run.exhausted', reason: 'max_tokens' }
+        logger.log('run.exhausted', { reason: 'stop_reason_max_tokens', usage })
+        return
+      }
+
       // Check token budget
       if (usage.totalTokens > ctx.limits.maxTokens) {
         yield { type: 'run.exhausted', reason: 'max_tokens' }
@@ -67,10 +74,13 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
         return
       }
 
-      // If no tool calls, we're done
+      // If no tool calls, we're done (stop_reason: end_turn)
       if (response.toolCalls.length === 0) {
         yield { type: 'message.completed', content: response.text }
-        logger.log('message.completed', { textLength: response.text.length })
+        logger.log('message.completed', {
+          textLength: response.text.length,
+          stopReason: response.stopReason || 'end_turn'
+        })
         break
       }
 
@@ -151,11 +161,13 @@ async function* streamModelResponse(
   text: string
   toolCalls: ToolCall[]
   usage?: UsageStats
+  stopReason?: string
 }> {
   let accumulatedText = ''
   const toolCalls: ToolCall[] = []
   const toolCallBuilders = new Map<string, { id: string; name: string; input: string }>()
   let usage: UsageStats | undefined
+  let stopReason: string | undefined
 
   try {
     // Call model gateway (M1-05) - streamModel uses ctx internally
@@ -221,6 +233,10 @@ async function* streamModelResponse(
             }
             logger.log('usage', usage)
           }
+          if (chunk.stopReason) {
+            stopReason = chunk.stopReason
+            logger.log('stop_reason', { stopReason })
+          }
           break
 
         case 'error':
@@ -233,7 +249,7 @@ async function* streamModelResponse(
       }
     }
 
-    return { text: accumulatedText, toolCalls, usage }
+    return { text: accumulatedText, toolCalls, usage, stopReason }
 
   } catch (error) {
     logger.error('stream.failed', error)

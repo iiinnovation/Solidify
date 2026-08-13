@@ -102,6 +102,24 @@ export class AnthropicProvider implements ModelProvider {
 
           case 'message_stop': {
             const finalMessage = await stream.finalMessage()
+
+            // Map Anthropic stop_reason to unified format
+            let stopReason: 'end_turn' | 'max_tokens' | 'stop_sequence' | 'tool_use' | undefined
+            switch (finalMessage.stop_reason) {
+              case 'end_turn':
+                stopReason = 'end_turn'
+                break
+              case 'max_tokens':
+                stopReason = 'max_tokens'
+                break
+              case 'stop_sequence':
+                stopReason = 'stop_sequence'
+                break
+              case 'tool_use':
+                stopReason = 'tool_use'
+                break
+            }
+
             yield {
               type: 'message_end',
               usage: {
@@ -110,6 +128,7 @@ export class AnthropicProvider implements ModelProvider {
                 totalTokens:
                   finalMessage.usage.input_tokens + finalMessage.usage.output_tokens,
               },
+              stopReason,
             }
             break
           }

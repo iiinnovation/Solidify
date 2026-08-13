@@ -65,6 +65,12 @@ export interface ModelError {
 }
 
 /**
+ * Stop reasons from model
+ * @see docs/specs/agent-loop.md §3.2
+ */
+export type StopReason = 'end_turn' | 'max_tokens' | 'stop_sequence' | 'tool_use'
+
+/**
  * Unified streaming response chunks
  */
 export type CompletionChunk =
@@ -75,7 +81,7 @@ export type CompletionChunk =
   | { type: 'tool_call_delta'; id: string; delta: string }
   | { type: 'tool_call_end'; id: string; input: unknown }
   | { type: 'message_start' }
-  | { type: 'message_end'; usage?: TokenUsage }
+  | { type: 'message_end'; usage?: TokenUsage; stopReason?: StopReason }
   | { type: 'error'; error: ModelError }
   | { type: 'ping' } // Keep-alive for long responses
 
