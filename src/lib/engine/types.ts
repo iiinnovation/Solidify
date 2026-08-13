@@ -7,16 +7,15 @@
 import type { Tool, ToolCall, ToolResult, ToolProgress } from '../tools/types'
 import type { MemoryState } from '../memory/types'
 import type { LoadedSkill } from '../skills/types'
+import type { ProviderRegistry } from '../model'
 
 // ============================================================================
 // Query Context
 // ============================================================================
 
 export interface ModelConfig {
-  provider: 'openai' | 'anthropic'
+  provider: string  // Provider name in registry
   model: string
-  apiKey?: string
-  baseUrl?: string
   temperature?: number
   maxTokens?: number
 }
@@ -26,6 +25,8 @@ export interface RunLimits {
   maxTurns: number
   /** Total token budget for this run */
   maxTokens: number
+  /** Maximum output tokens per turn */
+  maxOutputTokens: number
   /** Maximum tool calls across all turns (default: 50) */
   maxToolCalls: number
   /** Single tool execution timeout in ms (default: 60_000) */
@@ -58,6 +59,7 @@ export interface QueryContext {
   readonly model: ModelConfig
   readonly limits: RunLimits
   readonly signal: AbortSignal
+  readonly providerRegistry: ProviderRegistry  // Model provider registry
 }
 
 // ============================================================================
