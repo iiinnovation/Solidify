@@ -88,3 +88,15 @@ export class ToolRegistry implements IToolRegistry {
  * Import this to register or resolve tools
  */
 export const toolRegistry = new ToolRegistry()
+
+// Register the first-party tools once at module initialization. Consumers can
+// still use a separate ToolRegistry for tests or scoped tool sets.
+import { listDirTool } from './builtin/list-dir'
+import { readFileTool } from './builtin/read-file'
+import { writeFileTool } from './builtin/write-file'
+import { searchFilesTool } from './builtin/search-files'
+import { capturePreviewTool } from './builtin/capture-preview'
+
+for (const tool of [listDirTool, readFileTool, writeFileTool, searchFilesTool, capturePreviewTool]) {
+  toolRegistry.register(tool as Tool)
+}

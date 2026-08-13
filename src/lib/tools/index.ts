@@ -19,6 +19,12 @@ export type {
 
 export { ToolRegistry, toolRegistry } from './registry'
 
+export { listDirTool } from './builtin/list-dir'
+export { readFileTool } from './builtin/read-file'
+export { writeFileTool } from './builtin/write-file'
+export { searchFilesTool } from './builtin/search-files'
+export { capturePreviewTool } from './builtin/capture-preview'
+
 export {
   validateInput,
   prepareCall,

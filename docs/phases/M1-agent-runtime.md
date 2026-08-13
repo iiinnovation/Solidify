@@ -150,14 +150,22 @@ Edge Function 现在支持完整的工具调用流程：
 
 | # | 工具 | 产出文件 | 估时 | 备注 |
 |---|---|---|---|---|
-| M1-17 | `list_dir` | `src/lib/tools/builtin/list-dir.ts` + Rust | 1pd | Rust 侧用 `ignore` crate |
-| M1-18 | `read_file` | `builtin/read-file.ts` | 0.5pd | 支持 offset/limit |
-| M1-19 | `write_file` | `builtin/write-file.ts` | 0.5pd | 确认逻辑留到 M2，M1 先无条件允许 |
-| M1-20 | `search_files` | `builtin/search-files.ts` + Rust | 1pd | 内容 + 文件名 |
-| M1-21 | `capture_preview` | `builtin/capture-preview.ts` | 1pd | 截 artifact 渲染结果，M5 依赖 |
-| M1-22 | **路径沙箱（Rust）+ 7 个强制测试用例** | `src-tauri/src/fs/sandbox.rs` | 1pd | 见 [tool-interface.md §8](../specs/tool-interface.md) |
+| M1-17 | `list_dir` | `src/lib/tools/builtin/list-dir.ts` + Rust | 1pd | ✅ `ignore` crate + `.solidifyignore` |
+| M1-18 | `read_file` | `builtin/read-file.ts` | 0.5pd | ✅ offset/limit + 二进制元信息 |
+| M1-19 | `write_file` | `builtin/write-file.ts` | 0.5pd | ✅ 确认逻辑留到 M2，M1 先无条件允许 |
+| M1-20 | `search_files` | `builtin/search-files.ts` + Rust | 1pd | ✅ 内容 + 文件名 |
+| M1-21 | `capture_preview` | `builtin/capture-preview.ts` | 1pd | ✅ 截图回灌为视觉模型图像输入 |
+| M1-22 | **路径沙箱（Rust）+ 7 个强制测试用例** | `src-tauri/src/fs/sandbox.rs` | 1pd | ✅ Rust 安全边界，8 个测试 |
 
 ⚠️ M1-22 不能跳过也不能推迟。M1-19 让模型有了写文件能力，同一个迭代内必须有沙箱，否则测试期间就可能损坏用户数据。
+
+**实现说明**：
+
+- 四个文件工具统一调用 Tauri Rust command；路径在 Rust 侧 canonicalize 后做工作区包含校验，写入不存在文件时先校验最近存在祖先，创建目录后再次校验
+- `list_dir` / `search_files` 使用 `ignore` crate，支持 `.solidifyignore`，并跳过工作区规格规定的版本库、依赖、缓存和临时文件
+- `read_file` 的 offset/limit 按 Unicode 字符切片，二进制文件不内联；`write_file` 可安全创建嵌套父目录
+- `capture_preview` 捕获当前 artifact DOM，工具结果中的 data URL 会作为下一轮视觉模型的图像内容回灌；Anthropic 转原生 base64 image block
+- 沙箱测试覆盖父目录穿越、外部符号链接、绝对路径、Windows UNC、大小写文件系统行为、正常相对路径和内部符号链接，并额外覆盖安全创建嵌套路径
 
 ### F. UI（4 pd）
 

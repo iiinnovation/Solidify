@@ -4,7 +4,7 @@
  * @see docs/specs/agent-loop.md
  */
 
-import type { QueryContext, QueryEvent, UsageStats, Message } from './types'
+import type { QueryContext, QueryEvent, UsageStats, Message, MessageContent } from './types'
 import type { Tool, ToolCall, ToolResult, ToolProgress } from '../tools/types'
 import { prepareCall, executeCall, canRunInParallel } from '../tools/executor'
 import { buildToolUseContext } from './tool-context'
@@ -112,14 +112,20 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       currentMessages = [...currentMessages, assistantMessage]
 
       // Append tool results as next message
+      const toolResultContent: MessageContent[] = results.flatMap((result) => {
+        const content: MessageContent[] = [{
+          type: 'tool_result',
+          tool_use_id: result.callId,
+          content: result.content,
+          is_error: !result.success,
+        }]
+        const imageUrl = getToolImageUrl(result)
+        if (imageUrl) content.push({ type: 'image_url', image_url: { url: imageUrl } })
+        return content
+      })
       const toolResultMessage: Message = {
         role: 'user',
-        content: results.map(r => ({
-          type: 'tool_result' as const,
-          tool_use_id: r.callId,
-          content: r.content,
-          is_error: !r.success
-        }))
+        content: toolResultContent,
       }
       currentMessages = [...currentMessages, toolResultMessage]
 
@@ -181,6 +187,14 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
     unlink()
     await logger.flush()
   }
+}
+
+function getToolImageUrl(result: ToolResult): string | undefined {
+  if (!result.success || !result.data || typeof result.data !== 'object') return undefined
+  const imageDataUrl = (result.data as Record<string, unknown>).imageDataUrl
+  return typeof imageDataUrl === 'string' && imageDataUrl.startsWith('data:image/')
+    ? imageDataUrl
+    : undefined
 }
 
 /**

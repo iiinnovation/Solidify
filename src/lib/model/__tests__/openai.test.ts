@@ -72,6 +72,36 @@ describe('OpenAIProvider', () => {
     expect((convertedMessages[0].content as unknown[]).length).toBe(2)
   })
 
+  it('preserves tool call/result pairing and the preview image', () => {
+    const converted = provider.convertMessages([
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'checking' },
+          { type: 'tool_use', id: 'call-1', name: 'capture_preview', input: {} },
+        ],
+      },
+      {
+        role: 'user',
+        content: [
+          { type: 'tool_result', tool_use_id: 'call-1', content: 'captured' },
+          { type: 'image', url: 'data:image/png;base64,cGl4ZWxz' },
+        ],
+      },
+    ])
+
+    expect(converted).toHaveLength(3)
+    expect(converted[0]).toMatchObject({
+      role: 'assistant',
+      tool_calls: [{ id: 'call-1', function: { name: 'capture_preview', arguments: '{}' } }],
+    })
+    expect(converted[1]).toEqual({ role: 'tool', tool_call_id: 'call-1', content: 'captured' })
+    expect(converted[2]).toMatchObject({ role: 'user' })
+    expect(converted[2].content).toEqual([
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,cGl4ZWxz' } },
+    ])
+  })
+
   it('should convert tools correctly', () => {
     const tools: ToolDefinition[] = [
       {

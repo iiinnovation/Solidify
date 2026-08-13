@@ -10,6 +10,36 @@
 /** 是否运行在 Tauri 桌面端 */
 export const isTauri = '__TAURI_INTERNALS__' in window
 
+async function invokeCommand<T>(command: string, args: Record<string, unknown>): Promise<T> {
+  if (!isTauri) throw new Error('This operation requires the desktop app')
+  const { invoke } = await import('@tauri-apps/api/core')
+  return invoke<T>(command, args)
+}
+
+export interface LocalDirEntry { path: string; name: string; kind: 'file' | 'directory'; size: number }
+export interface LocalFileRead { content: string | null; binary: boolean; bytes: number; truncated: boolean }
+export interface LocalSearchMatch { path: string; line: number | null; text: string | null }
+
+export function resolveWorkspacePath(path: string, workspaceRoot: string): Promise<string> {
+  return invokeCommand('resolve_path', { path, workspaceRoot })
+}
+
+export function listWorkspaceDir(path: string, workspaceRoot: string, depth?: number): Promise<LocalDirEntry[]> {
+  return invokeCommand('list_dir', { path, workspaceRoot, depth })
+}
+
+export function readWorkspaceFile(path: string, workspaceRoot: string, offset?: number, limit?: number): Promise<LocalFileRead> {
+  return invokeCommand('read_file', { path, workspaceRoot, offset, limit })
+}
+
+export function writeWorkspaceFile(path: string, content: string, workspaceRoot: string): Promise<number> {
+  return invokeCommand('write_file', { path, content, workspaceRoot })
+}
+
+export function searchWorkspaceFiles(query: string, path: string, workspaceRoot: string, maxResults?: number): Promise<LocalSearchMatch[]> {
+  return invokeCommand('search_files', { query, path, workspaceRoot, maxResults })
+}
+
 /** 当前操作系统平台 */
 export type Platform = 'macos' | 'windows' | 'linux' | 'web'
 

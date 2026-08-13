@@ -93,6 +93,53 @@ const finalTurn: CompletionChunk[] = [
 ]
 
 describe('runQuery tool execution (M1-14/15)', () => {
+  it('feeds capture results back as an image in the next model turn', async () => {
+    const requests: CompletionRequest[] = []
+    let turn = 0
+    const provider: ModelProvider = {
+      name: 'mock',
+      metadata: {
+        name: 'mock', displayName: 'Mock', supportsVision: true,
+        supportsTools: true, supportsStreaming: true,
+        defaultMaxTokens: 4096, models: ['mock-model'],
+      },
+      async *stream(request: CompletionRequest): AsyncGenerator<CompletionChunk> {
+        requests.push(request)
+        if (turn++ === 0) {
+          yield { type: 'tool_call_start', id: 'preview-1', name: 'capture_preview' }
+          yield { type: 'tool_call_end', id: 'preview-1', input: {} }
+          yield { type: 'message_end', stopReason: 'tool_use' }
+        } else {
+          yield* finalTurn
+        }
+      },
+    }
+    const capture: Tool = {
+      name: 'capture_preview', description: 'capture', inputSchema: { type: 'object' },
+      readOnly: true, concurrencySafe: false, destructive: false,
+      requiresConfirmation: false, availability: 'always', permissions: [],
+      async execute(): Promise<ToolResult> {
+        return {
+          success: true,
+          content: 'captured',
+          data: { imageDataUrl: 'data:image/png;base64,cGl4ZWxz' },
+        }
+      },
+      renderCall: () => 'capture',
+    }
+
+    for await (const _event of runQuery(makeCtx(provider, [capture]))) {
+      // consume the run
+    }
+
+    expect(requests).toHaveLength(2)
+    const lastMessage = requests[1].messages.at(-1)
+    expect(lastMessage?.content).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'tool_result', tool_use_id: 'preview-1' }),
+      { type: 'image', url: 'data:image/png;base64,cGl4ZWxz' },
+    ]))
+  })
+
   it('runs read-only concurrency-safe tools in parallel', async () => {
     const trace: string[] = []
     const slowA = makeSlowReadTool('slow_a', 40, trace)

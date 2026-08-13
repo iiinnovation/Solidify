@@ -248,13 +248,21 @@ export class AnthropicProvider implements ModelProvider {
           break
 
         case 'image':
-          // Anthropic doesn't support image URLs directly in content
-          // This would need to be converted to base64 or handled differently
-          // For now, skip or convert to text description
-          blocks.push({
-            type: 'text',
-            text: `[Image: ${block.url}]`,
-          })
+          {
+            const match = block.url.match(/^data:(image\/(?:png|jpeg|gif|webp));base64,(.+)$/s)
+            if (match) {
+              blocks.push({
+                type: 'image',
+                source: {
+                  type: 'base64',
+                  media_type: match[1] as 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp',
+                  data: match[2],
+                },
+              })
+            } else {
+              blocks.push({ type: 'text', text: `[Image: ${block.url}]` })
+            }
+          }
           break
 
         case 'tool_use':

@@ -145,7 +145,7 @@ function CodeRenderer({ content, streaming }: { content: string; streaming?: boo
       </div>
 
       {/* 内容区 */}
-      <div className="flex-1 min-h-0">
+      <div className="flex-1 min-h-0" data-artifact-content>
         {viewMode === 'preview' ? (
           <iframe
             sandbox="allow-scripts allow-modals"
@@ -248,7 +248,7 @@ export function ArtifactPanel({ conversationId }: { conversationId?: string }) {
       </div>
 
       {/* 内容区 */}
-      <div className="flex-1 min-h-0">
+      <div className="flex-1 min-h-0" data-artifact-id={activeArtifact.id} data-artifact-content>
         <ErrorBoundary key={activeArtifact.id}>
           {activeArtifact.type === 'code' ? (
             <CodeRenderer content={activeArtifact.content} streaming={activeArtifact.streaming} />

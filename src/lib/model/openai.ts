@@ -183,6 +183,46 @@ export class OpenAIProvider implements ModelProvider {
 
     // Convert messages
     for (const msg of messages) {
+      if (Array.isArray(msg.content)) {
+        const toolUses = msg.content.filter(
+          (block): block is Extract<UnifiedContent, { type: 'tool_use' }> => block.type === 'tool_use',
+        )
+        const toolResults = msg.content.filter(
+          (block): block is Extract<UnifiedContent, { type: 'tool_result' }> => block.type === 'tool_result',
+        )
+        const visible = msg.content.filter(
+          (block) => block.type === 'text' || block.type === 'image',
+        )
+
+        if (toolUses.length > 0) {
+          const assistantText = visible
+            .filter((block): block is Extract<UnifiedContent, { type: 'text' }> => block.type === 'text')
+            .map((block) => block.text)
+            .join('\n')
+          result.push({
+            role: 'assistant',
+            content: assistantText || null,
+            tool_calls: toolUses.map((block) => ({
+              id: block.id,
+              type: 'function' as const,
+              function: { name: block.name, arguments: JSON.stringify(block.input) },
+            })),
+          })
+          continue
+        }
+
+        for (const block of toolResults) {
+          result.push({ role: 'tool', tool_call_id: block.tool_use_id, content: block.content })
+        }
+        if (visible.length > 0) {
+          result.push({
+            role: msg.role === 'system' ? 'system' : msg.role,
+            content: this.convertContent(visible),
+          } as OpenAI.ChatCompletionMessageParam)
+        }
+        if (toolResults.length > 0) continue
+      }
+
       result.push({
         role: msg.role === 'system' ? 'system' : msg.role,
         content: this.convertContent(msg.content),
@@ -218,13 +258,9 @@ export class OpenAIProvider implements ModelProvider {
           break
 
         case 'tool_use':
-          // OpenAI handles tool use differently - not in content
-          // This would be in a separate assistant message with tool_calls
-          break
-
         case 'tool_result':
-          // OpenAI uses a separate tool message type
-          // This needs special handling at the message level
+          // Handled at message level because OpenAI uses tool_calls and
+          // separate role=tool messages rather than content blocks.
           break
       }
     }
