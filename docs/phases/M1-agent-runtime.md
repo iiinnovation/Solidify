@@ -86,7 +86,7 @@ Edge Function 现在支持完整的工具调用流程：
 | M1-09 | 上下文组装 + 裁剪策略 | `src/lib/engine/context-budget.ts` | 1.5pd | ✅ |
 | M1-10 | 大结果句柄化 | `src/lib/engine/handle-store.ts` | 1pd | ⏳ 部分 |
 | M1-11 | Tombstoning 全套场景 | 分布式实现，见说明 | 1pd | ✅ |
-| M1-12 | 中断：AbortSignal 贯穿 + finally 清理 | 循环内 | 1pd | |
+| M1-12 | 中断：AbortSignal 贯穿 + finally 清理 | 循环内 | 1pd | ✅ |
 | M1-13 | 会话快照与恢复（jsonl 追加） | `src/lib/engine/snapshot.ts` | 0.5pd | |
 
 **实现说明**：
@@ -111,6 +111,13 @@ Edge Function 现在支持完整的工具调用流程：
 配套改动：
 - `ModelError` 增加 `kind`（parse/validation/network/auth）与 `recoverable` 字段，`query.ts` 据此区分「墓碑跳过」与「致命抛出」
 - 修复 `anthropic.ts` 两处阻塞性 bug：`tool_call_delta` 误用 `event.index` 作 id 导致增量无法归并到 `content_block.id` 开启的调用；`content_block_stop` 从不产出 `tool_call_end` 导致工具调用永远无法完成
+
+**M1-12 关键实现细节**（规格 §4）：
+
+- **Signal 贯穿**：`CompletionRequest` 增加 `signal` 字段，`runQuery` → `streamModel` → provider SDK（`messages.stream(body, { signal })` / `chat.completions.create(body, { signal })`），abort 时在途 HTTP 请求立即取消，不泄漏
+- **内部 AbortController**：`runQuery` 内部创建 controller 并用 `linkAbort()` 与外部 signal 联动，下游统一消费内部 signal。这样消费端 `gen.return()`（for-await break）提前退出时，`finally` 中 `internal.abort()` 也能取消在途请求 —— 仅靠外部 signal 做不到这点
+- **工具间中断点**：`executeTools` 每个调用前检查 signal；abort 时已完成结果保留不回滚，剩余调用合成 `kind: 'aborted'` 的 tool_result，保证历史中每个 `tool_use` 都有配对结果（为 M1-13 快照恢复铺路）
+- **测试**：`__tests__/query-abort.test.ts` 覆盖 5 个场景 —— 启动前 abort、流中 abort（含请求取消断言）、工具间 abort（已完成保留 + 剩余 aborted）、`gen.return()` finally 清理、正常完成不受影响
 
 ### D. 工具执行（3 pd）
 

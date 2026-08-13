@@ -43,6 +43,8 @@ export interface CompletionRequest {
   maxTokens?: number
   topP?: number
   stream: true // We only support streaming
+  /** M1-12: Cancels the in-flight HTTP request when fired */
+  signal?: AbortSignal
 }
 
 /**

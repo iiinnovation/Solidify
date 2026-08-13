@@ -64,15 +64,19 @@ export class OpenAIProvider implements ModelProvider {
       const tools = request.tools ? this.convertTools(request.tools) : undefined
 
       // Create streaming completion
-      const stream = await this.client.chat.completions.create({
-        model: request.model,
-        messages,
-        tools,
-        temperature: request.temperature,
-        max_tokens: request.maxTokens,
-        stream: true,
-        stream_options: { include_usage: true },
-      })
+      // M1-12: signal aborts the underlying HTTP request immediately
+      const stream = await this.client.chat.completions.create(
+        {
+          model: request.model,
+          messages,
+          tools,
+          temperature: request.temperature,
+          max_tokens: request.maxTokens,
+          stream: true,
+          stream_options: { include_usage: true },
+        },
+        { signal: request.signal },
+      )
 
       // Track tool calls across chunks
       const toolCalls = new Map<number, { id: string; name: string; args: string }>()

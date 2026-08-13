@@ -53,15 +53,19 @@ export class AnthropicProvider implements ModelProvider {
       const tools = request.tools ? this.convertTools(request.tools) : undefined
 
       // Call Anthropic API
-      const stream = await this.client.messages.stream({
-        model: request.model,
-        system: request.system,
-        messages,
-        tools,
-        max_tokens: request.maxTokens ?? this.metadata.defaultMaxTokens,
-        temperature: request.temperature,
-        top_p: request.topP,
-      })
+      // M1-12: signal aborts the underlying HTTP request immediately
+      const stream = await this.client.messages.stream(
+        {
+          model: request.model,
+          system: request.system,
+          messages,
+          tools,
+          max_tokens: request.maxTokens ?? this.metadata.defaultMaxTokens,
+          temperature: request.temperature,
+          top_p: request.topP,
+        },
+        { signal: request.signal },
+      )
 
       yield { type: 'message_start' }
 

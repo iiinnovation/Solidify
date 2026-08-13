@@ -71,6 +71,8 @@ export async function* streamModel(
     temperature: ctx.model.temperature,
     maxTokens: ctx.limits.maxOutputTokens,
     stream: true,
+    // M1-12: Abort in-flight HTTP request when the run is cancelled
+    signal: ctx.signal,
   }
 
   // Stream from provider

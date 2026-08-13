@@ -25,6 +25,12 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
     toolCalls: 0,
   }
 
+  // M1-12: Internal controller so an early generator exit (gen.return())
+  // also cancels in-flight model requests / tools, not just external abort()
+  const internal = new AbortController()
+  const unlink = linkAbort(ctx.signal, internal)
+  const runCtx: QueryContext = { ...ctx, signal: internal.signal }
+
   // Current conversation state (reconstructed per turn)
   let currentMessages = [...ctx.messages]
 
@@ -39,7 +45,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       logger.log('turn.started', { turn })
 
       // Check abort signal
-      if (ctx.signal.aborted) {
+      if (runCtx.signal.aborted) {
         throw new Error('Aborted')
       }
 
@@ -49,7 +55,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
 
       // Stream model response (M1-05, M1-06, M1-07)
       const response = yield* streamModelResponse({
-        ...ctx,
+        ...runCtx,
         messages: currentMessages,
       }, logger)
 
@@ -94,7 +100,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       }
 
       // Execute tools (M1-14, M1-15, M1-16)
-      const results = yield* executeTools(ctx, response.toolCalls, logger)
+      const results = yield* executeTools(runCtx, response.toolCalls, logger)
 
       // Append assistant message with tool calls
       const assistantMessage: Message = {
@@ -146,8 +152,27 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       logger.error('run.failed', error)
     }
   } finally {
+    // M1-12: Cancel any in-flight work (model HTTP request, running tools).
+    // Reached on normal completion, throw, AND consumer gen.return()
+    internal.abort()
+    unlink()
     await logger.flush()
   }
+}
+
+/**
+ * Link an external abort signal into a controller
+ * Returns an unlink function to remove the listener (avoid leaks on reuse)
+ * M1-12
+ */
+function linkAbort(external: AbortSignal, controller: AbortController): () => void {
+  if (external.aborted) {
+    controller.abort()
+    return () => {}
+  }
+  const onAbort = () => controller.abort()
+  external.addEventListener('abort', onAbort, { once: true })
+  return () => external.removeEventListener('abort', onAbort)
 }
 
 /**
@@ -292,7 +317,32 @@ async function* executeTools(
 
   const results: Array<ToolResult & { callId: string }> = []
 
-  for (const call of calls) {
+  for (let i = 0; i < calls.length; i++) {
+    const call = calls[i]
+
+    // M1-12: Stop between tools on abort. Completed results are preserved
+    // (already yielded + in results); remaining calls get synthetic aborted
+    // results so every tool_use in history has a matching tool_result.
+    if (ctx.signal.aborted) {
+      for (const remaining of calls.slice(i)) {
+        const result: ToolResult & { callId: string } = {
+          callId: remaining.id,
+          success: false,
+          content: 'Tool execution aborted by user',
+          error: {
+            kind: 'aborted',
+            message: 'Run was aborted before this tool executed',
+            recoverable: false
+          },
+          metadata: { durationMs: 0 }
+        }
+        results.push(result)
+        yield { type: 'tool.completed', callId: remaining.id, result }
+        logger.log('tool.aborted', { callId: remaining.id, name: remaining.name })
+      }
+      break
+    }
+
     // M1-11: Check if tool exists
     const tool = ctx.tools.find(t => t.name === call.name)
     if (!tool) {
