@@ -24,13 +24,22 @@
 
 ### A. 类型与骨架（3 pd）
 
-| # | 任务 | 产出文件 | 估时 |
-|---|---|---|---|
-| M1-01 | 定义 Tool / ToolUseContext / ToolResult 全套类型 | `src/lib/tools/types.ts` | 1pd |
-| M1-02 | 定义 QueryContext / QueryEvent / RunLimits | `src/lib/engine/types.ts` | 1pd |
-| M1-03 | 工具注册表：register / resolve / toSchema | `src/lib/tools/registry.ts` | 1pd |
+| # | 任务 | 产出文件 | 估时 | 状态 |
+|---|---|---|---|---|
+| M1-01 | 定义 Tool / ToolUseContext / ToolResult 全套类型 | `src/lib/tools/types.ts` | 1pd | ✅ |
+| M1-02 | 定义 QueryContext / QueryEvent / RunLimits | `src/lib/engine/types.ts` | 1pd | ✅ |
+| M1-03 | 工具注册表：register / resolve / toSchema | `src/lib/tools/registry.ts` | 1pd | ✅ |
 
-> M1-01 和 M1-02 要一起设计再一起提交。两组类型的耦合点（`ToolCall`、`ToolResult` 在事件流中的形状）分开定会返工。
+**实现说明**（commit 4877b01）：
+
+M1-01/02/03 按照规格要求一起设计并提交，包含：
+- **工具类型**：`Tool`、`ToolCall`、`ToolResult`、`ToolUseContext`、`ToolError`
+- **引擎类型**：`QueryContext`、`QueryEvent`、`RunLimits`、`UsageStats`
+- **工具注册表**：类型安全的注册/查找/schema 生成，带权限检查钩子
+- **查询循环骨架**：`runQuery()` async generator（M1-08 的基础框架）
+- **日志系统**：`SimpleRunLogger` 结构化日志
+
+同时创建了 harness、memory、skills、workspace 类型骨架，为后续阶段提供前向兼容性。
 
 ### B. Model Gateway（4 pd）
 
