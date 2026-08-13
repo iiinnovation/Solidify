@@ -8,6 +8,7 @@ import {
   getDefaultModel,
   type AIModel,
   type ApiFormat,
+  type ToolDefinition,
 } from '../_shared/ai-providers.ts'
 
 const BASE_SYSTEM_PROMPT = `你是 Solidify 的 AI 助手，专门服务于项目实施人员（项目经理、实施工程师、售前顾问）。
@@ -103,6 +104,8 @@ interface ChatRequest {
   // 技能系统提示
   skillSystemPrompt?: string
   skillSkipConfirmation?: boolean
+  // 工具定义（M1-07：透传给 AI Provider）
+  tools?: ToolDefinition[]
 }
 
 serve(async (req: Request) => {
@@ -116,7 +119,7 @@ serve(async (req: Request) => {
     //   return createErrorResponse('UNAUTHORIZED', 401, '未登录')
     // }
 
-    const { messages, model, provider, skillSystemPrompt, skillSkipConfirmation }: ChatRequest = await req.json()
+    const { messages, model, provider, skillSystemPrompt, skillSkipConfirmation, tools }: ChatRequest = await req.json()
 
     if (!messages || messages.length === 0) {
       return createErrorResponse('VALIDATION_ERROR', 422, '消息不能为空')
@@ -141,11 +144,12 @@ serve(async (req: Request) => {
         provider.modelId,
         provider.format,
         fullMessages,
+        tools, // M1-07: 透传 tools 参数
       )
     } else {
       // 预设模型：使用环境变量中的 Key
       const selectedModel = model ?? getDefaultModel()
-      upstreamRes = await streamChat(selectedModel, fullMessages)
+      upstreamRes = await streamChat(selectedModel, fullMessages, tools) // M1-07: 透传 tools 参数
     }
 
     if (!upstreamRes.ok) {

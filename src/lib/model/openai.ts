@@ -163,7 +163,7 @@ export class OpenAIProvider implements ModelProvider {
    * Convert unified messages to OpenAI format
    * OpenAI doesn't have a separate system parameter, so we inject it as the first message
    */
-  private convertMessages(
+  public convertMessages(
     messages: UnifiedMessage[],
     system?: string
   ): OpenAI.ChatCompletionMessageParam[] {
@@ -231,7 +231,7 @@ export class OpenAIProvider implements ModelProvider {
   /**
    * Convert unified tools to OpenAI format
    */
-  private convertTools(tools: ToolDefinition[]): OpenAI.ChatCompletionTool[] {
+  public convertTools(tools: ToolDefinition[]): OpenAI.ChatCompletionTool[] {
     return tools.map((tool) => ({
       type: 'function',
       function: {

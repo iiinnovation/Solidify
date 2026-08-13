@@ -4,7 +4,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest'
 import { OpenAIProvider } from '../openai'
-import type { CompletionRequest } from '../types'
+import type { CompletionRequest, ToolDefinition } from '../types'
 
 describe('OpenAIProvider', () => {
   let provider: OpenAIProvider
@@ -45,11 +45,11 @@ describe('OpenAIProvider', () => {
       stream: true,
     }
 
-    // Access private method for testing (we'll make it work via type assertion)
-    const convertedMessages = (provider as { convertMessages: (messages: unknown[]) => unknown[] }).convertMessages(request.messages)
+    // Access public method for testing
+    const convertedMessages = provider.convertMessages(request.messages)
     expect(convertedMessages).toHaveLength(1)
-    expect(convertedMessages[0].role).toBe('user')
-    expect(convertedMessages[0].content).toBe('Hello')
+    expect(convertedMessages[0]).toHaveProperty('role', 'user')
+    expect(convertedMessages[0]).toHaveProperty('content', 'Hello')
   })
 
   it('should handle multi-modal content', () => {
@@ -67,28 +67,33 @@ describe('OpenAIProvider', () => {
       stream: true,
     }
 
-    const convertedMessages = (provider as { convertMessages: (messages: unknown[]) => unknown[] }).convertMessages(request.messages)
-    expect(convertedMessages[0].content).toHaveLength(2)
+    const convertedMessages = provider.convertMessages(request.messages)
+    expect(Array.isArray(convertedMessages[0].content)).toBe(true)
+    expect((convertedMessages[0].content as unknown[]).length).toBe(2)
   })
 
   it('should convert tools correctly', () => {
-    const tools = [
+    const tools: ToolDefinition[] = [
       {
         name: 'get_weather',
         description: 'Get weather information',
         inputSchema: {
-          type: 'object',
+          type: 'object' as const,
           properties: {
-            location: { type: 'string' },
+            location: { type: 'string' as const },
           },
           required: ['location'],
         },
       },
     ]
 
-    const convertedTools = (provider as { convertTools: (tools: unknown[]) => unknown[] }).convertTools(tools)
+    const convertedTools = provider.convertTools(tools)
     expect(convertedTools).toHaveLength(1)
-    expect(convertedTools[0].type).toBe('function')
-    expect(convertedTools[0].function.name).toBe('get_weather')
+    expect(convertedTools[0]).toHaveProperty('type', 'function')
+
+    // Type guard for function tool
+    if ('function' in convertedTools[0]) {
+      expect(convertedTools[0].function).toHaveProperty('name', 'get_weather')
+    }
   })
 })

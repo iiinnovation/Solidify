@@ -73,30 +73,71 @@ interface ChatMessage {
   content: string
 }
 
+/**
+ * Tool definition compatible with both OpenAI and Anthropic formats
+ */
+export interface ToolDefinition {
+  name: string
+  description: string
+  input_schema: {
+    type: 'object'
+    properties: Record<string, unknown>
+    required?: string[]
+  }
+}
+
 export async function streamChat(
   model: AIModel,
   messages: ChatMessage[],
+  tools?: ToolDefinition[],
 ): Promise<Response> {
   const provider = getProvider(model)
 
   if (provider.format === 'openai') {
+    const body: Record<string, unknown> = {
+      model: provider.modelId,
+      messages,
+      stream: true,
+    }
+
+    // Add tools if provided (convert to OpenAI format)
+    if (tools && tools.length > 0) {
+      body.tools = tools.map(tool => ({
+        type: 'function',
+        function: {
+          name: tool.name,
+          description: tool.description,
+          parameters: tool.input_schema,
+        },
+      }))
+    }
+
     return fetch(provider.apiUrl, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${provider.apiKey}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        model: provider.modelId,
-        messages,
-        stream: true,
-      }),
+      body: JSON.stringify(body),
     })
   }
 
   // Anthropic 格式
   const systemMsg = messages.find((m) => m.role === 'system')
   const nonSystemMsgs = messages.filter((m) => m.role !== 'system')
+
+  const body: Record<string, unknown> = {
+    model: provider.modelId,
+    max_tokens: 8192,
+    system: systemMsg?.content ?? '',
+    messages: nonSystemMsgs,
+    stream: true,
+  }
+
+  // Add tools if provided (Anthropic format is already compatible)
+  if (tools && tools.length > 0) {
+    body.tools = tools
+  }
 
   return fetch(provider.apiUrl, {
     method: 'POST',
@@ -105,13 +146,7 @@ export async function streamChat(
       'anthropic-version': '2023-06-01',
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      model: provider.modelId,
-      max_tokens: 8192,
-      system: systemMsg?.content ?? '',
-      messages: nonSystemMsgs,
-      stream: true,
-    }),
+    body: JSON.stringify(body),
   })
 }
 
@@ -125,25 +160,53 @@ export async function streamChatCustom(
   modelId: string,
   format: ApiFormat,
   messages: ChatMessage[],
+  tools?: ToolDefinition[],
 ): Promise<Response> {
   if (format === 'openai') {
+    const body: Record<string, unknown> = {
+      model: modelId,
+      messages,
+      stream: true,
+    }
+
+    // Add tools if provided (convert to OpenAI format)
+    if (tools && tools.length > 0) {
+      body.tools = tools.map(tool => ({
+        type: 'function',
+        function: {
+          name: tool.name,
+          description: tool.description,
+          parameters: tool.input_schema,
+        },
+      }))
+    }
+
     return fetch(apiUrl, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        model: modelId,
-        messages,
-        stream: true,
-      }),
+      body: JSON.stringify(body),
     })
   }
 
   // Anthropic 格式
   const systemMsg = messages.find((m) => m.role === 'system')
   const nonSystemMsgs = messages.filter((m) => m.role !== 'system')
+
+  const body: Record<string, unknown> = {
+    model: modelId,
+    max_tokens: 8192,
+    system: systemMsg?.content ?? '',
+    messages: nonSystemMsgs,
+    stream: true,
+  }
+
+  // Add tools if provided (Anthropic format is already compatible)
+  if (tools && tools.length > 0) {
+    body.tools = tools
+  }
 
   return fetch(apiUrl, {
     method: 'POST',
@@ -152,12 +215,6 @@ export async function streamChatCustom(
       'anthropic-version': '2023-06-01',
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      model: modelId,
-      max_tokens: 8192,
-      system: systemMsg?.content ?? '',
-      messages: nonSystemMsgs,
-      stream: true,
-    }),
+    body: JSON.stringify(body),
   })
 }

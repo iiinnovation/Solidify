@@ -138,13 +138,14 @@ function parseOpenAIChunk(state: ParserState, data: unknown): StreamEvent[] {
 
   if (!choice || typeof choice !== 'object' || !('delta' in choice)) return events
 
-  const { delta } = choice as { delta: Record<string, unknown> }
+  const choiceObj = choice as { delta: Record<string, unknown>; finish_reason?: string }
+  const { delta } = choiceObj
 
   // Text content delta
   if (delta.content) {
     events.push({
       type: 'text_delta',
-      text: delta.content,
+      text: String(delta.content),
     })
   }
 
@@ -195,7 +196,7 @@ function parseOpenAIChunk(state: ParserState, data: unknown): StreamEvent[] {
   }
 
   // Check for finish_reason to emit tool_call_end
-  if (choice.finish_reason === 'tool_calls') {
+  if (choiceObj.finish_reason === 'tool_calls') {
     for (const [index, call] of state.toolCalls.entries()) {
       events.push({
         type: 'tool_call_end',
