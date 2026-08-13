@@ -18,6 +18,7 @@ export type {
 export type { ModelProvider } from './provider'
 
 export { AnthropicProvider } from './anthropic'
+export { OpenAIProvider } from './openai'
 
 export {
   ProviderRegistry,

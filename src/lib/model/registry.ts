@@ -6,6 +6,7 @@
 import type { ModelProvider } from './provider'
 import type { ProviderConfig } from './types'
 import { AnthropicProvider } from './anthropic'
+import { OpenAIProvider } from './openai'
 
 /**
  * Provider type identifier
@@ -77,7 +78,7 @@ export function createProvider(
       return new AnthropicProvider(config)
 
     case 'openai':
-      throw new Error('OpenAI provider not yet implemented')
+      return new OpenAIProvider(config)
 
     case 'gemini':
       throw new Error('Gemini provider not yet implemented')

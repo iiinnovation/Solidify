@@ -102,6 +102,14 @@ const anthropicProvider = ProviderRegistry.createProvider('anthropic', {
 })
 registry.register('anthropic', anthropicProvider)
 
+// 注册 OpenAI
+const openaiProvider = ProviderRegistry.createProvider('openai', {
+  apiKey: process.env.OPENAI_API_KEY!,
+  timeout: 60000,
+  maxRetries: 3,
+})
+registry.register('openai', openaiProvider)
+
 // 支持自定义端点（中转服务）
 const customProvider = ProviderRegistry.createProvider('anthropic', {
   apiKey: 'pk-xxx',
@@ -223,13 +231,56 @@ class Provider {
 
 ## 未来扩展
 
-- [ ] OpenAI Provider 实现
+- [x] OpenAI Provider 实现
 - [ ] Gemini Provider 实现
 - [ ] OpenAI-compatible 通用端点支持（Groq、Together 等）
 - [ ] 流式中断/恢复支持
 - [ ] 请求/响应缓存
 - [ ] Token 计数优化
 - [ ] 批量请求支持
+
+## 支持的 Provider
+
+### 1. Anthropic (Claude)
+
+**模型:**
+- `claude-opus-4` - 最强能力，复杂任务
+- `claude-sonnet-4` - 平衡性能和速度
+- `claude-haiku-4` - 快速、轻量级任务
+
+**特性:**
+- 原生流式支持
+- 工具调用（流式）
+- 视觉能力（图片输入）
+- 超长上下文（200K tokens）
+
+### 2. OpenAI (GPT)
+
+**模型:**
+- `gpt-4-turbo` - 最新 GPT-4 Turbo（支持视觉）
+- `gpt-4` - 标准 GPT-4
+- `gpt-4-32k` - 扩展上下文
+- `gpt-3.5-turbo` - 快速、经济
+- `o1-preview` - 推理模型
+- `o1-mini` - 轻量级推理
+
+**特性:**
+- 原生流式支持
+- 函数调用（工具使用）
+- 视觉能力（图片输入）
+- 超长上下文（128K tokens for turbo）
+
+**Azure OpenAI 支持:**
+```typescript
+const azureProvider = new OpenAIProvider({
+  apiKey: process.env.AZURE_OPENAI_KEY!,
+  baseURL: 'https://your-resource.openai.azure.com/openai/deployments/your-deployment',
+})
+```
+
+### 3. Google Gemini
+
+**状态:** 即将支持
 
 ## 参考
 
