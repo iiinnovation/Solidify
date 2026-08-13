@@ -1,0 +1,61 @@
+# ─── 依赖 ───────────────────────────────────────────────
+node_modules/
+.pnp
+.pnp.js
+
+# ─── 构建产物 ───────────────────────────────────────────
+dist/
+dist-ssr/
+build/
+*.local
+
+# ─── Tauri ─────────────────────────────────────────────
+src-tauri/target/
+src-tauri/gen/schemas/
+src-tauri/WixTools/
+
+# ─── 测试与覆盖率 ────────────────────────────────────────
+coverage/
+.nyc_output/
+*.lcov
+
+# ─── 环境与密钥 ─────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ─── 编辑器与工具缓存 ─────────────────────────────────────
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+.eslintcache
+*.tsbuildinfo
+.vite/
+
+# ─── 操作系统 ───────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+desktop.ini
+
+# ─── 日志 ──────────────────────────────────────────────
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ─── Supabase 本地 ──────────────────────────────────────
+supabase/.branches/
+supabase/.temp/
+
+# ─── 工作区运行时数据（本地优先架构，M3 起产生）─────────────
+.solidify/
