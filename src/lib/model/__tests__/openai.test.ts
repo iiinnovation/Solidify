@@ -46,7 +46,7 @@ describe('OpenAIProvider', () => {
     }
 
     // Access private method for testing (we'll make it work via type assertion)
-    const convertedMessages = (provider as any).convertMessages(request.messages)
+    const convertedMessages = (provider as { convertMessages: (messages: unknown[]) => unknown[] }).convertMessages(request.messages)
     expect(convertedMessages).toHaveLength(1)
     expect(convertedMessages[0].role).toBe('user')
     expect(convertedMessages[0].content).toBe('Hello')
@@ -67,7 +67,7 @@ describe('OpenAIProvider', () => {
       stream: true,
     }
 
-    const convertedMessages = (provider as any).convertMessages(request.messages)
+    const convertedMessages = (provider as { convertMessages: (messages: unknown[]) => unknown[] }).convertMessages(request.messages)
     expect(convertedMessages[0].content).toHaveLength(2)
   })
 
@@ -86,7 +86,7 @@ describe('OpenAIProvider', () => {
       },
     ]
 
-    const convertedTools = (provider as any).convertTools(tools)
+    const convertedTools = (provider as { convertTools: (tools: unknown[]) => unknown[] }).convertTools(tools)
     expect(convertedTools).toHaveLength(1)
     expect(convertedTools[0].type).toBe('function')
     expect(convertedTools[0].function.name).toBe('get_weather')
