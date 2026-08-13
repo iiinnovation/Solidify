@@ -119,6 +119,41 @@ export async function writeTextFile(
   }
 }
 
+/** 追加写入本地文件（文本），父目录不存在时自动创建 */
+export async function appendTextFile(
+  path: string,
+  content: string,
+): Promise<boolean> {
+  if (!isTauri) return false
+  try {
+    const fs = await import('@tauri-apps/plugin-fs')
+    const dir = path.slice(0, path.lastIndexOf('/'))
+    if (dir) {
+      await fs.mkdir(dir, { recursive: true }).catch(() => {
+        // 目录已存在时忽略
+      })
+    }
+    await fs.writeTextFile(path, content, { append: true })
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** 删除本地文件，不存在时静默成功 */
+export async function removePath(path: string): Promise<boolean> {
+  if (!isTauri) return false
+  try {
+    const { remove, exists } = await import('@tauri-apps/plugin-fs')
+    if (await exists(path)) {
+      await remove(path)
+    }
+    return true
+  } catch {
+    return false
+  }
+}
+
 /** 写入本地文件（二进制） */
 export async function writeBinaryFile(
   path: string,

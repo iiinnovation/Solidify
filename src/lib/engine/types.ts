@@ -60,6 +60,38 @@ export interface QueryContext {
   readonly limits: RunLimits
   readonly signal: AbortSignal
   readonly providerRegistry: ProviderRegistry  // Model provider registry
+  /** M1-13: Optional snapshot store for crash recovery; absent = no snapshots */
+  readonly snapshots?: SnapshotStore
+}
+
+// ============================================================================
+// Session Snapshot (M1-13)
+// ============================================================================
+
+/**
+ * One snapshot per completed turn, serialized as one jsonl line
+ * @see docs/specs/agent-loop.md §4 (恢复)
+ */
+export interface TurnSnapshot {
+  turn: number
+  messages: Message[]
+  usage: UsageStats
+  ts: string
+}
+
+/**
+ * Append-only snapshot storage
+ * Tauri: .solidify/conversations/<id>.jsonl · Web: localStorage
+ */
+export interface SnapshotStore {
+  /** Append one turn snapshot for a conversation */
+  append(conversationId: string, snapshot: TurnSnapshot): Promise<void>
+
+  /** Load the latest snapshot, null if none exists */
+  loadLatest(conversationId: string): Promise<TurnSnapshot | null>
+
+  /** Remove all snapshots for a conversation */
+  clear(conversationId: string): Promise<void>
 }
 
 // ============================================================================

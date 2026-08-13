@@ -122,6 +122,27 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       currentMessages = [...currentMessages, toolResultMessage]
 
       logger.log('turn.completed', { turn, toolCalls: response.toolCalls.length })
+
+      // M1-13: Snapshot after each completed turn for crash recovery.
+      // Snapshot failure must not kill the run (tombstone principle)
+      if (ctx.snapshots) {
+        try {
+          await ctx.snapshots.append(ctx.conversationId, {
+            turn,
+            messages: currentMessages,
+            usage: { ...usage },
+            ts: new Date().toISOString(),
+          })
+          logger.log('snapshot.written', { turn })
+        } catch (snapshotError) {
+          logger.warn('snapshot.failed', {
+            turn,
+            error: snapshotError instanceof Error
+              ? snapshotError.message
+              : String(snapshotError),
+          })
+        }
+      }
     }
 
     // Check if we hit max turns

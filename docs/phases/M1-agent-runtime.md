@@ -87,7 +87,7 @@ Edge Function 现在支持完整的工具调用流程：
 | M1-10 | 大结果句柄化 | `src/lib/engine/handle-store.ts` | 1pd | ⏳ 部分 |
 | M1-11 | Tombstoning 全套场景 | 分布式实现，见说明 | 1pd | ✅ |
 | M1-12 | 中断：AbortSignal 贯穿 + finally 清理 | 循环内 | 1pd | ✅ |
-| M1-13 | 会话快照与恢复（jsonl 追加） | `src/lib/engine/snapshot.ts` | 0.5pd | |
+| M1-13 | 会话快照与恢复（jsonl 追加） | `src/lib/engine/snapshot.ts` | 0.5pd | ✅ |
 
 **实现说明**：
 
@@ -118,6 +118,15 @@ Edge Function 现在支持完整的工具调用流程：
 - **内部 AbortController**：`runQuery` 内部创建 controller 并用 `linkAbort()` 与外部 signal 联动，下游统一消费内部 signal。这样消费端 `gen.return()`（for-await break）提前退出时，`finally` 中 `internal.abort()` 也能取消在途请求 —— 仅靠外部 signal 做不到这点
 - **工具间中断点**：`executeTools` 每个调用前检查 signal；abort 时已完成结果保留不回滚，剩余调用合成 `kind: 'aborted'` 的 tool_result，保证历史中每个 `tool_use` 都有配对结果（为 M1-13 快照恢复铺路）
 - **测试**：`__tests__/query-abort.test.ts` 覆盖 5 个场景 —— 启动前 abort、流中 abort（含请求取消断言）、工具间 abort（已完成保留 + 剩余 aborted）、`gen.return()` finally 清理、正常完成不受影响
+
+**M1-13 关键实现细节**（规格 §4 恢复）：
+
+- 每个工具轮结束后追加一行快照 `{turn, messages, usage, ts}`；快照写入失败只记账不中断运行
+- 双端存储：Tauri 写 `<workspace>/.solidify/conversations/<id>.jsonl`（经 `tauri.ts` 新增的 `appendTextFile`/`removePath`，mkdir 自动建目录）；Web 降级 localStorage（每会话保留最近 20 条防爆配额）
+- 恢复读最后一行重建消息历史：`readLatestSnapshot()` 从尾部回扫，跳过写一半的残行（崩溃时的 torn write），不因尾行损坏丢掉全部历史
+- `QueryContext` 新增可选 `snapshots?: SnapshotStore`，不传则不写快照，现有调用零破坏
+- conversationId 进文件名前做字符白名单清洗，防路径穿越
+- 按 ADR-0002 限制：只支持「刷新/重开后从断点继续」，不做后台续跑
 
 ### D. 工具执行（3 pd）
 
