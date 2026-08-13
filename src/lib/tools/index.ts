@@ -18,3 +18,13 @@ export type {
 } from './types'
 
 export { ToolRegistry, toolRegistry } from './registry'
+
+export {
+  validateInput,
+  prepareCall,
+  executeCall,
+  canRunInParallel,
+  type ValidationResult,
+  type PreparedCall,
+  type ExecuteCallOptions,
+} from './executor'

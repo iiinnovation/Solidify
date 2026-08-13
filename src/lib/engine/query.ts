@@ -5,7 +5,9 @@
  */
 
 import type { QueryContext, QueryEvent, UsageStats, Message } from './types'
-import type { ToolCall, ToolResult } from '../tools/types'
+import type { Tool, ToolCall, ToolResult, ToolProgress } from '../tools/types'
+import { prepareCall, executeCall, canRunInParallel } from '../tools/executor'
+import { buildToolUseContext } from './tool-context'
 import { SimpleRunLogger } from './logger'
 import { streamModel } from './model'
 
@@ -323,11 +325,10 @@ async function* streamModelResponse(
 
 /**
  * Execute tool calls and yield progress events
- * Implements tombstone events for recoverable errors (M1-11)
- * TODO M1-14: Implement actual tool execution with validation
- * TODO M1-15: Implement concurrency control
- * TODO M1-16: Implement timeout and retry
- * @see docs/specs/agent-loop.md §3 (Tombstoning)
+ * Dispatch pipeline lives in tools/executor.ts (M1-14/15/16):
+ * prepare (lookup → availability → schema) → execute (timeout/retry) → normalize
+ * Tombstones for recoverable errors per M1-11; abort semantics per M1-12.
+ * @see docs/specs/tool-interface.md §4 (流程), §5 (并发)
  */
 async function* executeTools(
   ctx: QueryContext,
@@ -337,15 +338,82 @@ async function* executeTools(
   logger.log('tools.executing', { count: calls.length })
 
   const results: Array<ToolResult & { callId: string }> = []
+  const toolCtx = buildToolUseContext(ctx, logger)
 
-  for (let i = 0; i < calls.length; i++) {
-    const call = calls[i]
+  // Steps ①②③ per call; failures feed back immediately so the model
+  // can self-correct, with tombstones for the recoverable cases (M1-11)
+  const runnable: Array<{ call: ToolCall; tool: Tool }> = []
+  for (const call of calls) {
+    const prep = prepareCall(call, ctx.tools, ctx.platform)
+    if (prep.ok) {
+      runnable.push({ call, tool: prep.tool })
+      continue
+    }
+
+    if (prep.tombstone) {
+      yield {
+        type: 'tombstone',
+        reason: prep.tombstone.reason,
+        detail: prep.tombstone.detail
+      }
+    }
+    const result = { ...prep.result, callId: call.id }
+    results.push(result)
+    yield { type: 'tool.completed', callId: call.id, result }
+    logger.log('tool.rejected', {
+      callId: call.id,
+      name: call.name,
+      kind: prep.result.error?.kind,
+      tombstone: prep.tombstone?.reason
+    })
+  }
+
+  const makeOpts = (call: ToolCall) => ({
+    ctx: toolCtx,
+    signal: ctx.signal,
+    defaultTimeoutMs: ctx.limits.toolTimeoutMs,
+    onProgress: (p: ToolProgress) =>
+      logger.log('tool.progress', { callId: call.id, ...p }),
+  })
+
+  // M1-15: Parallel only when EVERY tool is readOnly && concurrencySafe.
+  // Start all, then yield completions in model-returned order.
+  if (canRunInParallel(runnable.map(r => r.call), ctx.tools)) {
+    for (const { call } of runnable) {
+      yield {
+        type: 'tool.progress',
+        callId: call.id,
+        progress: { phase: 'executing', current: 0 }
+      }
+    }
+
+    const promises = runnable.map(({ tool, call }) =>
+      executeCall(tool, call, makeOpts(call))
+    )
+    for (let i = 0; i < runnable.length; i++) {
+      const { call } = runnable[i]
+      const result = { ...(await promises[i]), callId: call.id }
+      results.push(result)
+      yield { type: 'tool.completed', callId: call.id, result }
+      logger.log('tool.completed', {
+        callId: call.id,
+        name: call.name,
+        success: result.success,
+        durationMs: result.metadata?.durationMs
+      })
+    }
+    return results
+  }
+
+  // Serial path, model-returned order
+  for (let i = 0; i < runnable.length; i++) {
+    const { call, tool } = runnable[i]
 
     // M1-12: Stop between tools on abort. Completed results are preserved
     // (already yielded + in results); remaining calls get synthetic aborted
     // results so every tool_use in history has a matching tool_result.
     if (ctx.signal.aborted) {
-      for (const remaining of calls.slice(i)) {
+      for (const { call: remaining } of runnable.slice(i)) {
         const result: ToolResult & { callId: string } = {
           callId: remaining.id,
           success: false,
@@ -364,108 +432,20 @@ async function* executeTools(
       break
     }
 
-    // M1-11: Check if tool exists
-    const tool = ctx.tools.find(t => t.name === call.name)
-    if (!tool) {
-      const availableTools = ctx.tools.map(t => t.name).join(', ')
-      const errorMessage = `Tool '${call.name}' does not exist. Available tools: ${availableTools}`
-
-      yield {
-        type: 'tombstone',
-        reason: 'unknown_tool',
-        detail: { toolName: call.name, availableTools: ctx.tools.map(t => t.name) }
-      }
-
-      // Feedback result to let model self-correct
-      const result: ToolResult & { callId: string } = {
-        callId: call.id,
-        success: false,
-        content: errorMessage,
-        error: {
-          kind: 'invalid_input',
-          message: errorMessage,
-          recoverable: true
-        },
-        metadata: { durationMs: 0 }
-      }
-
-      results.push(result)
-      yield { type: 'tool.completed', callId: call.id, result }
-      logger.log('tool.tombstone', { callId: call.id, reason: 'unknown_tool' })
-      continue
-    }
-
-    // M1-11: Validate tool arguments against schema (basic check)
-    // TODO: Full JSON Schema validation in M1-14
-    if (tool.inputSchema?.required) {
-      const missingParams = tool.inputSchema.required.filter(
-        param => !(param in (call.input as Record<string, unknown>))
-      )
-
-      if (missingParams.length > 0) {
-        const errorMessage = `Missing required parameters: ${missingParams.join(', ')}`
-
-        yield {
-          type: 'tombstone',
-          reason: 'invalid_tool_args',
-          detail: { toolName: call.name, missingParams, providedArgs: call.input }
-        }
-
-        // Feedback result to let model self-correct
-        const result: ToolResult & { callId: string } = {
-          callId: call.id,
-          success: false,
-          content: errorMessage,
-          error: {
-            kind: 'invalid_input',
-            message: errorMessage,
-            recoverable: true
-          },
-          metadata: { durationMs: 0 }
-        }
-
-        results.push(result)
-        yield { type: 'tool.completed', callId: call.id, result }
-        logger.log('tool.tombstone', { callId: call.id, reason: 'invalid_tool_args' })
-        continue
-      }
-    }
-
-    // Yield tool execution started
     yield {
       type: 'tool.progress',
       callId: call.id,
       progress: { phase: 'executing', current: 0 }
     }
 
-    // Stub result (M1-14 will implement actual execution)
-    const result: ToolResult & { callId: string } = {
-      callId: call.id,
-      success: false,
-      content: `Tool execution not yet implemented (M1-14). Called: ${call.name}`,
-      error: {
-        kind: 'runtime',
-        message: 'Tool execution stub - M1-14 will implement',
-        recoverable: false
-      },
-      metadata: {
-        durationMs: 0
-      }
-    }
-
+    const result = { ...(await executeCall(tool, call, makeOpts(call))), callId: call.id }
     results.push(result)
-
-    // Yield completion
-    yield {
-      type: 'tool.completed',
-      callId: call.id,
-      result
-    }
-
+    yield { type: 'tool.completed', callId: call.id, result }
     logger.log('tool.completed', {
       callId: call.id,
       name: call.name,
-      success: result.success
+      success: result.success,
+      durationMs: result.metadata?.durationMs
     })
   }
 

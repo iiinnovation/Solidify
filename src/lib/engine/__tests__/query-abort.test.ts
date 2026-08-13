@@ -58,13 +58,15 @@ function makeMockProvider(script: CompletionChunk[][]) {
   }
 }
 
-/** Minimal tool stub so tool calls pass the M1-11 existence check */
+/** Minimal tool stub so tool calls pass the M1-11 existence check.
+ *  concurrencySafe: false forces the serial execution path — the
+ *  between-tools abort semantics under test only exist there (M1-15). */
 const echoTool: Tool = {
   name: 'echo',
   description: 'Echo input back',
   inputSchema: { type: 'object' },
   readOnly: true,
-  concurrencySafe: true,
+  concurrencySafe: false,
   destructive: false,
   requiresConfirmation: false,
   availability: 'always',

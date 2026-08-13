@@ -8,6 +8,8 @@ import type { Tool, ToolCall, ToolResult, ToolProgress } from '../tools/types'
 import type { MemoryState } from '../memory/types'
 import type { LoadedSkill } from '../skills/types'
 import type { ProviderRegistry } from '../model'
+import type { WorkspaceHandle } from '../workspace/types'
+import type { Settings, PermissionMap, Platform } from '../harness/types'
 
 // ============================================================================
 // Query Context
@@ -62,6 +64,14 @@ export interface QueryContext {
   readonly providerRegistry: ProviderRegistry  // Model provider registry
   /** M1-13: Optional snapshot store for crash recovery; absent = no snapshots */
   readonly snapshots?: SnapshotStore
+
+  // ── M1-14: Harness-provided tool execution environment ──
+  // Optional until the harness wiring lands (M1-26); the loop synthesizes
+  // conservative fallbacks when absent (see engine/tool-context.ts)
+  readonly workspace?: WorkspaceHandle
+  readonly settings?: Readonly<Settings>
+  readonly permissions?: PermissionMap
+  readonly platform?: Platform
 }
 
 // ============================================================================

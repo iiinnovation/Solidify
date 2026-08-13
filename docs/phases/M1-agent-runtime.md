@@ -130,11 +130,21 @@ Edge Function 现在支持完整的工具调用流程：
 
 ### D. 工具执行（3 pd）
 
-| # | 任务 | 产出文件 | 估时 |
-|---|---|---|---|
-| M1-14 | 执行调度：校验 → 执行 → 规范化 | `src/lib/tools/executor.ts` | 1.5pd |
-| M1-15 | 并发策略（只读且 concurrencySafe 才并行） | 同上 | 0.5pd |
-| M1-16 | 超时与重试 | 同上 | 1pd |
+| # | 任务 | 产出文件 | 估时 | 状态 |
+|---|---|---|---|---|
+| M1-14 | 执行调度：校验 → 执行 → 规范化 | `src/lib/tools/executor.ts` | 1.5pd | ✅ |
+| M1-15 | 并发策略（只读且 concurrencySafe 才并行） | 同上 | 0.5pd | ✅ |
+| M1-16 | 超时与重试 | 同上 | 1pd | ✅ |
+
+**实现说明**（规格 tool-interface.md §4/§5）：
+
+执行流程 ①②③⑥⑦⑨ 全部落地；④ before_tool_call Hook 与 ⑤ PolicyEngine 按计划留到 M2（M1 无条件允许，与 M1-19 备注一致）。
+
+- **prepareCall（①②③）**：① 未知工具 → 墓碑 + 回灌可用列表；② tauri-only 工具在 web → `permission_denied` 回灌（不发墓碑，registry.resolve 是第一道过滤，此处是纵深防御，platform 未知时跳过）；③ 自研 JSONSchema 子集校验器（type/required/properties/items/enum/min-max/pattern，递归带路径的错误信息）→ 墓碑 + 校验错误回灌。③ 在权限判定之前，符合规格硬要求
+- **executeCall（⑥⑦，M1-16）**：每次尝试独立 AbortController（外部 abort 或超时都触发）；`raceWithAbort` 保证无视 signal 的工具也挂不死循环；超时 → `timeout` 可恢复错误；异常 → 转可解释的 `runtime` 错误；按工具声明的 `retry{maxAttempts, backoffMs}` 线性退避重试，只重试 timeout/runtime 且退避睡眠可中断；⑦ 规范化补 `durationMs`、超过 8KB 内容句柄化截断并标记 `truncated`。永不 throw，总是返回 ToolResult
+- **canRunInParallel（M1-15）**：全部调用 readOnly && concurrencySafe 才并行（保守策略），并行时先全部启动、按模型返回顺序 yield 完成事件；其余串行，M1-12 的工具间中断点保留在串行路径
+- **ToolUseContext 合成**（`engine/tool-context.ts`）：QueryContext 新增可选 workspace/settings/permissions/platform 字段，缺省时合成兜底（naive 路径包含检查的 workspace、默认 settings、platform 默认 'web' 安全阻断 tauri-only）；真实注入等 M1-26
+- **测试**：executor 单元 22 例（校验/准备/超时/重试/中断/句柄化/并发判定）+ 循环集成 3 例（并行交错断言、混合未知工具批次、校验错误自纠后成功）
 
 ### E. 首批工具（5 pd）
 
