@@ -4,7 +4,6 @@ import { useNavigate } from 'react-router-dom'
 import { useHotkeys } from 'react-hotkeys-hook'
 import { useSearch } from '@/hooks/use-search'
 import { cn } from '@/lib/utils'
-import { HOTKEYS } from '@/lib/hotkeys'
 import type { SearchResult } from '@/lib/api/search'
 
 const typeIcons = {
@@ -40,9 +39,12 @@ export function SearchModal({ open, onClose }: SearchModalProps) {
     }
   }, [open])
 
-  useEffect(() => {
+  // query 变化时把高亮项归位（渲染期调整，避免 effect 里同步 setState）
+  const [prevQuery, setPrevQuery] = useState(query)
+  if (query !== prevQuery) {
+    setPrevQuery(query)
     setSelectedIndex(0)
-  }, [query])
+  }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (!results || results.length === 0) return
@@ -182,19 +184,4 @@ export function SearchModal({ open, onClose }: SearchModalProps) {
       </div>
     </div>
   )
-}
-
-/**
- * Hook: 全局搜索
- */
-export function useGlobalSearch() {
-  const [open, setOpen] = useState(false)
-
-  useHotkeys(HOTKEYS.SEARCH, () => setOpen(true), { preventDefault: true })
-
-  return {
-    open,
-    openSearch: () => setOpen(true),
-    closeSearch: () => setOpen(false),
-  }
 }

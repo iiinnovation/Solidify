@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { useHotkeys } from 'react-hotkeys-hook'
 import { X, Command } from 'lucide-react'
 import { HOTKEYS, HOTKEY_LABELS, formatHotkey } from '@/lib/hotkeys'
@@ -85,19 +84,4 @@ export function HotkeyHelp({ open, onClose }: HotkeyHelpProps) {
       </div>
     </div>
   )
-}
-
-/**
- * Hook: 全局快捷键帮助面板
- */
-export function useHotkeyHelp() {
-  const [open, setOpen] = useState(false)
-
-  useHotkeys(HOTKEYS.HELP, () => setOpen(true), { preventDefault: true })
-
-  return {
-    open,
-    openHelp: () => setOpen(true),
-    closeHelp: () => setOpen(false),
-  }
 }

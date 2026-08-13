@@ -9,7 +9,9 @@ describe('cn', () => {
   })
 
   it('should handle conditional classes', () => {
-    const result = cn('foo', false && 'bar', 'baz')
+    // 用变量而非字面量，避免被当成常量表达式（也更贴近真实调用方式）
+    const isActive: boolean = false
+    const result = cn('foo', isActive && 'bar', 'baz')
 
     expect(result).toBe('foo baz')
   })
