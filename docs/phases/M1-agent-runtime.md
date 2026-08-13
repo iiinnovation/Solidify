@@ -34,19 +34,32 @@
 
 ### B. Model Gateway（4 pd）
 
-| # | 任务 | 产出文件 | 估时 |
-|---|---|---|---|
-| M1-04 | 能力探测：tools / parallelTools / vision / maxContext | `src/lib/engine/model-gateway.ts` | 1pd |
-| M1-05 | 工具 schema 生成：openai 与 anthropic 两种 format | 同上 | 1pd |
-| M1-06 | SSE 解析扩展：在现有文本增量基础上支持 tool_use 增量 | `src/lib/engine/stream-parser.ts` | 1.5pd |
-| M1-07 | Edge Function 透传 tools 参数 | `supabase/functions/_shared/ai-providers.ts`、`chat/index.ts` | 0.5pd |
+| # | 任务 | 产出文件 | 估时 | 状态 |
+|---|---|---|---|---|
+| M1-04 | 上下文组装与消息构建 | `src/lib/engine/messages.ts` | 1pd | ✅ |
+| M1-05 | 多 Provider 架构 + 工具 schema 生成 | `src/lib/model/*` + `src/lib/engine/model.ts` | 1pd | ✅ |
+| M1-06 | SSE 解析扩展：支持工具调用增量 | `src/lib/engine/stream-parser.ts` | 1.5pd | ✅ |
+| M1-07 | Edge Function 透传 tools 参数 | `supabase/functions/_shared/ai-providers.ts`、`chat/index.ts` | 0.5pd | 🔲 |
 
-M1-06 是本阶段最容易低估的任务。两家的工具调用增量格式差异大：
+**架构调整说明**：
 
-- OpenAI：`delta.tool_calls[].function.arguments` 分片拼接，需要按 index 累积
+M1-04/05 实际实现采用了更完整的架构方案：
+- **M1-04**：实现了消息构建和上下文组装（`messages.ts`）
+- **M1-05**：实现了完整的多 provider 架构（`src/lib/model/`），包含：
+  - 统一类型定义（`types.ts`）
+  - Provider 接口（`provider.ts`）
+  - Anthropic 实现（`anthropic.ts`，含 `convertTools()`）
+  - OpenAI 实现（`openai.ts`，含 `convertTools()`）
+  - Provider 注册表（`registry.ts`）
+  - Engine 桥接层（`src/lib/engine/model.ts`）
+
+**M1-06 关键实现细节**：
+
+两家的工具调用增量格式差异大，已在 `stream-parser.ts` 中统一处理：
+- OpenAI：`delta.tool_calls[].function.arguments` 分片拼接，按 index 累积
 - Anthropic：`content_block_start` + `input_json_delta` + `content_block_stop`
 
-现有代码只处理了文本增量（`use-chat.ts:318-321`），工具部分从零写。
+输出统一的 `QueryEvent` 格式（`tool_call_start`/`delta`/`end`），供上层消费。
 
 ### C. 查询循环（7 pd）
 
