@@ -24,6 +24,7 @@ export { readFileTool } from './builtin/read-file'
 export { writeFileTool } from './builtin/write-file'
 export { searchFilesTool } from './builtin/search-files'
 export { capturePreviewTool } from './builtin/capture-preview'
+export { readHandleTool } from './builtin/read-handle'
 
 export {
   validateInput,

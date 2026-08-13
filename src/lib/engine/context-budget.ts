@@ -6,6 +6,7 @@
 
 import type { QueryContext } from './types'
 import type { ClaudeMessage, ClaudeContent } from './messages'
+import type { MemoryState } from '../memory/types'
 
 /**
  * Token estimation (1 token ≈ 4 characters)
@@ -86,24 +87,32 @@ export function calculateBudget(ctx: QueryContext): ContextBudget {
 /**
  * Handle threshold for large tool results (8KB)
  */
-const HANDLE_THRESHOLD = 8192
+export const HANDLE_THRESHOLD = 8192
 
 /**
  * Handleize large tool result
  */
-export function handleizeLargeResult(
+export async function handleizeLargeResult(
   content: string,
-): { content: string; isHandleized: boolean } {
-  if (content.length <= HANDLE_THRESHOLD) {
+  memory?: MemoryState,
+): Promise<{ content: string; isHandleized: boolean; handle?: string }> {
+  const bytes = new TextEncoder().encode(content).byteLength
+  if (bytes <= HANDLE_THRESHOLD) {
     return { content, isHandleized: false }
   }
 
-  // TODO M2: Store full content and return handle via memory.store()
-  // For now, truncate with notice
   const summary = content.slice(0, 500)
-  const truncated = `${summary}\n\n[Result truncated: ${content.length} bytes total. Full content will be available via handle system in M2.]`
+  if (!memory) {
+    return {
+      content: `${summary}\n\n[Result truncated: ${bytes} bytes, ${content.length} UTF-16 code units total.]`,
+      isHandleized: true,
+    }
+  }
 
-  return { content: truncated, isHandleized: true }
+  const handle = await memory.store(content)
+  const truncated = `${summary}\n\n[Result stored as ${handle}: ${bytes} bytes, ${content.length} UTF-16 code units total. Use read_handle to retrieve it.]`
+
+  return { content: truncated, isHandleized: true, handle }
 }
 
 /**
@@ -140,28 +149,27 @@ export function trimMessages(
  * - Handleize large tool results
  * - Trim old messages if needed
  */
-export function applyBudget(
+export async function applyBudget(
   ctx: QueryContext,
   messages: ClaudeMessage[],
-): ClaudeMessage[] {
+): Promise<ClaudeMessage[]> {
   const budget = calculateBudget(ctx)
 
   // Step 1: M1-11 - Detect and remove orphan tool_results
   const { cleanedMessages, orphanCount } = removeOrphanToolResults(messages)
   if (orphanCount > 0) {
     console.warn(`[context-budget] Removed ${orphanCount} orphan tool_result(s)`)
-    // TODO M1-14: Emit tombstone event when integrated with event stream
   }
 
   // Step 2: Handleize large tool results
-  const processedMessages = cleanedMessages.map(msg => {
+  const processedMessages = await Promise.all(cleanedMessages.map(async msg => {
     if (typeof msg.content === 'string') {
       return msg
     }
 
-    const processedContent = msg.content.map(part => {
+    const processedContent = await Promise.all(msg.content.map(async part => {
       if (part.type === 'tool_result') {
-        const { content, isHandleized } = handleizeLargeResult(part.content)
+        const { content, isHandleized } = await handleizeLargeResult(part.content, ctx.memory)
         if (isHandleized) {
           // Log handleization (in production, emit event)
           console.debug(`[context-budget] Handleized tool result ${part.tool_use_id}`)
@@ -169,10 +177,10 @@ export function applyBudget(
         return { ...part, content }
       }
       return part
-    })
+    }))
 
     return { ...msg, content: processedContent }
-  })
+  }))
 
   // Step 3: Calculate current usage
   const currentTokens = processedMessages.reduce(

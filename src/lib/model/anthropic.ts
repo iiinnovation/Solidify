@@ -18,25 +18,26 @@ import type {
 
 export class AnthropicProvider implements ModelProvider {
   readonly name = 'anthropic'
-  readonly metadata: ProviderMetadata = {
-    name: 'anthropic',
-    displayName: 'Anthropic Claude',
-    supportsVision: true,
-    supportsTools: true,
-    supportsStreaming: true,
-    defaultMaxTokens: 4096,
-    models: [
-      'claude-opus-5',
-      'claude-sonnet-5',
-      'claude-opus-4-8',
-      'claude-haiku-4-5-20251001',
-    ],
-  }
+  readonly metadata: ProviderMetadata
 
   private client: Anthropic
   private config: ProviderConfig
 
   constructor(config: ProviderConfig) {
+    this.metadata = {
+      name: 'anthropic',
+      displayName: 'Anthropic Claude',
+      supportsVision: true,
+      supportsTools: config.supportsTools ?? true,
+      supportsStreaming: true,
+      defaultMaxTokens: 4096,
+      models: [
+        'claude-opus-5',
+        'claude-sonnet-5',
+        'claude-opus-4-8',
+        'claude-haiku-4-5-20251001',
+      ],
+    }
     this.config = config
     this.client = new Anthropic({
       apiKey: config.apiKey,
@@ -130,6 +131,10 @@ export class AnthropicProvider implements ModelProvider {
                       recoverable: true,
                     },
                   }
+                  // Keep the tool_use/result pair intact. Null fails the
+                  // object schema in the executor and produces actionable
+                  // validation feedback for the model's next turn.
+                  yield { type: 'tool_call_end', id: block.id, input: null }
                 }
               } else {
                 yield { type: 'content_end' }

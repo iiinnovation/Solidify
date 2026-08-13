@@ -12,6 +12,16 @@ describe('providerBaseURL', () => {
       .toBe('https://api.anthropic.com')
   })
 
+  it('adds the standard OpenAI v1 base path to a bare origin', () => {
+    expect(providerBaseURL('https://proxy.example/', 'openai'))
+      .toBe('https://proxy.example/v1')
+  })
+
+  it('keeps an explicit OpenAI v1 base path', () => {
+    expect(providerBaseURL('https://proxy.example/v1', 'openai'))
+      .toBe('https://proxy.example/v1')
+  })
+
   it('preserves custom base paths and strips query data', () => {
     expect(providerBaseURL('https://proxy.example/api/chat/completions?key=secret', 'openai'))
       .toBe('https://proxy.example/api')

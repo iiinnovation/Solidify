@@ -30,6 +30,12 @@ export interface Message {
   /** Agent runs persist their source event stream and reduced UI state together. */
   runEvents?: QueryEvent[]
   agentRun?: RunState
+  agentContext?: {
+    providerId: string
+    workspaceRoot?: string
+    skillSystemPrompt?: string
+    skillSkipConfirmation?: boolean
+  }
 }
 
 export interface Conversation {

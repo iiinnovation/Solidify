@@ -10,10 +10,12 @@ export function providerBaseURL(apiUrl: string, format: ApiFormat): string | und
   try {
     const url = new URL(value)
     url.pathname = url.pathname.replace(suffix, '') || '/'
+    if (format === 'openai' && url.pathname === '/') url.pathname = '/v1'
     url.search = ''
     url.hash = ''
     return url.toString().replace(/\/$/, '')
   } catch {
-    return value.replace(/[?#].*$/, '').replace(suffix, '').replace(/\/$/, '') || undefined
+    const base = value.replace(/[?#].*$/, '').replace(suffix, '').replace(/\/$/, '')
+    return base || undefined
   }
 }

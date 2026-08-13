@@ -34,15 +34,15 @@ interface SystemPromptParts {
  * Build messages array for Claude API from QueryContext
  * @see docs/specs/agent-loop.md §3.1
  */
-export function buildMessages(ctx: QueryContext): {
+export async function buildMessages(ctx: QueryContext): Promise<{
   system: string
   messages: ClaudeMessage[]
-} {
+}> {
   const system = buildSystemPrompt(ctx)
   const messages = ctx.messages.map(msg => convertMessage(msg))
 
   // Apply budget constraints (handleize large results, trim if needed)
-  const budgetedMessages = applyBudget(ctx, messages)
+  const budgetedMessages = await applyBudget(ctx, messages)
 
   return { system, messages: budgetedMessages }
 }
@@ -66,7 +66,6 @@ function buildSystemPrompt(ctx: QueryContext): string {
   }
 
   // TODO M2: Add memory context via ctx.memory.search()
-  // TODO M2: Add workspace context
 
   return Object.values(parts).filter(Boolean).join('\n\n---\n\n')
 }
@@ -74,11 +73,16 @@ function buildSystemPrompt(ctx: QueryContext): string {
 /**
  * Build base system prompt
  */
-function buildBaseSystemPrompt(_ctx: QueryContext): string {
+function buildBaseSystemPrompt(ctx: QueryContext): string {
   // TODO M2: Load from settings or templates
   return `You are Solidify, an AI assistant that helps users with their tasks.
 
-You have access to tools that let you interact with the user's system. Use them when appropriate to complete tasks.
+${ctx.tools.length > 0
+    ? "You have access to tools that let you interact with the user's system. Use them when appropriate to complete tasks."
+    : 'No tools are available for this provider; answer using the conversation context only.'}
+
+Current working directory: ${ctx.cwd}
+All relative file paths are resolved inside this workspace boundary.
 
 When using tools:
 - Read the tool description and parameter schema carefully

@@ -97,6 +97,8 @@ export type CompletionChunk =
 export interface ProviderConfig {
   apiKey: string
   baseURL?: string // Support custom endpoints (e.g., API proxies)
+  /** Explicit capability override for custom/provider models. Defaults true. */
+  supportsTools?: boolean
   timeout?: number // Request timeout in ms
   maxRetries?: number // Max retry attempts
   defaultModel?: string // Default model for this provider

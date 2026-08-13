@@ -12,7 +12,6 @@
     "dialog:allow-save",
     "fs:default",
     "fs:allow-read-text-file",
-    "fs:allow-write-text-file",
     "os:default",
     "notification:default",
     "notification:allow-is-permission-granted",

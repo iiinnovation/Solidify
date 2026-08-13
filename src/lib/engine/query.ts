@@ -33,12 +33,37 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
   const unlink = linkAbort(ctx.signal, internal)
   const runCtx: QueryContext = { ...ctx, signal: internal.signal }
 
-  // Current conversation state (reconstructed per turn)
+  // Current conversation state (reconstructed per turn or restored from the
+  // last completed tool turn after a renderer restart).
   let currentMessages = [...ctx.messages]
 
   try {
     yield { type: 'run.started', runId: ctx.runId }
     logger.log('run.started', { runId: ctx.runId, conversationId: ctx.conversationId })
+
+    if (!ctx.restoreSnapshot && ctx.snapshots) {
+      await clearSnapshot(ctx, logger)
+    } else if (ctx.restoreSnapshot && ctx.snapshots) {
+      try {
+        const snapshot = await ctx.snapshots.loadLatest(ctx.conversationId)
+        if (!snapshot) throw new Error('No recoverable Agent snapshot was found')
+        if (snapshot.runId !== ctx.runId) {
+          throw new Error('The recoverable Agent snapshot belongs to a different run')
+        }
+        turn = snapshot.turn
+        currentMessages = [...snapshot.messages]
+        Object.assign(usage, snapshot.usage)
+        totalToolCalls = snapshot.usage.toolCalls
+        logger.log('snapshot.restored', { turn, messageCount: currentMessages.length })
+      } catch (snapshotError) {
+        logger.warn('snapshot.restore_failed', {
+          error: snapshotError instanceof Error
+            ? snapshotError.message
+            : String(snapshotError),
+        })
+        throw snapshotError
+      }
+    }
 
     // Main agent loop: continue until completion or limit reached
     while (turn < ctx.limits.maxTurns) {
@@ -136,6 +161,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       if (ctx.snapshots) {
         try {
           await ctx.snapshots.append(ctx.conversationId, {
+            runId: ctx.runId,
             turn,
             messages: currentMessages,
             usage: { ...usage },
@@ -162,6 +188,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
 
     yield { type: 'run.completed', usage }
     logger.log('run.completed', { usage })
+    if (ctx.restoreSnapshot) await clearSnapshot(ctx, logger)
 
   } catch (error) {
     if (ctx.signal.aborted) {
@@ -186,6 +213,18 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
     internal.abort()
     unlink()
     await logger.flush()
+  }
+}
+
+async function clearSnapshot(ctx: QueryContext, logger: SimpleRunLogger): Promise<void> {
+  if (!ctx.snapshots) return
+  try {
+    await ctx.snapshots.clear(ctx.conversationId)
+    logger.log('snapshot.cleared')
+  } catch (snapshotError) {
+    logger.warn('snapshot.clear_failed', {
+      error: snapshotError instanceof Error ? snapshotError.message : String(snapshotError),
+    })
   }
 }
 

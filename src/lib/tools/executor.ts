@@ -18,7 +18,7 @@ import type {
 } from './types'
 import type { Platform } from '../harness/types'
 import type { JSONSchema } from '../types/json-schema'
-import { handleizeLargeResult } from '../engine/context-budget'
+import { HANDLE_THRESHOLD, handleizeLargeResult } from '../engine/context-budget'
 
 // ============================================================================
 // Step ③: Input schema validation
@@ -237,7 +237,7 @@ export async function executeCall(
     }
   }
 
-  return normalizeResult(last!)
+  return normalizeResult(last!, opts.ctx.memory)
 }
 
 /** Retry only transient failures; never aborts or input/permission errors */
@@ -375,15 +375,28 @@ function withDuration(result: ToolResult, started: number): ToolResult {
  * Step ⑦: normalize the result shape and handleize oversized content
  * so a single tool cannot blow up the context window.
  */
-function normalizeResult(result: ToolResult): ToolResult {
+async function normalizeResult(result: ToolResult, memory: ToolUseContext['memory']): Promise<ToolResult> {
   const content = typeof result.content === 'string' ? result.content : ''
-  const { content: sized, isHandleized } = handleizeLargeResult(content)
+  const { content: sized, isHandleized, handle } = await handleizeLargeResult(content, memory)
 
   return {
     ...result,
     content: sized,
+    // Oversized tool payloads must not survive in persisted runEvents through
+    // the UI-only data field; the handle is the single source of full content.
+    data: isHandleized && isLargeStructuredData(result.data) ? undefined : result.data,
+    handle: result.handle ?? handle,
     truncated: result.truncated || isHandleized,
     metadata: { durationMs: 0, ...result.metadata },
+  }
+}
+
+function isLargeStructuredData(data: unknown): boolean {
+  if (data === undefined) return false
+  try {
+    return new TextEncoder().encode(JSON.stringify(data)).byteLength > HANDLE_THRESHOLD
+  } catch {
+    return true
   }
 }
 

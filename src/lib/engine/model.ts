@@ -23,7 +23,10 @@ export async function* streamModel(
   const provider = ctx.providerRegistry.get(ctx.model.provider)
 
   // Build messages with context assembly
-  const { system, messages } = buildMessages(ctx)
+  const modelCtx = provider.metadata.supportsTools
+    ? ctx
+    : { ...ctx, tools: [] }
+  const { system, messages } = await buildMessages(modelCtx)
 
   // Convert messages to unified format
   const unifiedMessages: UnifiedMessage[] = messages.map((msg) => ({
@@ -56,7 +59,7 @@ export async function* streamModel(
   }))
 
   // Convert tools to unified format
-  const tools: ToolDefinition[] = ctx.tools.map((tool) => ({
+  const tools: ToolDefinition[] = (provider.metadata.supportsTools ? ctx.tools : []).map((tool) => ({
     name: tool.name,
     description: tool.description,
     inputSchema: tool.inputSchema,

@@ -10,7 +10,11 @@
  */
 
 import type { TurnSnapshot, SnapshotStore } from './types'
-import { appendTextFile, readTextFile, removePath } from '../tauri'
+import {
+  appendWorkspaceSnapshot,
+  clearWorkspaceSnapshot,
+  readWorkspaceSnapshot,
+} from '../tauri'
 
 // ============================================================================
 // Serialization (pure, testable)
@@ -27,6 +31,7 @@ export function parseSnapshotLine(line: string): TurnSnapshot | null {
     const parsed = JSON.parse(line) as TurnSnapshot
     if (
       typeof parsed.turn !== 'number' ||
+      typeof parsed.runId !== 'string' ||
       !Array.isArray(parsed.messages) ||
       typeof parsed.ts !== 'string'
     ) {
@@ -70,27 +75,24 @@ export class FileSnapshotStore implements SnapshotStore {
     this.workspaceRoot = workspaceRoot
   }
 
-  private path(conversationId: string): string {
-    return `${this.workspaceRoot}/.solidify/conversations/${sanitizeId(conversationId)}.jsonl`
-  }
-
   async append(conversationId: string, snapshot: TurnSnapshot): Promise<void> {
-    const ok = await appendTextFile(
-      this.path(conversationId),
+    await appendWorkspaceSnapshot(
+      sanitizeId(conversationId),
       serializeSnapshot(snapshot) + '\n',
+      this.workspaceRoot,
     )
-    if (!ok) {
-      throw new Error(`Failed to append snapshot for ${conversationId}`)
-    }
   }
 
   async loadLatest(conversationId: string): Promise<TurnSnapshot | null> {
-    const content = await readTextFile(this.path(conversationId))
+    const content = await readWorkspaceSnapshot(
+      sanitizeId(conversationId),
+      this.workspaceRoot,
+    )
     return content ? readLatestSnapshot(content) : null
   }
 
   async clear(conversationId: string): Promise<void> {
-    await removePath(this.path(conversationId))
+    await clearWorkspaceSnapshot(sanitizeId(conversationId), this.workspaceRoot)
   }
 }
 

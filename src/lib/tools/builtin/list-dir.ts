@@ -1,6 +1,6 @@
 import type { Tool } from '../types'
 import { listWorkspaceDir } from '@/lib/tauri'
-import { failure, success, errorMessage } from './helpers'
+import { failure, success, errorMessage, validateWorkspacePath } from './helpers'
 
 interface ListDirInput { path: string; depth?: number }
 
@@ -12,6 +12,8 @@ export const listDirTool: Tool<ListDirInput> = {
   availability: 'tauri-only', permissions: ['fs:read'], timeoutMs: 30_000,
   async execute(input, ctx, signal) {
     if (signal.aborted) return failure('runtime', '目录读取已中断', true)
+    const pathError = validateWorkspacePath(input.path, ctx)
+    if (pathError) return pathError
     try {
       const entries = await listWorkspaceDir(input.path, ctx.cwd, input.depth)
       return success(JSON.stringify(entries), entries)

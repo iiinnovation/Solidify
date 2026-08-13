@@ -1,6 +1,6 @@
 import type { Tool } from '../types'
 import { readWorkspaceFile } from '@/lib/tauri'
-import { failure, success, errorMessage } from './helpers'
+import { failure, success, errorMessage, validateWorkspacePath } from './helpers'
 
 interface ReadFileInput { path: string; offset?: number; limit?: number }
 
@@ -12,6 +12,8 @@ export const readFileTool: Tool<ReadFileInput> = {
   availability: 'tauri-only', permissions: ['fs:read'], timeoutMs: 30_000,
   async execute(input, ctx, signal) {
     if (signal.aborted) return failure('runtime', '文件读取已中断', true)
+    const pathError = validateWorkspacePath(input.path, ctx)
+    if (pathError) return pathError
     try {
       const result = await readWorkspaceFile(input.path, ctx.cwd, input.offset, input.limit)
       if (result.binary) return success(`文件为二进制，大小 ${result.bytes} 字节`, result)

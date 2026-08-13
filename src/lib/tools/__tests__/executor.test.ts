@@ -14,6 +14,7 @@ import {
 import type { ExecuteCallOptions } from '../executor'
 import type { Tool, ToolCall, ToolResult, ToolUseContext } from '../types'
 import type { MemoryState } from '../../memory/types'
+import { InMemoryState } from '../../memory/in-memory'
 import type { Settings, RunLogger } from '../../harness/types'
 
 // ============================================================================
@@ -279,14 +280,49 @@ describe('executeCall (M1-14/16)', () => {
   })
 
   it('⑦ handleizes oversized content and sets truncated', async () => {
+    const fullContent = 'x'.repeat(10_000)
     const tool = makeTool({
       async execute(): Promise<ToolResult> {
-        return { success: true, content: 'x'.repeat(10_000) }
+        return { success: true, content: fullContent, data: { content: fullContent } }
       },
     })
-    const result = await executeCall(tool, call(), makeOpts())
+    const opts = makeOpts({
+      ctx: { ...makeToolCtx(), memory: new InMemoryState() },
+    })
+    const result = await executeCall(tool, call(), opts)
     expect(result.truncated).toBe(true)
     expect(result.content.length).toBeLessThan(10_000)
+    expect(result.content).toContain('Result stored as')
+    expect(result.handle).toBeDefined()
+    expect(result.data).toBeUndefined()
+    expect(await opts.ctx.memory.retrieve(result.handle!)).toBe(fullContent)
+  })
+
+  it('⑦ measures the 8KB threshold in UTF-8 bytes', async () => {
+    const opts = makeOpts({
+      ctx: { ...makeToolCtx(), memory: new InMemoryState() },
+    })
+    const result = await executeCall(makeTool({
+      async execute(): Promise<ToolResult> {
+        return { success: true, content: '甲'.repeat(3000) }
+      },
+    }), call(), opts)
+
+    expect(result.truncated).toBe(true)
+    expect(result.handle).toBeDefined()
+  })
+
+  it('⑦ keeps small structured metadata beside handleized content', async () => {
+    const opts = makeOpts({
+      ctx: { ...makeToolCtx(), memory: new InMemoryState() },
+    })
+    const result = await executeCall(makeTool({
+      async execute(): Promise<ToolResult> {
+        return { success: true, content: 'x'.repeat(10_000), data: { bytes: 10_000 } }
+      },
+    }), call(), opts)
+
+    expect(result.data).toEqual({ bytes: 10_000 })
   })
 })
 

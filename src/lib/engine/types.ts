@@ -64,10 +64,12 @@ export interface QueryContext {
   readonly providerRegistry: ProviderRegistry  // Model provider registry
   /** M1-13: Optional snapshot store for crash recovery; absent = no snapshots */
   readonly snapshots?: SnapshotStore
+  /** Resume an interrupted run from the latest turn snapshot. */
+  readonly restoreSnapshot?: boolean
 
   // ── M1-14: Harness-provided tool execution environment ──
-  // Optional until the harness wiring lands (M1-26); the loop synthesizes
-  // conservative fallbacks when absent (see engine/tool-context.ts)
+  // Optional for non-chat callers; the loop synthesizes conservative
+  // fallbacks when absent (see engine/tool-context.ts)
   readonly workspace?: WorkspaceHandle
   readonly settings?: Readonly<Settings>
   readonly permissions?: PermissionMap
@@ -83,6 +85,7 @@ export interface QueryContext {
  * @see docs/specs/agent-loop.md §4 (恢复)
  */
 export interface TurnSnapshot {
+  runId: string
   turn: number
   messages: Message[]
   usage: UsageStats

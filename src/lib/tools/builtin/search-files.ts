@@ -1,6 +1,6 @@
 import type { Tool } from '../types'
 import { searchWorkspaceFiles } from '@/lib/tauri'
-import { failure, success, errorMessage } from './helpers'
+import { failure, success, errorMessage, validateWorkspacePath } from './helpers'
 
 interface SearchFilesInput { query: string; path?: string; max_results?: number }
 
@@ -12,6 +12,8 @@ export const searchFilesTool: Tool<SearchFilesInput> = {
   availability: 'tauri-only', permissions: ['fs:read'], timeoutMs: 60_000,
   async execute(input, ctx, signal) {
     if (signal.aborted) return failure('runtime', '文件检索已中断', true)
+    const pathError = validateWorkspacePath(input.path ?? '.', ctx)
+    if (pathError) return pathError
     try { const matches = await searchWorkspaceFiles(input.query, input.path ?? '.', ctx.cwd, input.max_results); return success(JSON.stringify(matches), matches) }
     catch (error) { return failure('runtime', `无法检索文件：${errorMessage(error)}`) }
   },

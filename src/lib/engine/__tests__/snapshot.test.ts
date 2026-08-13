@@ -17,6 +17,8 @@ import type { ModelProvider } from '../../model'
 import type { CompletionChunk, CompletionRequest } from '../../model/types'
 import type { Tool, ToolResult } from '../../tools/types'
 import type { MemoryState } from '../../memory/types'
+import { InMemoryState } from '../../memory'
+import { readHandleTool } from '../../tools/builtin/read-handle'
 
 // ============================================================================
 // Helpers
@@ -24,6 +26,7 @@ import type { MemoryState } from '../../memory/types'
 
 function makeSnapshot(turn: number): TurnSnapshot {
   return {
+    runId: 'test-run',
     turn,
     messages: [{ role: 'user', content: `turn ${turn}` }],
     usage: {
@@ -271,6 +274,24 @@ describe('runQuery snapshot integration (M1-13)', () => {
     expect(events[events.length - 1].type).toBe('run.completed')
   })
 
+  it('clears a previous run snapshot before starting a fresh run', async () => {
+    const store = new RecordingSnapshotStore()
+    await store.append('conv-snap', {
+      runId: 'previous-run',
+      turn: 4,
+      messages: [{ role: 'user', content: 'previous run' }],
+      usage: { inputTokens: 2, outputTokens: 1, totalTokens: 3, turns: 4, toolCalls: 2 },
+      ts: new Date().toISOString(),
+    })
+
+    const ctx = makeCtx(makeMockProvider([toolTurn, finalTurn]), store)
+    for await (const _ of runQuery(ctx)) { /* consume */ }
+
+    expect(store.appended).toHaveLength(1)
+    expect(JSON.stringify(store.appended[0].snapshot.messages)).not.toContain('previous run')
+    expect(store.appended[0].snapshot.turn).toBe(1)
+  })
+
   it('snapshot failure does not kill the run', async () => {
     const store = new RecordingSnapshotStore()
     store.failNext = true
@@ -294,12 +315,188 @@ describe('runQuery snapshot integration (M1-13)', () => {
     expect(latest).not.toBeNull()
 
     const resumedCtx = makeCtx(makeMockProvider([finalTurn]), store)
-    const resumed: QueryContext = { ...resumedCtx, messages: latest!.messages }
+    const resumed: QueryContext = {
+      ...resumedCtx,
+      messages: [{ role: 'user', content: 'stale context must not win' }],
+      restoreSnapshot: true,
+    }
 
     const events = []
     for await (const ev of runQuery(resumed)) events.push(ev)
 
     expect(events.some((e) => e.type === 'message.completed')).toBe(true)
     expect(events[events.length - 1].type).toBe('run.completed')
+    expect(store.appended).toHaveLength(0)
+  })
+
+  it('feeds an expired in-memory handle back and re-runs the source tool after restart', async () => {
+    const requests: CompletionRequest[] = []
+    const provider = makeMockProvider([
+      [
+        { type: 'tool_call_start', id: 'read-old-handle', name: 'read_handle' },
+        { type: 'tool_call_end', id: 'read-old-handle', input: { handle: 'handle-1' } },
+        { type: 'message_end', stopReason: 'tool_use' },
+      ],
+      [
+        { type: 'tool_call_start', id: 'rerun-source', name: 'read_source' },
+        { type: 'tool_call_end', id: 'rerun-source', input: { path: 'large.txt' } },
+        { type: 'message_end', stopReason: 'tool_use' },
+      ],
+      finalTurn,
+    ])
+    const originalStream = provider.stream.bind(provider)
+    provider.stream = async function* (request) {
+      requests.push(request)
+      yield* originalStream(request)
+    }
+
+    let sourceReads = 0
+    const sourceTool: Tool = {
+      name: 'read_source',
+      description: 'Read the original source again when cached content is unavailable',
+      inputSchema: {
+        type: 'object',
+        properties: { path: { type: 'string' } },
+        required: ['path'],
+      },
+      readOnly: true,
+      concurrencySafe: true,
+      destructive: false,
+      requiresConfirmation: false,
+      availability: 'always',
+      permissions: [],
+      async execute(input): Promise<ToolResult> {
+        const { path } = input as { path: string }
+        sourceReads++
+        return { success: true, content: `fresh content from ${path}` }
+      },
+      renderCall: (input) => `read ${(input as { path: string }).path}`,
+    }
+
+    const store = new RecordingSnapshotStore()
+    await store.append('conv-snap', {
+      runId: 'test-run',
+      turn: 1,
+      messages: [
+        { role: 'user', content: 'Read and summarize large.txt' },
+        {
+          role: 'assistant',
+          content: [{
+            type: 'tool_use',
+            id: 'original-source',
+            name: 'read_source',
+            input: { path: 'large.txt' },
+          }],
+        },
+        {
+          role: 'user',
+          content: [{
+            type: 'tool_result',
+            tool_use_id: 'original-source',
+            content: 'Result stored as handle-1. Use read_handle to retrieve it.',
+          }],
+        },
+      ],
+      usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15, turns: 1, toolCalls: 1 },
+      ts: new Date().toISOString(),
+    })
+
+    const events = []
+    for await (const event of runQuery({
+      ...makeCtx(provider, store),
+      memory: new InMemoryState(),
+      tools: [readHandleTool as Tool, sourceTool],
+      restoreSnapshot: true,
+    })) events.push(event)
+
+    const completed = events.filter(
+      (event) => event.type === 'tool.completed',
+    )
+    expect(completed[0]).toMatchObject({
+      callId: 'read-old-handle',
+      result: {
+        success: false,
+        error: { kind: 'not_found', recoverable: true },
+      },
+    })
+    expect(JSON.stringify(requests[1].messages.at(-1))).toContain('句柄不存在或已过期')
+    expect(sourceReads).toBe(1)
+    expect(completed[1]).toMatchObject({
+      callId: 'rerun-source',
+      result: { success: true, content: 'fresh content from large.txt' },
+    })
+    expect(events.at(-1)?.type).toBe('run.completed')
+  })
+
+  it('does not restore a stale snapshot for a normal new request', async () => {
+    const requests: CompletionRequest[] = []
+    const provider = makeMockProvider([finalTurn])
+    const originalStream = provider.stream.bind(provider)
+    provider.stream = async function* (request) {
+      requests.push(request)
+      yield* originalStream(request)
+    }
+    const store = new RecordingSnapshotStore()
+    await store.append('conv-snap', {
+      runId: 'previous-run',
+      turn: 2,
+      messages: [{ role: 'user', content: 'old snapshot' }],
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, turns: 2, toolCalls: 1 },
+      ts: new Date().toISOString(),
+    })
+
+    const ctx = makeCtx(provider, store)
+    for await (const _ of runQuery(ctx)) { /* consume */ }
+
+    expect(JSON.stringify(requests[0].messages)).toContain('hi')
+    expect(JSON.stringify(requests[0].messages)).not.toContain('old snapshot')
+  })
+
+  it('fails recovery without calling the model when no snapshot exists', async () => {
+    const requests: CompletionRequest[] = []
+    const provider = makeMockProvider([finalTurn])
+    const originalStream = provider.stream.bind(provider)
+    provider.stream = async function* (request) {
+      requests.push(request)
+      yield* originalStream(request)
+    }
+    const store = new RecordingSnapshotStore()
+    const ctx = { ...makeCtx(provider, store), restoreSnapshot: true }
+
+    const events = []
+    for await (const event of runQuery(ctx)) events.push(event)
+
+    expect(requests).toHaveLength(0)
+    expect(events.at(-1)).toMatchObject({
+      type: 'run.failed',
+      error: { kind: 'internal', message: 'No recoverable Agent snapshot was found' },
+    })
+  })
+
+  it('rejects a snapshot owned by another run', async () => {
+    const requests: CompletionRequest[] = []
+    const provider = makeMockProvider([finalTurn])
+    const originalStream = provider.stream.bind(provider)
+    provider.stream = async function* (request) {
+      requests.push(request)
+      yield* originalStream(request)
+    }
+    const store = new RecordingSnapshotStore()
+    await store.append('conv-snap', {
+      ...makeSnapshot(1),
+      runId: 'different-run',
+    })
+
+    const events = []
+    for await (const event of runQuery({
+      ...makeCtx(provider, store),
+      restoreSnapshot: true,
+    })) events.push(event)
+
+    expect(requests).toHaveLength(0)
+    expect(events.at(-1)).toMatchObject({
+      type: 'run.failed',
+      error: { message: 'The recoverable Agent snapshot belongs to a different run' },
+    })
   })
 })

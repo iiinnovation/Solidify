@@ -1,6 +1,6 @@
 import type { Tool } from '../types'
 import { writeWorkspaceFile } from '@/lib/tauri'
-import { failure, success, errorMessage } from './helpers'
+import { failure, success, errorMessage, validateWorkspacePath } from './helpers'
 
 interface WriteFileInput { path: string; content: string }
 
@@ -12,6 +12,8 @@ export const writeFileTool: Tool<WriteFileInput> = {
   availability: 'tauri-only', permissions: ['fs:write'], timeoutMs: 30_000,
   async execute(input, ctx, signal) {
     if (signal.aborted) return failure('runtime', '文件写入已中断', true)
+    const pathError = validateWorkspacePath(input.path, ctx)
+    if (pathError) return pathError
     try {
       const bytes = await writeWorkspaceFile(input.path, input.content, ctx.cwd)
       return { ...success(`已写入 ${input.path}（${bytes} 字节）`, { path: input.path, bytes }), metadata: { durationMs: 0, bytesWritten: bytes } }

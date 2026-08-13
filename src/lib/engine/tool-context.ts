@@ -1,7 +1,7 @@
 /**
  * ToolUseContext synthesis for the query loop (M1-14)
- * Uses harness-provided environment when present on QueryContext,
- * conservative fallbacks otherwise. Real wiring lands with M1-26.
+ * Uses harness-provided environment when present on QueryContext and
+ * conservative fallbacks for non-chat callers.
  *
  * @module lib/engine/tool-context
  * @see docs/specs/tool-interface.md §2
@@ -54,7 +54,10 @@ function createFallbackWorkspace(cwd: string): WorkspaceHandle {
   const name = root.split('/').filter(Boolean).pop() ?? root
 
   const resolve = (path: string): string => {
-    const joined = path.startsWith('/') ? path : `${root}/${path}`
+    if (/^(?:[A-Za-z]:)?[\\/]/.test(path)) {
+      throw new Error(`Path must be relative: ${path}`)
+    }
+    const joined = `${root}/${path}`
     const normalized = normalizePath(joined)
     if (normalized !== root && !normalized.startsWith(root + '/')) {
       throw new Error(`Path escapes workspace: ${path}`)
@@ -77,7 +80,7 @@ function createFallbackWorkspace(cwd: string): WorkspaceHandle {
   }
 }
 
-/** TODO M1-26: replaced by real user settings injected by the harness */
+/** Conservative settings fallback for non-chat callers. */
 function createFallbackSettings(ctx: QueryContext): Settings {
   return {
     model: {

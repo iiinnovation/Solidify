@@ -6,6 +6,7 @@ import { useChat } from './use-chat'
 import { useChatStore } from '@/stores/chat-store'
 import { useModelStore } from '@/stores/model-store'
 import { useKnowledgeEnhancementStore } from '@/stores/knowledge-store'
+import { useWorkspaceStore } from '@/stores/workspace-store'
 
 const mocks = vi.hoisted(() => ({
   agentLoop: true,
@@ -58,6 +59,7 @@ describe('useChat agent loop switch', () => {
       }],
     })
     useKnowledgeEnhancementStore.setState({ enabled: false })
+    useWorkspaceStore.setState({ workspaceRoot: null })
   })
 
   it('consumes runQuery events and saves them on the assistant message', async () => {
@@ -93,5 +95,137 @@ describe('useChat agent loop switch', () => {
     await waitFor(() => expect(result.current.isStreaming).toBe(false))
     expect(mocks.fetchChatStream).toHaveBeenCalledOnce()
     expect(mocks.runQuery).not.toHaveBeenCalled()
+  })
+
+  it('resumes one persisted running Agent without duplicating messages', async () => {
+    const startedAt = Date.now() - 1000
+    useChatStore.setState({
+      conversations: [{
+        id: 'conv-resume',
+        title: 'Resume',
+        createdAt: startedAt,
+        messages: [
+          { id: 'user-1', role: 'user', content: 'inspect files' },
+          {
+            id: 'assistant-1',
+            role: 'assistant',
+            content: 'partial text',
+            agentRun: {
+              runId: 'run-resume',
+              status: 'running',
+              text: 'partial text',
+              tools: [],
+              startedAt,
+            },
+            runEvents: [{ type: 'run.started', runId: 'run-resume' }],
+            agentContext: {
+              providerId: 'provider-1',
+              workspaceRoot: '/saved/workspace',
+              skillSystemPrompt: 'saved skill',
+            },
+          },
+        ],
+      }],
+      artifacts: [],
+      activeArtifactId: null,
+    })
+    mocks.runQuery.mockImplementation(async function* () {
+      yield { type: 'run.started', runId: 'run-resume' }
+      yield { type: 'message.delta', text: 'resumed reply' }
+      yield { type: 'message.completed', content: 'resumed reply' }
+      yield {
+        type: 'run.completed',
+        usage: { inputTokens: 4, outputTokens: 2, totalTokens: 6, turns: 2, toolCalls: 1 },
+      }
+    })
+
+    const { result, rerender } = renderHook(() => useChat('conv-resume'), { wrapper })
+
+    await waitFor(() => expect(mocks.runQuery).toHaveBeenCalledOnce())
+    await waitFor(() => expect(result.current.isStreaming).toBe(false))
+    rerender()
+
+    const context = mocks.runQuery.mock.calls[0][0]
+    expect(context).toMatchObject({
+      runId: 'run-resume',
+      conversationId: 'conv-resume',
+      restoreSnapshot: true,
+      cwd: '/',
+    })
+    expect(context.settings.workspaceRoot).toBe('/')
+    expect(mocks.runQuery).toHaveBeenCalledOnce()
+    expect(result.current.messages).toHaveLength(2)
+    expect(result.current.messages[1]).toMatchObject({
+      id: 'assistant-1',
+      content: 'resumed reply',
+      agentRun: { status: 'completed', text: 'resumed reply' },
+    })
+  })
+
+  it('marks a persisted run failed when its Provider no longer exists', async () => {
+    const startedAt = Date.now() - 1000
+    useChatStore.setState({
+      conversations: [{
+        id: 'conv-missing-provider',
+        title: 'Missing provider',
+        createdAt: startedAt,
+        messages: [
+          { id: 'user-before-recovery', role: 'user', content: 'retry this task' },
+          {
+            id: 'assistant-missing-provider',
+            role: 'assistant',
+            content: 'partial',
+            agentRun: {
+              runId: 'run-missing-provider',
+              status: 'running',
+              text: 'partial',
+              tools: [],
+              startedAt,
+            },
+            agentContext: { providerId: 'deleted-provider' },
+          },
+        ],
+      }],
+      artifacts: [],
+      activeArtifactId: null,
+    })
+
+    const { result } = renderHook(() => useChat('conv-missing-provider'), { wrapper })
+
+    await waitFor(() => {
+      expect(result.current.messages[1]?.agentRun).toMatchObject({
+        status: 'failed',
+        error: '无法恢复 Agent：原 Provider 已被删除',
+      })
+    })
+    expect(result.current.error?.message).toBe('无法恢复 Agent：原 Provider 已被删除')
+    expect(mocks.runQuery).not.toHaveBeenCalled()
+    expect(useChatStore.getState().conversations[0].messages[1].agentRun?.status)
+      .toBe('failed')
+    expect(useChatStore.getState().conversations[0].messages[1].runEvents?.at(-1))
+      .toMatchObject({ type: 'run.failed', error: { kind: 'internal' } })
+
+    mocks.runQuery.mockImplementation(async function* () {
+      yield { type: 'run.started', runId: 'run-retry' }
+      yield { type: 'message.completed', content: 'retry completed' }
+      yield {
+        type: 'run.completed',
+        usage: { inputTokens: 2, outputTokens: 2, totalTokens: 4, turns: 1, toolCalls: 0 },
+      }
+    })
+    act(() => result.current.retry())
+
+    await waitFor(() => expect(mocks.runQuery).toHaveBeenCalledOnce())
+    await waitFor(() => expect(result.current.isStreaming).toBe(false))
+    expect(mocks.runQuery.mock.calls[0][0].messages).toEqual([
+      { role: 'user', content: 'retry this task' },
+    ])
+    expect(result.current.messages).toHaveLength(2)
+    expect(result.current.messages[0]).toMatchObject({ role: 'user', content: 'retry this task' })
+    expect(result.current.messages[1]).toMatchObject({
+      role: 'assistant',
+      content: 'retry completed',
+      agentRun: { status: 'completed' },
+    })
   })
 })

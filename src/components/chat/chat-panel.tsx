@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { SendHorizonal, Square, FileText, Code, Presentation, GitGraph, ChevronDown, Settings2, Copy, RefreshCw, X, Paperclip, FileIcon, AlertCircle, BookOpen, Sparkles } from 'lucide-react'
+import { SendHorizonal, Square, FileText, Code, Presentation, GitGraph, ChevronDown, Settings2, Copy, RefreshCw, X, Paperclip, FileIcon, AlertCircle, BookOpen, Sparkles, FolderOpen } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { cn } from '@/lib/utils'
 import { MarkdownRenderer } from '@/components/artifacts/markdown-renderer'
@@ -13,12 +13,14 @@ import { SkillPalette } from '@/components/chat/skill-palette'
 import { AttachmentPreview } from '@/components/chat/attachment-preview'
 import { TemplateVariableForm } from '@/components/templates/template-variable-form'
 import { toast } from '@/stores/toast-store'
-import { isTauri, openFileDialog, readBinaryFile } from '@/lib/tauri'
+import { isTauri, openFileDialog, readBinaryFile, selectWorkspace } from '@/lib/tauri'
 import { validateFileSize, validateFileType, formatFileSize } from '@/lib/file-extractor'
 import type { Template } from '@/lib/api/types'
 import { useIncrementTemplateUsage } from '@/hooks/use-templates'
 import { RunTimeline } from '@/components/agent/run-timeline'
 import { RunControls } from '@/components/agent/run-controls'
+import { useWorkspaceStore } from '@/stores/workspace-store'
+import { isEnabled } from '@/lib/harness/flags'
 
 const typeIcons: Record<ArtifactType, typeof FileText> = {
   document: FileText,
@@ -257,6 +259,9 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
 
   const { enabled: knowledgeEnabled, setEnabled: setKnowledgeEnabled } = useKnowledgeEnhancementStore()
   const setPendingInput = useUIStore((s) => s.setPendingInput)
+  const workspaceRoot = useWorkspaceStore((s) => s.workspaceRoot)
+  const setWorkspaceRoot = useWorkspaceStore((s) => s.setWorkspaceRoot)
+  const workspaceToolsEnabled = isEnabled('agentLoop') && isEnabled('toolCalling')
 
   // 消费完 pendingInput 后清空 store 并聚焦输入框（写外部系统，属于 effect 的正当职责）
   useEffect(() => {
@@ -347,6 +352,15 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
     } else {
       // Web: 触发 input[type=file]
       fileInputRef.current?.click()
+    }
+  }
+
+  const handleWorkspaceSelect = async () => {
+    try {
+      const selected = await selectWorkspace()
+      if (selected) setWorkspaceRoot(selected)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '无法授权 Agent 工作目录')
     }
   }
 
@@ -552,7 +566,23 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
       <div className="shrink-0 px-6 pb-6 pt-2">
         <div className="max-w-2xl mx-auto">
           <div className="mb-1.5 pl-1 flex items-center justify-between">
-            <ModelSelector />
+            <div className="flex min-w-0 items-center gap-2">
+              <ModelSelector />
+              {isTauri && workspaceToolsEnabled && (
+                <button
+                  type="button"
+                  onClick={handleWorkspaceSelect}
+                  disabled={isStreaming}
+                  className="flex min-w-0 max-w-40 items-center gap-1 text-xs text-text-tertiary transition-colors hover:text-text-primary disabled:opacity-50"
+                  title={workspaceRoot ?? '选择 Agent 工作目录'}
+                >
+                  <FolderOpen size={12} className="shrink-0" strokeWidth={1.75} />
+                  <span className="truncate">
+                    {workspaceRoot?.split(/[\\/]/).filter(Boolean).pop() ?? '选择目录'}
+                  </span>
+                </button>
+              )}
+            </div>
             <div className="flex items-center gap-2">
               <RunControls run={activeRun} onStop={stopStreaming} />
               <button

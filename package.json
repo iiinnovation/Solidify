@@ -11,6 +11,7 @@
     "test": "vitest",
     "test:ui": "vitest --ui",
     "test:run": "vitest run",
+    "test:m1-live": "M1_LIVE_E2E=true node --env-file-if-exists=.env.m1-live.local ./node_modules/vitest/vitest.mjs run src/lib/engine/__tests__/m1-live-e2e.test.ts --testTimeout=120000",
     "test:coverage": "vitest run --coverage",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",

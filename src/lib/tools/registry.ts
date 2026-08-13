@@ -34,6 +34,8 @@ export class ToolRegistry implements IToolRegistry {
     const available: Tool[] = []
 
     for (const tool of this.tools.values()) {
+      const runtimeRequired = tool.name === 'read_handle'
+
       // Layer 1: Environment filter
       if (tool.availability === 'tauri-only' && ctx.platform === 'web') {
         continue
@@ -43,12 +45,12 @@ export class ToolRegistry implements IToolRegistry {
       }
 
       // Layer 2: Skill whitelist filter
-      if (ctx.skillAllowedTools && !ctx.skillAllowedTools.includes(tool.name)) {
+      if (!runtimeRequired && ctx.skillAllowedTools && !ctx.skillAllowedTools.includes(tool.name)) {
         continue
       }
 
       // Layer 3: User disabled tools
-      if (ctx.userDisabledTools.includes(tool.name)) {
+      if (!runtimeRequired && ctx.userDisabledTools.includes(tool.name)) {
         continue
       }
 
@@ -96,7 +98,8 @@ import { readFileTool } from './builtin/read-file'
 import { writeFileTool } from './builtin/write-file'
 import { searchFilesTool } from './builtin/search-files'
 import { capturePreviewTool } from './builtin/capture-preview'
+import { readHandleTool } from './builtin/read-handle'
 
-for (const tool of [listDirTool, readFileTool, writeFileTool, searchFilesTool, capturePreviewTool]) {
+for (const tool of [listDirTool, readFileTool, writeFileTool, searchFilesTool, capturePreviewTool, readHandleTool]) {
   toolRegistry.register(tool as Tool)
 }

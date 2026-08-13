@@ -3,7 +3,7 @@ import { buildMessages } from './messages'
 import type { QueryContext } from './types'
 
 describe('skill prompt assembly', () => {
-  it('adds selected skill content to the model system prompt', () => {
+  it('adds selected skill content to the model system prompt', async () => {
     const ctx = {
       messages: [{ role: 'user', content: 'Create an outline' }],
       tools: [],
@@ -15,7 +15,7 @@ describe('skill prompt assembly', () => {
       limits: { maxTokens: 10_000 },
     } as unknown as QueryContext
 
-    const result = buildMessages(ctx)
+    const result = await buildMessages(ctx)
     expect(result.system).toContain('Use the selected outline workflow.')
     expect(result.messages).toEqual([{ role: 'user', content: 'Create an outline' }])
   })

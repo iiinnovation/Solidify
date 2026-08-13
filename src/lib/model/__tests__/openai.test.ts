@@ -4,7 +4,35 @@
 
 import { describe, it, expect, beforeEach } from 'vitest'
 import { OpenAIProvider } from '../openai'
+import { AnthropicProvider } from '../anthropic'
 import type { CompletionRequest, ToolDefinition } from '../types'
+
+function installStream(provider: OpenAIProvider, chunks: unknown[]) {
+  async function* stream() {
+    yield* chunks
+  }
+  Object.defineProperty(provider, 'client', {
+    value: {
+      chat: {
+        completions: {
+          create: async () => stream(),
+        },
+      },
+    },
+  })
+}
+
+async function collectStream(provider: OpenAIProvider) {
+  const events = []
+  for await (const event of provider.stream({
+    model: 'test-model',
+    messages: [{ role: 'user', content: 'hello' }],
+    stream: true,
+  })) {
+    events.push(event)
+  }
+  return events
+}
 
 describe('OpenAIProvider', () => {
   let provider: OpenAIProvider
@@ -23,6 +51,13 @@ describe('OpenAIProvider', () => {
     expect(provider.metadata.supportsTools).toBe(true)
     expect(provider.metadata.supportsStreaming).toBe(true)
     expect(provider.metadata.defaultMaxTokens).toBe(4096)
+  })
+
+  it('honors an explicit no-tools capability declaration', () => {
+    const textOnly = new OpenAIProvider({ apiKey: 'test-key', supportsTools: false })
+    expect(textOnly.metadata.supportsTools).toBe(false)
+    expect(new AnthropicProvider({ apiKey: 'test-key', supportsTools: false })
+      .metadata.supportsTools).toBe(false)
   })
 
   it('should list available models', async () => {
@@ -125,5 +160,35 @@ describe('OpenAIProvider', () => {
     if ('function' in convertedTools[0]) {
       expect(convertedTools[0].function).toHaveProperty('name', 'get_weather')
     }
+  })
+
+  it('keeps usage from the choices-empty trailing chunk', async () => {
+    installStream(provider, [
+      { choices: [{ delta: { content: 'ok' }, finish_reason: 'stop' }] },
+      {
+        choices: [],
+        usage: { prompt_tokens: 7, completion_tokens: 2, total_tokens: 9 },
+      },
+    ])
+
+    const events = await collectStream(provider)
+    expect(events.at(-1)).toEqual({
+      type: 'message_end',
+      usage: { inputTokens: 7, outputTokens: 2, totalTokens: 9 },
+      stopReason: 'end_turn',
+    })
+  })
+
+  it('maps finish_reason length to max_tokens', async () => {
+    installStream(provider, [
+      { choices: [{ delta: {}, finish_reason: 'length' }] },
+    ])
+
+    const events = await collectStream(provider)
+    expect(events.at(-1)).toEqual({
+      type: 'message_end',
+      usage: undefined,
+      stopReason: 'max_tokens',
+    })
   })
 })

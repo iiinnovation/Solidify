@@ -40,6 +40,32 @@ export function searchWorkspaceFiles(query: string, path: string, workspaceRoot:
   return invokeCommand('search_files', { query, path, workspaceRoot, maxResults })
 }
 
+export function selectWorkspace(): Promise<string | null> {
+  return invokeCommand('select_workspace', {})
+}
+
+export function appendWorkspaceSnapshot(
+  conversationId: string,
+  content: string,
+  workspaceRoot: string,
+): Promise<void> {
+  return invokeCommand('append_snapshot', { conversationId, content, workspaceRoot })
+}
+
+export function readWorkspaceSnapshot(
+  conversationId: string,
+  workspaceRoot: string,
+): Promise<string | null> {
+  return invokeCommand('read_snapshot', { conversationId, workspaceRoot })
+}
+
+export function clearWorkspaceSnapshot(
+  conversationId: string,
+  workspaceRoot: string,
+): Promise<void> {
+  return invokeCommand('clear_snapshot', { conversationId, workspaceRoot })
+}
+
 /** 当前操作系统平台 */
 export type Platform = 'macos' | 'windows' | 'linux' | 'web'
 
@@ -74,6 +100,7 @@ export interface SaveFileOptions {
 export interface OpenFileOptions {
   filters?: { name: string; extensions: string[] }[]
   multiple?: boolean
+  directory?: boolean
 }
 
 /** 打开文件选择对话框，返回文件路径（Web 端降级为 file input） */
@@ -85,6 +112,7 @@ export async function openFileDialog(
     const { open } = await import('@tauri-apps/plugin-dialog')
     const result = await open({
       multiple: options?.multiple ?? false,
+      directory: options?.directory ?? false,
       filters: options?.filters,
     })
     return result
@@ -143,41 +171,6 @@ export async function writeTextFile(
   try {
     const { writeTextFile: write } = await import('@tauri-apps/plugin-fs')
     await write(path, content)
-    return true
-  } catch {
-    return false
-  }
-}
-
-/** 追加写入本地文件（文本），父目录不存在时自动创建 */
-export async function appendTextFile(
-  path: string,
-  content: string,
-): Promise<boolean> {
-  if (!isTauri) return false
-  try {
-    const fs = await import('@tauri-apps/plugin-fs')
-    const dir = path.slice(0, path.lastIndexOf('/'))
-    if (dir) {
-      await fs.mkdir(dir, { recursive: true }).catch(() => {
-        // 目录已存在时忽略
-      })
-    }
-    await fs.writeTextFile(path, content, { append: true })
-    return true
-  } catch {
-    return false
-  }
-}
-
-/** 删除本地文件，不存在时静默成功 */
-export async function removePath(path: string): Promise<boolean> {
-  if (!isTauri) return false
-  try {
-    const { remove, exists } = await import('@tauri-apps/plugin-fs')
-    if (await exists(path)) {
-      await remove(path)
-    }
     return true
   } catch {
     return false

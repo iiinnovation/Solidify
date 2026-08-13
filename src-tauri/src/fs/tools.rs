@@ -1,8 +1,10 @@
 use super::sandbox::resolve_in_workspace;
+use super::workspace::WorkspaceAuthorization;
 use ignore::WalkBuilder;
 use serde::Serialize;
 use std::fs;
 use std::path::Path;
+use tauri::State;
 
 #[derive(Debug, Serialize)]
 pub struct DirEntry {
@@ -14,6 +16,16 @@ pub struct DirEntry {
 
 #[tauri::command]
 pub fn list_dir(
+    path: String,
+    workspace_root: String,
+    depth: Option<usize>,
+    authorization: State<'_, WorkspaceAuthorization>,
+) -> Result<Vec<DirEntry>, String> {
+    authorization.require(&workspace_root)?;
+    list_dir_impl(path, workspace_root, depth)
+}
+
+fn list_dir_impl(
     path: String,
     workspace_root: String,
     depth: Option<usize>,
@@ -78,6 +90,17 @@ pub fn read_file(
     workspace_root: String,
     offset: Option<usize>,
     limit: Option<usize>,
+    authorization: State<'_, WorkspaceAuthorization>,
+) -> Result<FileReadResult, String> {
+    authorization.require(&workspace_root)?;
+    read_file_impl(path, workspace_root, offset, limit)
+}
+
+fn read_file_impl(
+    path: String,
+    workspace_root: String,
+    offset: Option<usize>,
+    limit: Option<usize>,
 ) -> Result<FileReadResult, String> {
     let resolved = resolve_in_workspace(&path, &workspace_root, false)?;
     let bytes = fs::read(&resolved).map_err(|e| format!("Unable to read file: {e}"))?;
@@ -106,7 +129,17 @@ pub fn read_file(
 }
 
 #[tauri::command]
-pub fn write_file(path: String, content: String, workspace_root: String) -> Result<usize, String> {
+pub fn write_file(
+    path: String,
+    content: String,
+    workspace_root: String,
+    authorization: State<'_, WorkspaceAuthorization>,
+) -> Result<usize, String> {
+    authorization.require(&workspace_root)?;
+    write_file_impl(path, content, workspace_root)
+}
+
+fn write_file_impl(path: String, content: String, workspace_root: String) -> Result<usize, String> {
     let resolved = resolve_in_workspace(&path, &workspace_root, true)?;
     if let Some(parent) = resolved.parent() {
         fs::create_dir_all(parent)
@@ -128,6 +161,17 @@ pub struct SearchMatch {
 
 #[tauri::command]
 pub fn search_files(
+    query: String,
+    path: String,
+    workspace_root: String,
+    max_results: Option<usize>,
+    authorization: State<'_, WorkspaceAuthorization>,
+) -> Result<Vec<SearchMatch>, String> {
+    authorization.require(&workspace_root)?;
+    search_files_impl(query, path, workspace_root, max_results)
+}
+
+fn search_files_impl(
     query: String,
     path: String,
     workspace_root: String,
@@ -214,14 +258,18 @@ fn is_default_ignored(path: &Path, workspace_root: &Path) -> bool {
 mod tests {
     use super::*;
     use std::fs::{create_dir_all, remove_dir_all, write};
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    static WORKSPACE_ID: AtomicU64 = AtomicU64::new(0);
 
     fn workspace() -> std::path::PathBuf {
         let id = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let path = std::env::temp_dir().join(format!("solidify-tools-{id}"));
+        let sequence = WORKSPACE_ID.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!("solidify-tools-{id}-{sequence}"));
         create_dir_all(&path).unwrap();
         path
     }
@@ -234,7 +282,8 @@ mod tests {
         write(root.join("visible.md"), "ok").unwrap();
         write(root.join("ignored.log"), "no").unwrap();
         write(root.join(".solidifyignore"), "*.log\n").unwrap();
-        let entries = list_dir(".".into(), root.to_string_lossy().into_owned(), Some(3)).unwrap();
+        let entries =
+            list_dir_impl(".".into(), root.to_string_lossy().into_owned(), Some(3)).unwrap();
         let paths: Vec<_> = entries.iter().map(|e| e.path.as_str()).collect();
         assert!(paths.contains(&"visible.md"));
         assert!(!paths.iter().any(|p| p.starts_with("node_modules")));
@@ -248,7 +297,7 @@ mod tests {
         let root = workspace();
         write(root.join("text.txt"), "甲乙丙丁").unwrap();
         write(root.join("data.bin"), [0xff, 0xfe, 0xfd]).unwrap();
-        let text = read_file(
+        let text = read_file_impl(
             "text.txt".into(),
             root.to_string_lossy().into_owned(),
             Some(1),
@@ -257,7 +306,7 @@ mod tests {
         .unwrap();
         assert_eq!(text.content.as_deref(), Some("乙丙"));
         assert!(text.truncated);
-        let binary = read_file(
+        let binary = read_file_impl(
             "data.bin".into(),
             root.to_string_lossy().into_owned(),
             None,
@@ -272,7 +321,7 @@ mod tests {
     #[test]
     fn write_file_creates_nested_directories() {
         let root = workspace();
-        let bytes = write_file(
+        let bytes = write_file_impl(
             "new/nested/file.txt".into(),
             "content".into(),
             root.to_string_lossy().into_owned(),
@@ -291,7 +340,7 @@ mod tests {
         let root = workspace();
         write(root.join("needle-name.md"), "other").unwrap();
         write(root.join("content.md"), "first\nNeedle here\nlast").unwrap();
-        let matches = search_files(
+        let matches = search_files_impl(
             "needle".into(),
             ".".into(),
             root.to_string_lossy().into_owned(),

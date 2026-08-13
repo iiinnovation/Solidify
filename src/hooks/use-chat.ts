@@ -12,9 +12,15 @@ import { runQuery } from '@/lib/engine/query'
 import { applyRunEvent, createRunState } from '@/lib/engine/run-state'
 import { createChatQueryContext } from '@/lib/engine/chat-context'
 import type { QueryEvent } from '@/lib/engine/types'
+import { useWorkspaceStore } from '@/stores/workspace-store'
 
 function genId() {
   return newId('msg')
+}
+
+interface ResumeRunOptions {
+  conversationId: string
+  assistantMessage: Message
 }
 
 /* ── 流式 Artifact 解析 ── */
@@ -90,6 +96,7 @@ export function useChat(conversationId?: string) {
   const [isStreaming, setIsStreaming] = useState(false)
   const [error, setError] = useState<Error | null>(null)
   const abortRef = useRef<AbortController | null>(null)
+  const resumedConversationsRef = useRef(new Set<string>())
   const navigate = useNavigate()
 
   const addArtifact = useChatStore((s) => s.addArtifact)
@@ -130,19 +137,50 @@ export function useChat(conversationId?: string) {
   convIdRef.current = conversationId
 
   const sendMessage = useCallback(
-    async (content: string, files?: File[], skillSystemPrompt?: string, skillSkipConfirmation?: boolean) => {
-      if (!content.trim() || isStreaming) return
+    async (
+      content: string,
+      files?: File[],
+      skillSystemPrompt?: string,
+      skillSkipConfirmation?: boolean,
+      resume?: ResumeRunOptions,
+      historyOverride?: Message[],
+    ) => {
+      if ((!content.trim() && !resume) || isStreaming) return
 
       setError(null)
 
-      const activeProvider = getActiveProvider()
+      const savedProviderId = resume?.assistantMessage.agentContext?.providerId
+      const activeProvider = savedProviderId
+        ? useModelStore.getState().providers.find((provider) => provider.id === savedProviderId) ?? null
+        : getActiveProvider()
       if (!activeProvider) {
-        setError(new Error('请先在设置中配置 AI 模型'))
+        const providerError = new Error(savedProviderId
+          ? '无法恢复 Agent：原 Provider 已被删除'
+          : '请先在设置中配置 AI 模型')
+        setError(providerError)
+        if (resume?.assistantMessage.agentRun) {
+          const failureEvent: QueryEvent = {
+            type: 'run.failed',
+            error: { kind: 'internal', message: providerError.message },
+          }
+          const failedRun = applyRunEvent(resume.assistantMessage.agentRun, failureEvent)
+          const runEvents = [...(resume.assistantMessage.runEvents ?? []), failureEvent]
+          setMessages((prev) => prev.map((message) =>
+            message.id === resume.assistantMessage.id
+              ? { ...message, agentRun: failedRun, runEvents }
+              : message,
+          ))
+          patchMessageInConversation(
+            resume.conversationId,
+            resume.assistantMessage.id,
+            { agentRun: failedRun, runEvents },
+          )
+        }
         return
       }
 
       // 确定对话 ID —— 没有则新建
-      let currentConvId = convIdRef.current
+      let currentConvId = resume?.conversationId ?? convIdRef.current
       if (!currentConvId) {
         const title = content.slice(0, 20) + (content.length > 20 ? '…' : '')
         currentConvId = createConversation(title)
@@ -156,7 +194,8 @@ export function useChat(conversationId?: string) {
         content,
         attachments: files?.map(f => ({ name: f.name, size: f.size }))
       }
-      const assistantMsg: Message = { id: genId(), role: 'assistant', content: '' }
+      const assistantMsg: Message = resume?.assistantMessage
+        ?? { id: genId(), role: 'assistant', content: '' }
 
       // 处理文件附件
       let enrichedContent = content
@@ -186,7 +225,7 @@ export function useChat(conversationId?: string) {
       // 检查是否启用知识库功能（环境变量控制）
       const enableKnowledge = import.meta.env.VITE_ENABLE_KNOWLEDGE !== 'false'
 
-      if (knowledgeEnabled && enableKnowledge) {
+      if (!resume && knowledgeEnabled && enableKnowledge) {
         try {
           const { getRAGProvider } = await import('@/lib/rag')
           const ragProvider = getRAGProvider()
@@ -242,9 +281,11 @@ ${result.content}
       }
 
       // 更新本地 state + store
-      setMessages((prev) => [...prev, userMsg, assistantMsg])
-      addMessageToConversation(currentConvId, userMsg)
-      addMessageToConversation(currentConvId, assistantMsg)
+      if (!resume) {
+        setMessages((prev) => [...prev, userMsg, assistantMsg])
+        addMessageToConversation(currentConvId, userMsg)
+        addMessageToConversation(currentConvId, assistantMsg)
+      }
 
       setIsStreaming(true)
 
@@ -253,7 +294,9 @@ ${result.content}
 
       // 流式 artifact 跟踪
       let streamingArtifactId: string | null = null
-      let completedArtifactCount = 0
+      let completedArtifactCount = resume
+        ? processStreamingContent(assistantMsg.agentRun?.text ?? '').completeArtifacts.length
+        : 0
 
       const patchAssistantMessage = (patch: Partial<Message>) => {
         setMessages((prev) => prev.map((message) =>
@@ -316,7 +359,8 @@ ${result.content}
       }
 
       try {
-        const allMessages = [...messages, userMsg].map((m) => ({
+        const baseMessages = resume ? messages : historyOverride ?? messages
+        const allMessages = (resume ? baseMessages : [...baseMessages, userMsg]).map((m) => ({
           role: m.role,
           content: m.content,
         }))
@@ -334,10 +378,24 @@ ${result.content}
         }
 
         if (isEnabled('agentLoop')) {
-          const runId = newId('run')
-          let run = createRunState(runId)
-          const runEvents: QueryEvent[] = []
-          patchAssistantMessage({ agentRun: run, runEvents })
+          const runId = assistantMsg.agentRun?.runId ?? newId('run')
+          let run = assistantMsg.agentRun
+            ? {
+                ...assistantMsg.agentRun,
+                status: 'running' as const,
+                text: resume ? '' : assistantMsg.agentRun.text,
+                completedAt: undefined,
+                error: undefined,
+              }
+            : createRunState(runId)
+          const runEvents: QueryEvent[] = [...(assistantMsg.runEvents ?? [])]
+          const agentContext = resume?.assistantMessage.agentContext ?? {
+            providerId: activeProvider.id,
+            workspaceRoot: useWorkspaceStore.getState().workspaceRoot ?? undefined,
+            skillSystemPrompt,
+            skillSkipConfirmation,
+          }
+          patchAssistantMessage({ agentRun: run, runEvents, agentContext })
 
           const context = createChatQueryContext({
             runId,
@@ -345,8 +403,10 @@ ${result.content}
             messages: messagesWithFiles,
             provider: activeProvider,
             signal: abortController.signal,
-            skillSystemPrompt,
-            skillSkipConfirmation,
+            skillSystemPrompt: agentContext.skillSystemPrompt,
+            skillSkipConfirmation: agentContext.skillSkipConfirmation,
+            workspaceRoot: agentContext.workspaceRoot,
+            restoreSnapshot: Boolean(resume),
           })
 
           for await (const event of runQuery(context)) {
@@ -435,7 +495,9 @@ ${result.content}
         if (abortController.signal.aborted) return
         const error = err instanceof Error ? err : new Error('未知错误')
         setError(error)
-        // 移除空的 assistant 消息
+        // New requests discard an empty placeholder. A resumed run retains
+        // its persisted assistant message so the user can retry recovery.
+        if (resume) return
         setMessages((prev) => {
           const last = prev[prev.length - 1]
           if (last?.role === 'assistant' && !last.content) {
@@ -462,9 +524,33 @@ ${result.content}
     [messages, isStreaming, addArtifact, updateArtifactContent, createConversation, addMessageToConversation, patchMessageInConversation, removeLastMessageFromConversation, navigate, getActiveProvider],
   )
 
+  useEffect(() => {
+    if (
+      !conversationId
+      || isStreaming
+      || !isEnabled('agentLoop')
+      || resumedConversationsRef.current.has(conversationId)
+    ) return
+
+    const conversation = useChatStore.getState().conversations
+      .find((item) => item.id === conversationId)
+    const assistantMessage = [...(conversation?.messages ?? [])].reverse()
+      .find((message) => message.role === 'assistant' && message.agentRun?.status === 'running')
+    if (!assistantMessage) return
+
+    resumedConversationsRef.current.add(conversationId)
+    void sendMessage(
+      '',
+      undefined,
+      assistantMessage.agentContext?.skillSystemPrompt,
+      assistantMessage.agentContext?.skillSkipConfirmation,
+      { conversationId, assistantMessage },
+    )
+  }, [conversationId, isStreaming, sendMessage])
+
   const stopStreaming = useCallback(() => {
     abortRef.current?.abort()
-    setIsStreaming(false)
+    if (!isEnabled('agentLoop')) setIsStreaming(false)
   }, [])
 
   const regenerate = useCallback(() => {
@@ -497,20 +583,34 @@ ${result.content}
 
   const retry = useCallback(() => {
     if (isStreaming || messages.length === 0) return
-    // 错误后，空的 assistant 消息已被移除，最后一条应该是发送失败的用户消息
     const lastMsg = messages[messages.length - 1]
-    if (lastMsg.role !== 'user') return
+    const failedAgent = lastMsg.role === 'assistant' && lastMsg.agentRun?.status === 'failed'
+    const userIndex = failedAgent ? messages.length - 2 : messages.length - 1
+    const userMsg = messages[userIndex]
+    if (userMsg?.role !== 'user') return
 
-    const content = lastMsg.content
+    const content = userMsg.content
     setError(null)
 
-    // 移除失败的用户消息，sendMessage 会重新添加
-    setMessages((prev) => prev.slice(0, -1))
+    // sendMessage creates a fresh user/assistant pair. A failed recovered
+    // assistant therefore removes both itself and its preceding user message.
+    const removeCount = failedAgent ? 2 : 1
+    const retainedMessages = messages.slice(0, -removeCount)
+    setMessages(retainedMessages)
     if (convIdRef.current) {
-      removeLastMessageFromConversation(convIdRef.current)
+      for (let index = 0; index < removeCount; index++) {
+        removeLastMessageFromConversation(convIdRef.current)
+      }
     }
 
-    sendMessage(content)
+    void sendMessage(
+      content,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      failedAgent ? retainedMessages : undefined,
+    )
   }, [messages, isStreaming, sendMessage, removeLastMessageFromConversation])
 
   return { messages, isStreaming, error, sendMessage, stopStreaming, regenerate, retry }

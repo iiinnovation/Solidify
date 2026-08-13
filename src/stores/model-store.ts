@@ -11,6 +11,8 @@ export interface ModelProvider {
   modelId: string
   format: ApiFormat
   enabled: boolean
+  /** Capability declaration; omitted legacy configs default to true. */
+  supportsTools?: boolean
 }
 
 // 预设模板：用户可一键添加，只需填 Key

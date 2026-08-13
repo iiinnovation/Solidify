@@ -1,5 +1,7 @@
 mod fs;
 
+use tauri::Manager;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -15,8 +17,13 @@ pub fn run() {
             fs::tools::read_file,
             fs::tools::write_file,
             fs::tools::search_files,
+            fs::snapshots::append_snapshot,
+            fs::snapshots::read_snapshot,
+            fs::snapshots::clear_snapshot,
+            fs::workspace::select_workspace,
         ])
         .setup(|app| {
+            app.manage(fs::workspace::WorkspaceAuthorization::load(app.handle())?);
             if cfg!(debug_assertions) {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()

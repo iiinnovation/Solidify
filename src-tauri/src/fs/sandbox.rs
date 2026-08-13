@@ -1,5 +1,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use tauri::State;
+
+use super::workspace::WorkspaceAuthorization;
 
 /// Resolve a user supplied path inside the workspace. This is the security
 /// boundary for every filesystem tool; renderer-side checks are only hints.
@@ -79,7 +82,12 @@ fn is_within(root: &Path, candidate: &Path) -> bool {
 }
 
 #[tauri::command]
-pub fn resolve_path(path: String, workspace_root: String) -> Result<String, String> {
+pub fn resolve_path(
+    path: String,
+    workspace_root: String,
+    authorization: State<'_, WorkspaceAuthorization>,
+) -> Result<String, String> {
+    authorization.require(&workspace_root)?;
     resolve_in_workspace(&path, &workspace_root, true).map(|p| p.to_string_lossy().into_owned())
 }
 
@@ -87,14 +95,18 @@ pub fn resolve_path(path: String, workspace_root: String) -> Result<String, Stri
 mod tests {
     use super::*;
     use std::fs::{create_dir_all, remove_dir_all, write};
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    static TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
     fn tempdir() -> std::path::PathBuf {
         let id = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let path = std::env::temp_dir().join(format!("solidify-sandbox-{id}"));
+        let sequence = TEMP_ID.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!("solidify-sandbox-{id}-{sequence}"));
         std::fs::create_dir_all(&path).unwrap();
         path
     }

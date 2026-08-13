@@ -1,6 +1,5 @@
 import type { ModelProvider } from '@/stores/model-store'
 import type { LoadedSkill } from '@/lib/skills/types'
-import type { MemoryFragment, MemoryState } from '@/lib/memory/types'
 import type { Settings } from '@/lib/harness/types'
 import type { Message, QueryContext, RunLimits } from './types'
 import { getFlags, isEnabled } from '@/lib/harness/flags'
@@ -10,6 +9,8 @@ import { toolRegistry } from '@/lib/tools'
 import { createSnapshotStore } from './snapshot'
 import { isTauri } from '@/lib/tauri'
 import { getSystemPrompt } from '@/lib/chat-api'
+import { InMemoryState } from '@/lib/memory'
+import type { WorkspaceHandle } from '@/lib/workspace'
 
 const DEFAULT_LIMITS: RunLimits = {
   maxTurns: 25,
@@ -27,13 +28,17 @@ export interface ChatQueryContextOptions {
   signal: AbortSignal
   skillSystemPrompt?: string
   skillSkipConfirmation?: boolean
+  workspaceRoot?: string | null
+  restoreSnapshot?: boolean
 }
 
 /** Build the browser-side runtime context without affecting the legacy chat path. */
 export function createChatQueryContext(options: ChatQueryContextOptions): QueryContext {
   const providerName = options.provider.format
   const platform = isTauri ? 'tauri' : 'web'
-  const cwd = isTauri ? '.' : '/'
+  const selectedRoot = platform === 'tauri' ? options.workspaceRoot?.trim() : undefined
+  const workspaceRoot = selectedRoot ? normalizeWorkspacePath(selectedRoot) : undefined
+  const cwd = workspaceRoot || '/'
   const skill = createInlineSkill(getSystemPrompt(
     options.skillSystemPrompt,
     options.skillSkipConfirmation,
@@ -41,9 +46,8 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
   const settings = createSettings(options.provider, cwd)
   const tools = isEnabled('toolCalling')
     ? toolRegistry.resolve({
-        // Local workspace selection lands in M3. Until then, do not expose
-        // desktop file tools against the process working directory.
-        platform: 'web',
+        // A real root is mandatory before exposing desktop filesystem tools.
+        platform: platform === 'tauri' && workspaceRoot ? 'tauri' : 'web',
         skillAllowedTools: skill?.metadata.allowedTools,
         userDisabledTools: settings.disabledTools,
         isOnline: typeof navigator === 'undefined' || navigator.onLine,
@@ -57,7 +61,7 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
     messages: options.messages,
     tools,
     skill,
-    memory: createRunMemory(),
+    memory: new InMemoryState(),
     model: {
       provider: providerName,
       model: options.provider.modelId,
@@ -73,13 +77,63 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
           apiKey: options.provider.apiKey,
           baseURL: providerBaseURL(options.provider.apiUrl, options.provider.format),
           defaultModel: options.provider.modelId,
+          supportsTools: options.provider.supportsTools !== false,
         },
       },
     }),
-    snapshots: createSnapshotStore({ platform }),
+    snapshots: createSnapshotStore({ platform, workspaceRoot }),
+    restoreSnapshot: options.restoreSnapshot,
     settings,
     platform,
+    workspace: workspaceRoot ? createWorkspaceHandle(workspaceRoot) : undefined,
   }
+}
+
+function createWorkspaceHandle(root: string): WorkspaceHandle {
+  const normalizedRoot = normalizeWorkspacePath(root)
+  const name = normalizedRoot.split('/').filter(Boolean).pop() ?? normalizedRoot
+
+  return {
+    root: normalizedRoot,
+    name,
+    resolve(path: string): string {
+      if (path === '.' || path === '') return normalizedRoot
+      if (/^(?:[A-Za-z]:)?\//.test(path.replace(/\\/g, '/'))) {
+        throw new Error(`Path must be relative: ${path}`)
+      }
+      const candidate = normalizeWorkspacePath(`${normalizedRoot}/${path}`)
+      if (
+        normalizedRoot !== '/'
+        && candidate !== normalizedRoot
+        && !candidate.startsWith(`${normalizedRoot}/`)
+      ) {
+        throw new Error(`Path escapes workspace: ${path}`)
+      }
+      return candidate
+    },
+    contains(path: string): boolean {
+      try {
+        this.resolve(path)
+        return true
+      } catch {
+        return false
+      }
+    },
+  }
+}
+
+function normalizeWorkspacePath(path: string): string {
+  const slashPath = path.replace(/\\/g, '/')
+  const drive = slashPath.match(/^[A-Za-z]:/)?.[0] ?? ''
+  const absolute = slashPath.startsWith('/') || Boolean(drive)
+  const parts: string[] = []
+  for (const part of slashPath.replace(/^[A-Za-z]:/, '').split('/')) {
+    if (!part || part === '.') continue
+    if (part === '..') parts.pop()
+    else parts.push(part)
+  }
+  const prefix = drive ? `${drive}/` : absolute ? '/' : ''
+  return `${prefix}${parts.join('/')}`.replace(/\/$/, '') || '/'
 }
 
 function createInlineSkill(content?: string): LoadedSkill | undefined {
@@ -110,36 +164,5 @@ function createSettings(provider: ModelProvider, cwd: string): Settings {
     features: getFlags(),
     disabledTools: [],
     workspaceRoot: cwd,
-  }
-}
-
-function createRunMemory(): MemoryState {
-  const values = new Map<string, string>()
-  let nextId = 0
-
-  return {
-    async store(data) {
-      const id = `memory-${++nextId}`
-      values.set(id, data)
-      return id
-    },
-    async retrieve(handle) {
-      return values.get(handle) ?? null
-    },
-    async search(query, limit = 10) {
-      const normalized = query.toLowerCase()
-      return Array.from(values.entries())
-        .filter(([, value]) => value.toLowerCase().includes(normalized))
-        .slice(0, limit)
-        .map(([source, content]): MemoryFragment => ({
-          content,
-          relevance: 1,
-          source,
-          timestamp: new Date().toISOString(),
-        }))
-    },
-    async clear() {
-      values.clear()
-    },
   }
 }

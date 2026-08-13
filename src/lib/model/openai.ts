@@ -13,12 +13,14 @@ import type {
   UnifiedContent,
   ToolDefinition,
   ModelError,
+  TokenUsage,
+  ProviderMetadata,
 } from './types'
 
 /**
  * OpenAI provider metadata
  */
-const OPENAI_METADATA = {
+const OPENAI_METADATA: ProviderMetadata = {
   name: 'openai',
   displayName: 'OpenAI',
   supportsVision: true,
@@ -42,10 +44,14 @@ const OPENAI_METADATA = {
  */
 export class OpenAIProvider implements ModelProvider {
   readonly name = 'openai'
-  readonly metadata = OPENAI_METADATA
+  readonly metadata: ProviderMetadata
   private client: OpenAI
 
   constructor(config: ProviderConfig) {
+    this.metadata = {
+      ...OPENAI_METADATA,
+      supportsTools: config.supportsTools ?? OPENAI_METADATA.supportsTools,
+    }
     this.client = new OpenAI({
       apiKey: config.apiKey,
       baseURL: config.baseURL,
@@ -80,40 +86,49 @@ export class OpenAIProvider implements ModelProvider {
 
       // Track tool calls across chunks
       const toolCalls = new Map<number, { id: string; name: string; args: string }>()
+      let usage: TokenUsage | undefined
+      let stopReason: 'end_turn' | 'max_tokens' | 'stop_sequence' | 'tool_use' | undefined
 
       // Process stream events
       for await (const chunk of stream) {
-        const delta = chunk.choices[0]?.delta
-
-        if (!delta) continue
-
-        // Content delta
-        if (delta.content) {
-          yield { type: 'content_delta', delta: delta.content }
+        if (chunk.usage) {
+          usage = {
+            inputTokens: chunk.usage.prompt_tokens,
+            outputTokens: chunk.usage.completion_tokens,
+            totalTokens: chunk.usage.total_tokens,
+          }
         }
 
-        // Tool calls
-        if (delta.tool_calls) {
-          for (const toolCall of delta.tool_calls) {
-            const index = toolCall.index
+        const delta = chunk.choices[0]?.delta
+        if (delta) {
+          // Content delta
+          if (delta.content) {
+            yield { type: 'content_delta', delta: delta.content }
+          }
 
-            // Tool call start
-            if (toolCall.id && toolCall.function?.name) {
-              const id = toolCall.id
-              const name = toolCall.function.name
-              toolCalls.set(index, { id, name, args: '' })
-              yield { type: 'tool_call_start', id, name }
-            }
+          // Tool calls
+          if (delta.tool_calls) {
+            for (const toolCall of delta.tool_calls) {
+              const index = toolCall.index
 
-            // Tool call arguments delta
-            if (toolCall.function?.arguments) {
-              const existing = toolCalls.get(index)
-              if (existing) {
-                existing.args += toolCall.function.arguments
-                yield {
-                  type: 'tool_call_delta',
-                  id: existing.id,
-                  delta: toolCall.function.arguments,
+              // Tool call start
+              if (toolCall.id && toolCall.function?.name) {
+                const id = toolCall.id
+                const name = toolCall.function.name
+                toolCalls.set(index, { id, name, args: '' })
+                yield { type: 'tool_call_start', id, name }
+              }
+
+              // Tool call arguments delta
+              if (toolCall.function?.arguments) {
+                const existing = toolCalls.get(index)
+                if (existing) {
+                  existing.args += toolCall.function.arguments
+                  yield {
+                    type: 'tool_call_delta',
+                    id: existing.id,
+                    delta: toolCall.function.arguments,
+                  }
                 }
               }
             }
@@ -122,6 +137,7 @@ export class OpenAIProvider implements ModelProvider {
 
         // Finish reason
         const finishReason = chunk.choices[0]?.finish_reason
+        if (finishReason) stopReason = this.mapStopReason(finishReason)
         if (finishReason === 'tool_calls') {
           // Emit tool call end events
           for (const toolCall of toolCalls.values()) {
@@ -134,29 +150,38 @@ export class OpenAIProvider implements ModelProvider {
               }
             } catch {
               yield {
+                type: 'error',
+                error: {
+                  code: 'tool_input_parse_error',
+                  message: `Failed to parse tool input JSON for call ${toolCall.id}`,
+                  type: 'unknown',
+                  retryable: false,
+                  kind: 'parse',
+                  recoverable: true,
+                },
+              }
+              yield {
                 type: 'tool_call_end',
                 id: toolCall.id,
-                input: {},
+                input: null,
               }
             }
           }
         }
 
-        // Usage info (sent at the end)
-        if (chunk.usage) {
-          yield {
-            type: 'message_end',
-            usage: {
-              inputTokens: chunk.usage.prompt_tokens,
-              outputTokens: chunk.usage.completion_tokens,
-              totalTokens: chunk.usage.total_tokens,
-            },
-          }
-        }
       }
+
+      yield { type: 'message_end', usage, stopReason }
     } catch (error) {
       yield { type: 'error', error: this.convertError(error) }
     }
+  }
+
+  private mapStopReason(reason: string): 'end_turn' | 'max_tokens' | 'stop_sequence' | 'tool_use' {
+    if (reason === 'length') return 'max_tokens'
+    if (reason === 'tool_calls' || reason === 'function_call') return 'tool_use'
+    if (reason === 'stop') return 'end_turn'
+    return 'stop_sequence'
   }
 
   async listModels(): Promise<string[]> {

@@ -13,6 +13,7 @@ import {
 import { useSkillStore, type CustomSkill } from '@/stores/skill-store'
 import { builtinSkills } from '@/lib/skills'
 import { useNavigate } from 'react-router-dom'
+import { getFlags, setFlagOverride } from '@/lib/harness/flags'
 
 function ProviderForm({
   initial,
@@ -28,6 +29,7 @@ function ProviderForm({
   const [apiKey, setApiKey] = useState(initial?.apiKey ?? '')
   const [modelId, setModelId] = useState(initial?.modelId ?? '')
   const [format, setFormat] = useState<ApiFormat>(initial?.format ?? 'openai')
+  const [supportsTools, setSupportsTools] = useState(initial?.supportsTools ?? true)
   const [showKey, setShowKey] = useState(false)
 
   const isValid = name.trim() && apiUrl.trim() && apiKey.trim() && modelId.trim()
@@ -110,10 +112,25 @@ function ProviderForm({
         />
       </div>
 
+      <div className="space-y-1.5">
+        <label className="flex items-center gap-2 text-sm text-text-primary">
+          <input
+            type="checkbox"
+            checked={supportsTools}
+            onChange={(event) => setSupportsTools(event.target.checked)}
+            className="h-4 w-4 rounded border-border text-accent focus:ring-accent focus:ring-offset-0"
+          />
+          支持工具调用
+        </label>
+        <p className="text-xs text-text-tertiary">
+          关闭后 Agent 仍可回答，但不会向该模型发送工具 schema。
+        </p>
+      </div>
+
       <div className="flex gap-2 pt-2">
         <Button
           onClick={() =>
-            onSave({ name, apiUrl, apiKey, modelId, format, enabled: true })
+            onSave({ name, apiUrl, apiKey, modelId, format, enabled: true, supportsTools })
           }
           disabled={!isValid}
         >
@@ -125,6 +142,7 @@ function ProviderForm({
           取消
         </Button>
       </div>
+
     </div>
   )
 }
@@ -274,6 +292,8 @@ export function SettingsPage() {
 
   const [skillView, setSkillView] = useState<'list' | 'add' | 'edit'>('list')
   const [editingSkillId, setEditingSkillId] = useState<string | null>(null)
+  const [agentLoopEnabled, setAgentLoopEnabled] = useState(() => getFlags().agentLoop)
+  const [toolCallingEnabled, setToolCallingEnabled] = useState(() => getFlags().toolCalling)
 
   const editingProvider = editingId ? providers.find((p) => p.id === editingId) : null
   const editingSkill = editingSkillId ? customSkills.find((s) => s.id === editingSkillId) : null
@@ -398,6 +418,7 @@ export function SettingsPage() {
                           </div>
                           <p className="text-xs text-text-tertiary font-mono mt-0.5 truncate">
                             {provider.modelId} · {provider.format}
+                            {provider.supportsTools === false ? ' · 纯对话' : ''}
                           </p>
                         </button>
                         <div className="flex items-center gap-1 shrink-0 ml-3">
@@ -425,6 +446,52 @@ export function SettingsPage() {
                 )}
               </div>
             )}
+          </section>
+
+          <section className="space-y-4">
+            <div>
+              <h2 className="text-lg font-semibold text-text-primary">实验能力</h2>
+              <p className="text-sm text-text-tertiary mt-1">
+                M1 Agent 能力默认关闭；开启后仅影响新发送的消息。
+              </p>
+            </div>
+            <Separator />
+            <div className="space-y-3">
+              <label className="flex items-center justify-between gap-4 rounded-md border border-border bg-surface px-4 py-3">
+                <span>
+                  <span className="block text-sm font-medium text-text-primary">Agent 循环</span>
+                  <span className="block text-xs text-text-tertiary mt-0.5">允许模型连续执行多轮工具调用。</span>
+                </span>
+                <input
+                  type="checkbox"
+                  aria-label="Agent 循环"
+                  checked={agentLoopEnabled}
+                  onChange={(event) => {
+                    const value = event.target.checked
+                    setAgentLoopEnabled(value)
+                    setFlagOverride('agentLoop', value)
+                  }}
+                  className="h-4 w-4 shrink-0 rounded border-border text-accent focus:ring-accent focus:ring-offset-0"
+                />
+              </label>
+              <label className="flex items-center justify-between gap-4 rounded-md border border-border bg-surface px-4 py-3">
+                <span>
+                  <span className="block text-sm font-medium text-text-primary">工具调用</span>
+                  <span className="block text-xs text-text-tertiary mt-0.5">向支持工具的模型发送工具 schema。</span>
+                </span>
+                <input
+                  type="checkbox"
+                  aria-label="工具调用"
+                  checked={toolCallingEnabled}
+                  onChange={(event) => {
+                    const value = event.target.checked
+                    setToolCallingEnabled(value)
+                    setFlagOverride('toolCalling', value)
+                  }}
+                  className="h-4 w-4 shrink-0 rounded border-border text-accent focus:ring-accent focus:ring-offset-0"
+                />
+              </label>
+            </div>
           </section>
 
           {/* 自定义技能管理区 */}
