@@ -31,3 +31,5 @@ tauri-plugin-window-state = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 ignore = "0.4"
+notify = "6.1"
+rusqlite = { version = "0.32", features = ["bundled"] }

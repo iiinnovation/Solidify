@@ -295,6 +295,7 @@ export function SettingsPage() {
   const [agentLoopEnabled, setAgentLoopEnabled] = useState(() => getFlags().agentLoop)
   const [toolCallingEnabled, setToolCallingEnabled] = useState(() => getFlags().toolCalling)
   const [harnessEnabled, setHarnessEnabled] = useState(() => getFlags().harness)
+  const [localWorkspaceEnabled, setLocalWorkspaceEnabled] = useState(() => getFlags().localWorkspace)
 
   const editingProvider = editingId ? providers.find((p) => p.id === editingId) : null
   const editingSkill = editingSkillId ? customSkills.find((s) => s.id === editingSkillId) : null
@@ -471,6 +472,23 @@ export function SettingsPage() {
                     const value = event.target.checked
                     setAgentLoopEnabled(value)
                     setFlagOverride('agentLoop', value)
+                  }}
+                  className="h-4 w-4 shrink-0 rounded border-border text-accent focus:ring-accent focus:ring-offset-0"
+                />
+              </label>
+              <label className="flex items-center justify-between gap-4 rounded-md border border-border bg-surface px-4 py-3">
+                <span>
+                  <span className="block text-sm font-medium text-text-primary">本地工作区</span>
+                  <span className="block text-xs text-text-tertiary mt-0.5">启用本地项目、文件树、监听与索引。</span>
+                </span>
+                <input
+                  type="checkbox"
+                  aria-label="本地工作区"
+                  checked={localWorkspaceEnabled}
+                  onChange={(event) => {
+                    const value = event.target.checked
+                    setLocalWorkspaceEnabled(value)
+                    setFlagOverride('localWorkspace', value)
                   }}
                   className="h-4 w-4 shrink-0 rounded border-border text-accent focus:ring-accent focus:ring-offset-0"
                 />

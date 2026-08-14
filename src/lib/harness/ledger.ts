@@ -1,3 +1,5 @@
+import { appendWorkspaceRecord, isTauri } from '@/lib/tauri'
+
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue }
 export type LedgerEventType = 'run.started' | 'model.called' | 'model.completed' | 'model.failed' | 'tool.requested' | 'approval.asked' | 'approval.decided' | 'permission.grant_added' | 'tool.completed' | 'artifact.created' | 'run.completed' | 'run.failed' | 'run.exhausted'
 
@@ -67,6 +69,12 @@ export class RunLedger {
     const event: LedgerEvent = Object.freeze({ seq: this.events_.length + 1, runId: this.runId, ts: new Date().toISOString(), type, payload: snapshotJson(payload) })
     this.events_.push(event)
     try { this.persist() } catch (error) { this.events_.pop(); throw error }
+    if (workspaceLedgerRoot && isTauri) {
+      const root = workspaceLedgerRoot
+      workspaceLedgerQueue = workspaceLedgerQueue
+        .then(() => appendWorkspaceRecord(root, 'ledger', this.runId, event))
+        .catch((error) => { console.error('Unable to append workspace ledger:', error) })
+    }
     return event
   }
   events(): LedgerEvent[] { return this.events_.map((event) => ({ ...event, payload: snapshotJson(event.payload) })) }
@@ -78,6 +86,17 @@ export class RunLedger {
     try { this.events_ = parseLedgerEvents(JSON.parse(localStorage.getItem(this.storageKey) ?? '[]'), this.runId) }
     catch { this.events_ = [] }
   }
+}
+
+let workspaceLedgerRoot: string | null = null
+let workspaceLedgerQueue = Promise.resolve()
+
+export function configureLedgerWorkspace(root: string | null): void {
+  workspaceLedgerRoot = root
+}
+
+export function flushWorkspaceLedger(): Promise<void> {
+  return workspaceLedgerQueue
 }
 
 export function recoverLedger(events: readonly LedgerEvent[]): Array<LedgerEvent & { outcomeUnknown?: boolean }> {

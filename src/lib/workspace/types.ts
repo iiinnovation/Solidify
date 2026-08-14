@@ -15,8 +15,28 @@ export interface WorkspaceHandle {
 }
 
 export interface WorkspaceMetadata {
+  schemaVersion: number
+  id: string
   name: string
-  root: string
   createdAt: string
-  lastAccessedAt: string
+  stage: string
+}
+
+export interface WorkspaceInfo {
+  root: string
+  project: WorkspaceMetadata
+}
+
+export interface WorkspaceEntry {
+  path: string
+  name: string
+  kind: 'file' | 'directory'
+  size: number
+  modifiedAt: number
+}
+
+export interface WorkspaceSearchResult {
+  path: string
+  text: string
+  score: number
 }

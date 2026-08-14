@@ -1,4 +1,8 @@
+pub mod index;
+pub mod persistence;
 pub mod sandbox;
 pub mod snapshots;
 pub mod tools;
+pub mod tree;
+pub mod watcher;
 pub mod workspace;

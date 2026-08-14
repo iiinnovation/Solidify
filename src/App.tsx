@@ -7,6 +7,7 @@ import { SettingsPage } from '@/routes/settings'
 import { UsagePage } from '@/routes/usage'
 import { TemplatesPage } from '@/routes/templates'
 import { KnowledgePage } from '@/routes/knowledge'
+import { WorkspacePage } from '@/routes/workspace'
 import { LoginPage } from '@/routes/login'
 import { AuthGuard } from '@/components/shared/auth-guard'
 import { ErrorBoundary } from '@/components/shared/error-boundary'
@@ -51,6 +52,7 @@ export default function App() {
               <Route path="/usage" element={<UsagePage />} />
               <Route path="/templates" element={<TemplatesPage />} />
               <Route path="/knowledge" element={<KnowledgePage />} />
+              <Route path="/workspace" element={<WorkspacePage />} />
             </Route>
           </Routes>
         </BrowserRouter>

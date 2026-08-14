@@ -19,6 +19,12 @@ async function invokeCommand<T>(command: string, args: Record<string, unknown>):
 export interface LocalDirEntry { path: string; name: string; kind: 'file' | 'directory'; size: number }
 export interface LocalFileRead { content: string | null; binary: boolean; bytes: number; truncated: boolean }
 export interface LocalSearchMatch { path: string; line: number | null; text: string | null }
+export interface WorkspaceTreeEntry extends LocalDirEntry { modifiedAt: number }
+export interface WorkspaceProject { schemaVersion: number; id: string; name: string; createdAt: string; stage: string }
+export interface LocalWorkspaceInfo { root: string; project: WorkspaceProject }
+export interface WorkspaceIndexStats { files: number; indexedDocuments: number }
+export interface WorkspaceIndexMatch { path: string; text: string; score: number }
+export interface WorkspaceFsChange { kind: 'created' | 'modified' | 'removed' | 'renamed' | 'rescan'; path: string; isDir: boolean }
 
 export function resolveWorkspacePath(path: string, workspaceRoot: string): Promise<string> {
   return invokeCommand('resolve_path', { path, workspaceRoot })
@@ -32,6 +38,14 @@ export function readWorkspaceFile(path: string, workspaceRoot: string, offset?: 
   return invokeCommand('read_file', { path, workspaceRoot, offset, limit })
 }
 
+export function readWorkspaceBytes(path: string, workspaceRoot: string): Promise<number[]> {
+  return invokeCommand('read_file_bytes', { path, workspaceRoot })
+}
+
+export function readWorkspaceTree(workspaceRoot: string): Promise<WorkspaceTreeEntry[]> {
+  return invokeCommand('read_tree', { workspaceRoot })
+}
+
 export function writeWorkspaceFile(path: string, content: string, workspaceRoot: string): Promise<number> {
   return invokeCommand('write_file', { path, content, workspaceRoot })
 }
@@ -42,6 +56,56 @@ export function searchWorkspaceFiles(query: string, path: string, workspaceRoot:
 
 export function selectWorkspace(): Promise<string | null> {
   return invokeCommand('select_workspace', {})
+}
+
+export function restoreWorkspace(workspaceRoot: string): Promise<LocalWorkspaceInfo> {
+  return invokeCommand('restore_workspace', { workspaceRoot })
+}
+
+export function createWorkspace(name: string): Promise<LocalWorkspaceInfo | null> {
+  return invokeCommand('create_workspace', { name })
+}
+
+export function closeWorkspace(): Promise<void> {
+  return invokeCommand('close_workspace', {})
+}
+
+export function initializeWorkspaceIndex(workspaceRoot: string): Promise<WorkspaceIndexStats> {
+  return invokeCommand('initialize_index', { workspaceRoot })
+}
+
+export function rebuildWorkspaceIndex(workspaceRoot: string): Promise<WorkspaceIndexStats> {
+  return invokeCommand('rebuild_index', { workspaceRoot })
+}
+
+export function upsertWorkspaceIndexDocument(workspaceRoot: string, path: string, content?: string): Promise<void> {
+  return invokeCommand('upsert_index_document', { workspaceRoot, path, content })
+}
+
+export function removeWorkspaceIndexPath(workspaceRoot: string, path: string): Promise<void> {
+  return invokeCommand('remove_index_path', { workspaceRoot, path })
+}
+
+export function searchWorkspaceIndex(workspaceRoot: string, query: string, maxResults?: number): Promise<WorkspaceIndexMatch[]> {
+  return invokeCommand('search_index', { workspaceRoot, query, maxResults })
+}
+
+export function getWorkspaceIndexStats(workspaceRoot: string): Promise<WorkspaceIndexStats> {
+  return invokeCommand('index_stats', { workspaceRoot })
+}
+
+export function startWorkspaceWatcher(workspaceRoot: string): Promise<void> {
+  return invokeCommand('watch_dir', { workspaceRoot })
+}
+
+export function stopWorkspaceWatcher(): Promise<void> {
+  return invokeCommand('unwatch_dir', {})
+}
+
+export async function listenWorkspaceChanges(listener: (event: WorkspaceFsChange) => void): Promise<() => void> {
+  if (!isTauri) return () => undefined
+  const { listen } = await import('@tauri-apps/api/event')
+  return listen<WorkspaceFsChange>('workspace://fs-change', (event) => listener(event.payload))
 }
 
 export function appendWorkspaceSnapshot(
@@ -64,6 +128,28 @@ export function clearWorkspaceSnapshot(
   workspaceRoot: string,
 ): Promise<void> {
   return invokeCommand('clear_snapshot', { conversationId, workspaceRoot })
+}
+
+export function appendWorkspaceRecord(
+  workspaceRoot: string,
+  category: 'ledger' | 'conversations',
+  recordId: string,
+  content: unknown,
+): Promise<void> {
+  return invokeCommand('append_workspace_record', {
+    workspaceRoot,
+    category,
+    recordId,
+    content: JSON.stringify(content),
+  })
+}
+
+export function readWorkspaceRecords<T>(
+  workspaceRoot: string,
+  category: 'ledger' | 'conversations',
+  recordId: string,
+): Promise<T[]> {
+  return invokeCommand('read_workspace_records', { workspaceRoot, category, recordId })
 }
 
 /** 当前操作系统平台 */

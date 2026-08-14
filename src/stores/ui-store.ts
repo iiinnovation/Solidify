@@ -12,10 +12,16 @@ interface UIState {
   setPendingInput: (input: string | null) => void
 }
 
+function defaultSidebarOpen(): boolean {
+  return typeof window === 'undefined'
+    || typeof window.matchMedia !== 'function'
+    || !window.matchMedia('(max-width: 767px)').matches
+}
+
 export const useUIStore = create<UIState>()(
   persist(
     (set) => ({
-      sidebarOpen: true,
+      sidebarOpen: defaultSidebarOpen(),
       sidebarWidth: 260,
       chatPanelWidth: 440,
       pendingInput: null,

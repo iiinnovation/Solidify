@@ -96,6 +96,17 @@ pub fn read_file(
     read_file_impl(path, workspace_root, offset, limit)
 }
 
+#[tauri::command]
+pub fn read_file_bytes(
+    path: String,
+    workspace_root: String,
+    authorization: State<'_, WorkspaceAuthorization>,
+) -> Result<Vec<u8>, String> {
+    authorization.require(&workspace_root)?;
+    let resolved = resolve_in_workspace(&path, &workspace_root, false)?;
+    fs::read(resolved).map_err(|error| format!("Unable to read file: {error}"))
+}
+
 fn read_file_impl(
     path: String,
     workspace_root: String,

@@ -1,12 +1,12 @@
 import type { Tool } from '../types'
-import { readWorkspaceFile } from '@/lib/tauri'
+import { readWorkspaceBytes, readWorkspaceFile } from '@/lib/tauri'
 import { failure, success, errorMessage, validateWorkspacePath } from './helpers'
 
 interface ReadFileInput { path: string; offset?: number; limit?: number }
 
 export const readFileTool: Tool<ReadFileInput> = {
   name: 'read_file',
-  description: '读取工作区内文本文件，可用 offset 和 limit 读取片段；二进制文件只返回元信息。',
+  description: '读取工作区内文本、PDF 或 Word 文件，可用 offset 和 limit 读取片段。',
   inputSchema: { type: 'object', properties: { path: { type: 'string', minLength: 1 }, offset: { type: 'number', minimum: 0 }, limit: { type: 'number', minimum: 1 } }, required: ['path'] },
   readOnly: true, concurrencySafe: true, destructive: false, requiresConfirmation: false,
   availability: 'tauri-only', permissions: ['fs:read'], timeoutMs: 30_000,
@@ -16,7 +16,22 @@ export const readFileTool: Tool<ReadFileInput> = {
     if (pathError) return pathError
     try {
       const result = await readWorkspaceFile(input.path, ctx.cwd, input.offset, input.limit)
-      if (result.binary) return success(`文件为二进制，大小 ${result.bytes} 字节`, result)
+      if (result.binary) {
+        const extension = input.path.split('.').pop()?.toLowerCase()
+        if (extension !== 'pdf' && extension !== 'docx') return success(`文件为二进制，大小 ${result.bytes} 字节`, result)
+        const { extractText } = await import('@/lib/file-extractor')
+        const bytes = new Uint8Array(await readWorkspaceBytes(input.path, ctx.cwd))
+        const mime = extension === 'pdf'
+          ? 'application/pdf'
+          : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        const extracted = await extractText(new File([bytes], input.path.split('/').pop() ?? input.path, { type: mime }))
+        const offset = input.offset ?? 0
+        const content = input.limit === undefined
+          ? Array.from(extracted).slice(offset).join('')
+          : Array.from(extracted).slice(offset, offset + input.limit).join('')
+        const truncated = offset + Array.from(content).length < Array.from(extracted).length
+        return { ...success(content, { ...result, content, binary: false, truncated }), truncated, metadata: { durationMs: 0, bytesRead: result.bytes } }
+      }
       return { ...success(result.content ?? '', result), truncated: result.truncated, metadata: { durationMs: 0, bytesRead: result.bytes } }
     } catch (error) { return failure('not_found', `无法读取文件 ${input.path}：${errorMessage(error)}`) }
   },

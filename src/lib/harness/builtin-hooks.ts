@@ -6,6 +6,7 @@ import { RunLedger } from './ledger'
 import { PolicyEngine, type PolicyInput, type PermissionDecision } from './policy'
 import { approvalResponder } from './approval-channel'
 import { builtinSkills } from '../skills'
+import { prefetchMemory } from '../memory'
 
 export interface HarnessRuntimeOptions {
   policy?: PolicyInput
@@ -37,6 +38,10 @@ export function createHarnessRuntime(ctx: QueryContext, options: HarnessRuntimeO
   })
   const hooks = new HookManager()
   hooks.register({ id: 'injectEnvironment', type: 'before_query', mode: 'waterfall', priority: 10, handler: (value: unknown) => ({ action: 'continue' as const, value: appendQueryContext(value, `Environment: cwd=${ctx.cwd}; platform=${ctx.platform ?? 'web'}; time=${new Date().toISOString()}`) }) })
+  hooks.register({ id: 'prefetchWorkspaceMemory', type: 'before_query', mode: 'waterfall', priority: 15, handler: async (value: unknown) => {
+    const memoryContext = await prefetchMemory(ctx.messages, ctx.memory)
+    return { action: 'continue' as const, value: memoryContext ? appendQueryContext(value, memoryContext) : value }
+  } })
   hooks.register({ id: 'injectSkillIndex', type: 'before_query', mode: 'waterfall', priority: 20, handler: (value: unknown) => ({ action: 'continue' as const, value: appendQueryContext(value, `Available skills:\n${builtinSkills.map((skill) => `- ${skill.name}: ${skill.description}`).join('\n')}`) }) })
   hooks.register({ id: 'enforceTokenBudget', type: 'before_model_call', mode: 'waterfall', priority: 30, handler: (value: unknown) => {
     const usage = isRecord(value) && isRecord(value.usage) ? Number(value.usage.totalTokens ?? 0) : 0

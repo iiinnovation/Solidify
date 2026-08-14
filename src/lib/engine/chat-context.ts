@@ -9,7 +9,8 @@ import { toolRegistry } from '@/lib/tools'
 import { createSnapshotStore } from './snapshot'
 import { isTauri } from '@/lib/tauri'
 import { getSystemPrompt } from '@/lib/chat-api'
-import { InMemoryState } from '@/lib/memory'
+import { InMemoryState, WorkspaceMemory } from '@/lib/memory'
+import { configureLedgerWorkspace } from '@/lib/harness/ledger'
 import type { WorkspaceHandle } from '@/lib/workspace'
 
 const DEFAULT_LIMITS: RunLimits = {
@@ -44,6 +45,8 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
     options.skillSkipConfirmation,
   ))
   const settings = createSettings(options.provider, cwd)
+  const localWorkspaceEnabled = isEnabled('localWorkspace') && Boolean(workspaceRoot)
+  configureLedgerWorkspace(localWorkspaceEnabled ? workspaceRoot ?? null : null)
   const tools = isEnabled('toolCalling')
     ? toolRegistry.resolve({
         // A real root is mandatory before exposing desktop filesystem tools.
@@ -61,7 +64,7 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
     messages: options.messages,
     tools,
     skill,
-    memory: new InMemoryState(),
+    memory: localWorkspaceEnabled && workspaceRoot ? new WorkspaceMemory(workspaceRoot) : new InMemoryState(),
     model: {
       provider: providerName,
       model: options.provider.modelId,

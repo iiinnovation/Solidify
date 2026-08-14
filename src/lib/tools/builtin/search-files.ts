@@ -1,5 +1,6 @@
 import type { Tool } from '../types'
-import { searchWorkspaceFiles } from '@/lib/tauri'
+import { searchWorkspaceFiles, searchWorkspaceIndex } from '@/lib/tauri'
+import { isEnabled } from '@/lib/harness/flags'
 import { failure, success, errorMessage, validateWorkspacePath } from './helpers'
 
 interface SearchFilesInput { query: string; path?: string; max_results?: number }
@@ -14,7 +15,12 @@ export const searchFilesTool: Tool<SearchFilesInput> = {
     if (signal.aborted) return failure('runtime', '文件检索已中断', true)
     const pathError = validateWorkspacePath(input.path ?? '.', ctx)
     if (pathError) return pathError
-    try { const matches = await searchWorkspaceFiles(input.query, input.path ?? '.', ctx.cwd, input.max_results); return success(JSON.stringify(matches), matches) }
+    try {
+      const matches = isEnabled('localWorkspace')
+        ? await searchWorkspaceIndex(ctx.cwd, input.query, input.max_results)
+        : await searchWorkspaceFiles(input.query, input.path ?? '.', ctx.cwd, input.max_results)
+      return success(JSON.stringify(matches), matches)
+    }
     catch (error) { return failure('runtime', `无法检索文件：${errorMessage(error)}`) }
   },
   renderCall: (input) => `检索 ${input.query}`,

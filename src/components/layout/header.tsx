@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { PanelLeftClose, PanelLeftOpen, Settings, LogOut, FileText, BarChart3, BookOpen } from 'lucide-react'
+import { PanelLeftClose, PanelLeftOpen, Settings, LogOut, FileText, BarChart3, BookOpen, FolderTree } from 'lucide-react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useHotkeys } from 'react-hotkeys-hook'
 import { Button } from '@/components/ui/button'
@@ -11,6 +11,7 @@ import { supabaseConfigured } from '@/lib/supabase'
 import { isTauri } from '@/lib/tauri'
 import { HOTKEYS } from '@/lib/hotkeys'
 import { cn } from '@/lib/utils'
+import { isEnabled } from '@/lib/harness/flags'
 
 export function Header() {
   const { sidebarOpen, toggleSidebar } = useUIStore()
@@ -48,7 +49,7 @@ export function Header() {
 
   return (
     <header
-      className="h-12 flex items-center justify-between px-4 border-b border-border-light bg-surface shrink-0 relative"
+      className="relative flex h-12 shrink-0 items-center justify-between gap-2 border-b border-border-light bg-surface px-2 sm:px-4"
       style={isTauri ? { paddingLeft: '80px' } : undefined}
     >
       {/* 可拖动区域 - 整个 header 背景 */}
@@ -59,7 +60,7 @@ export function Header() {
         />
       )}
 
-      <div className="flex items-center gap-3 relative z-10">
+      <div className="relative z-10 flex shrink-0 items-center gap-2 sm:gap-3">
         <Button variant="ghost" size="icon" onClick={toggleSidebar} aria-label="切换侧边栏">
           {sidebarOpen ? (
             <PanelLeftClose size={20} strokeWidth={1.75} />
@@ -71,8 +72,13 @@ export function Header() {
           Solidify
         </span>
       </div>
-      <div className="flex items-center gap-2 relative z-10">
+      <div className="relative z-10 flex min-w-0 items-center gap-0.5 sm:gap-2">
         {/* 导航按钮 */}
+        {isEnabled('localWorkspace') && (
+          <Button variant="ghost" size="sm" onClick={() => navigate('/workspace')} className={cn(location.pathname === '/workspace' && 'bg-accent-light text-accent')} aria-label="工作区">
+            <FolderTree size={18} strokeWidth={1.75} className="sm:mr-1.5" /><span className="hidden sm:inline">工作区</span>
+          </Button>
+        )}
         <Button
           variant="ghost"
           size="sm"
@@ -82,8 +88,8 @@ export function Header() {
           )}
           aria-label="知识库"
         >
-          <BookOpen size={18} strokeWidth={1.75} className="mr-1.5" />
-          知识库
+          <BookOpen size={18} strokeWidth={1.75} className="sm:mr-1.5" />
+          <span className="hidden sm:inline">知识库</span>
         </Button>
 
         <Button
@@ -95,8 +101,8 @@ export function Header() {
           )}
           aria-label="模板管理"
         >
-          <FileText size={18} strokeWidth={1.75} className="mr-1.5" />
-          模板
+          <FileText size={18} strokeWidth={1.75} className="sm:mr-1.5" />
+          <span className="hidden sm:inline">模板</span>
         </Button>
 
         <Button
@@ -108,15 +114,15 @@ export function Header() {
           )}
           aria-label="用量统计"
         >
-          <BarChart3 size={18} strokeWidth={1.75} className="mr-1.5" />
-          用量
+          <BarChart3 size={18} strokeWidth={1.75} className="sm:mr-1.5" />
+          <span className="hidden sm:inline">用量</span>
         </Button>
 
         {/* 同步状态指示器 */}
-        {supabaseConfigured && <SyncIndicator />}
+        {supabaseConfigured && <div className="hidden sm:block"><SyncIndicator /></div>}
 
         {/* 主题切换 */}
-        <ThemeToggle />
+        <div className="hidden lg:block"><ThemeToggle /></div>
 
         <Button variant="ghost" size="icon" onClick={() => navigate('/settings')} aria-label="设置">
           <Settings size={20} strokeWidth={1.75} />

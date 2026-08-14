@@ -52,7 +52,13 @@ export async function extractText(file: File): Promise<string> {
 async function extractDocxText(file: File): Promise<string> {
   const mammoth = await import('mammoth')
   const arrayBuffer = await file.arrayBuffer()
-  const result = await mammoth.extractRawText({ arrayBuffer })
+  // Mammoth's browser build reads arrayBuffer while its Node build reads
+  // buffer. Supplying both keeps extraction consistent in Tauri and tests.
+  const input = {
+    arrayBuffer,
+    buffer: new Uint8Array(arrayBuffer),
+  } as Parameters<typeof mammoth.extractRawText>[0]
+  const result = await mammoth.extractRawText(input)
   return result.value || `[Word 文档: ${file.name}，内容为空]`
 }
 

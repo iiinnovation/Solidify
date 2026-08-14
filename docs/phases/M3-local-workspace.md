@@ -9,6 +9,8 @@
 | **规格** | [specs/workspace-format.md](../specs/workspace-format.md) |
 | **特性开关** | `localWorkspace` |
 
+> **归档决定（2026-08-14）**：M3 的本地工作区、文件监听与索引、持久化记忆、迁移接口和工作区 UI 已完成；规格中的 7 个验收场景与 1 万文件压力用例均纳入自动化测试。向量索引按既定降级方案使用 SQLite BLOB 存储，避免 `sqlite-vec` 的跨平台动态加载风险。
+
 ## 目标
 
 把「项目」从数据库里的一行记录，变成**用户桌面上一个真实的文件夹**。
@@ -109,9 +111,9 @@ Rust 部分先行。前端在 Rust command 就绪前可以用 mock 并行开发 
 
 ## 完成定义
 
-- [ ] Demo 能当着人跑通（含 Finder 里的外部改动被感知）
-- [ ] [workspace-format.md §11](../specs/workspace-format.md) 的 7 个用例全部通过
-- [ ] 中文文件名 + 中文内容检索有效
-- [ ] 删除 `index.db` 后重启能自动重建，无数据丢失
-- [ ] 1 万文件目录：首次索引 < 60s，增量更新 < 1s
-- [ ] `flags.localWorkspace = false` 时回退到云端项目模式
+- [x] Demo 能当着人跑通（含 Finder 里的外部改动被感知）
+- [x] [workspace-format.md §11](../specs/workspace-format.md) 的 7 个用例全部通过
+- [x] 中文文件名 + 中文内容检索有效
+- [x] 删除 `index.db` 后重启能自动重建，无数据丢失
+- [x] 1 万文件目录：首次索引 < 60s，增量更新 < 1s
+- [x] `flags.localWorkspace = false` 时回退到云端项目模式

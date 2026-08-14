@@ -67,3 +67,4 @@ export function resetRAGProvider() {
 export * from './types'
 export { SupabaseRAGProvider } from './supabase-provider'
 export { RagFlowProvider } from './ragflow-provider'
+export { WorkspaceRAGProvider } from './workspace-provider'

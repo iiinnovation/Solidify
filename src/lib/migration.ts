@@ -12,6 +12,9 @@ import {
   type CreateArtifactInput,
 } from '@/lib/api'
 import { toast } from '@/stores/toast-store'
+import { getConversations, getMessages, getArtifactsWithContent } from '@/lib/api'
+import { appendWorkspaceRecord, writeWorkspaceFile } from '@/lib/tauri'
+import type { Artifact as LocalArtifact, Conversation as LocalConversation, Message as LocalMessage } from '@/stores/chat-store'
 
 interface MigrationResult {
   success: boolean
@@ -19,6 +22,70 @@ interface MigrationResult {
   messagesMigrated: number
   artifactsMigrated: number
   error?: string
+}
+
+export interface WorkspaceExportResult {
+  conversations: number
+  messages: number
+  artifacts: number
+}
+
+/** Export a cloud project once; remote records are intentionally left untouched. */
+export async function exportCloudProjectToWorkspace(projectId: string, workspaceRoot: string): Promise<WorkspaceExportResult> {
+  const result: WorkspaceExportResult = { conversations: 0, messages: 0, artifacts: 0 }
+  const conversations = await getConversations(projectId)
+  for (const conversation of conversations) {
+    const [messages, artifacts] = await Promise.all([
+      getMessages(conversation.id),
+      getArtifactsWithContent(conversation.id),
+    ])
+    const localMessages: LocalMessage[] = messages
+      .filter((message) => message.role === 'user' || message.role === 'assistant')
+      .map((message) => ({ id: message.id, role: message.role as 'user' | 'assistant', content: message.content }))
+    const localConversation: LocalConversation = {
+      id: conversation.id,
+      title: conversation.title,
+      messages: localMessages,
+      createdAt: Date.parse(conversation.created_at),
+    }
+    const localArtifacts: LocalArtifact[] = artifacts.map((artifact) => ({
+      id: artifact.id,
+      title: artifact.title,
+      type: artifact.type,
+      content: artifact.content,
+      messageId: artifact.message_id,
+      version: artifact.version,
+    }))
+    await appendWorkspaceRecord(workspaceRoot, 'conversations', `${safeRecordId(conversation.id)}.chat`, {
+      type: 'conversation.snapshot',
+      ts: new Date().toISOString(),
+      conversation: localConversation,
+      artifacts: localArtifacts,
+      importedFrom: { remoteProjectId: projectId },
+    })
+    for (const artifact of artifacts) {
+      const artifactRoot = `.solidify/artifacts/${safeRecordId(artifact.id)}`
+      await writeWorkspaceFile(`${artifactRoot}/meta.json`, JSON.stringify({
+        id: artifact.id,
+        conversationId: artifact.conversation_id,
+        messageId: artifact.message_id,
+        title: artifact.title,
+        type: artifact.type,
+        version: artifact.version,
+        importedFrom: { remoteProjectId: projectId },
+      }, null, 2), workspaceRoot)
+      await writeWorkspaceFile(`${artifactRoot}/v${artifact.version}.md`, artifact.content, workspaceRoot)
+    }
+    result.conversations++
+    result.messages += localMessages.length
+    result.artifacts += artifacts.length
+  }
+  localStorage.setItem(`solidify-cloud-project-exported:${projectId}`, workspaceRoot)
+  return result
+}
+
+function safeRecordId(value: string): string {
+  return value.replace(/[^A-Za-z0-9._-]/g, '_')
 }
 
 /**

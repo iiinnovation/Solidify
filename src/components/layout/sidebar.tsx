@@ -12,6 +12,8 @@ import { ProjectSelector } from '@/components/layout/project-selector'
 import { toast } from '@/stores/toast-store'
 import { supabaseConfigured } from '@/lib/supabase'
 import { HOTKEYS } from '@/lib/hotkeys'
+import { isEnabled } from '@/lib/harness/flags'
+import { ProjectPicker as LocalProjectPicker } from '@/components/workspace/project-picker'
 
 function ConversationItem({
   conv,
@@ -143,7 +145,7 @@ export function Sidebar() {
   return (
     <div className="h-full flex flex-col bg-background-secondary">
       {/* 项目选择器 */}
-      {supabaseConfigured && <ProjectSelector />}
+      {isEnabled('localWorkspace') ? <LocalProjectPicker compact /> : supabaseConfigured && <ProjectSelector />}
 
       <Separator />
 
