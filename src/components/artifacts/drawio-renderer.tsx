@@ -162,6 +162,22 @@ function esc(str: string): string {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
+/**
+ * Whitelist a style value before it is interpolated into an SVG attribute.
+ *
+ * Style values come from model-authored `.drawio` content and are parsed by a
+ * bare `split(';')`, so an unescaped value can close the attribute and inject
+ * markup (e.g. `<img onerror=...>`) into the `dangerouslySetInnerHTML` sink.
+ * Anything that is not a plain colour token falls back to the caller's default.
+ */
+const SAFE_COLOR = /^(#[0-9a-fA-F]{3,8}|[a-zA-Z]+|rgba?\([\d\s.,%]+\))$/
+
+function color(value: string | undefined, fallback: string): string {
+  if (!value) return fallback
+  const trimmed = value.trim()
+  return SAFE_COLOR.test(trimmed) ? trimmed : fallback
+}
+
 function shapeOf(s: Record<string, string>): string {
   const base = (s._base || '').toLowerCase()
   const shape = (s.shape || '').toLowerCase()
@@ -309,14 +325,14 @@ function edgePoint(
 function renderVertex(cell: CellInfo): string {
   const s = cell.style
   const shape = shapeOf(s)
-  const fill = s.fillColor || (shape === 'text' ? 'none' : DEFAULT_FILL)
-  const stroke = s.strokeColor || (shape === 'text' ? 'none' : DEFAULT_STROKE)
+  const fill = color(s.fillColor, shape === 'text' ? 'none' : DEFAULT_FILL)
+  const stroke = color(s.strokeColor, shape === 'text' ? 'none' : DEFAULT_STROKE)
   const sw = parseFloat(s.strokeWidth || '1.5')
   const opacity = parseFloat(s.opacity || '100') / 100
   const rounded = s.rounded === '1'
   const dashed = s.dashed === '1'
   const fontSize = parseFloat(s.fontSize || String(DEFAULT_FONT_SIZE))
-  const fontColor = s.fontColor || DEFAULT_FONT_COLOR
+  const fontColor = color(s.fontColor, DEFAULT_FONT_COLOR)
   const fontStyleBits = parseInt(s.fontStyle || '0')
   const bold = (fontStyleBits & 1) !== 0
   const italic = (fontStyleBits & 2) !== 0
@@ -348,7 +364,7 @@ function renderVertex(cell: CellInfo): string {
     }
     case 'swimlane': {
       const hh = Math.min(h*0.12, 30)
-      const hFill = s.fillColor || '#dae8fc'
+      const hFill = color(s.fillColor, '#dae8fc')
       parts.push(`<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="${fill === DEFAULT_FILL ? '#f8f9fa' : fill}" stroke="${stroke}" stroke-width="${sw}" opacity="${opacity}" rx="3"${dash}/>`)
       parts.push(`<rect x="${x}" y="${y}" width="${w}" height="${hh}" fill="${hFill}" stroke="${stroke}" stroke-width="${sw}" opacity="${opacity}" rx="3"/>`)
       parts.push(`<line x1="${x}" y1="${y+hh}" x2="${x+w}" y2="${y+hh}" stroke="${stroke}" stroke-width="${sw}" opacity="${opacity}"/>`)
@@ -401,7 +417,7 @@ function renderVertex(cell: CellInfo): string {
 
 function renderEdge(edge: CellInfo, cellMap: Map<string, CellInfo>): string {
   const s = edge.style
-  const stroke = s.strokeColor || DEFAULT_STROKE
+  const stroke = color(s.strokeColor, DEFAULT_STROKE)
   const sw = parseFloat(s.strokeWidth || '1.5')
   const dashed = s.dashed === '1'
   const opacity = parseFloat(s.opacity || '100') / 100
@@ -460,7 +476,7 @@ function renderEdge(edge: CellInfo, cellMap: Map<string, CellInfo>): string {
       const mi = Math.floor(pts.length / 2)
       const mid = { x: (pts[mi-1].x + pts[mi].x) / 2, y: (pts[mi-1].y + pts[mi].y) / 2 }
       const fs = parseFloat(s.fontSize || '11')
-      const fc = s.fontColor || DEFAULT_FONT_COLOR
+      const fc = color(s.fontColor, DEFAULT_FONT_COLOR)
       const tw = label.length * fs * 0.55
       const pad = 3
       parts.push(`<rect x="${mid.x-tw/2-pad}" y="${mid.y-fs/2-pad}" width="${tw+pad*2}" height="${fs+pad*2}" fill="white" opacity="0.9" rx="2"/>`)
@@ -482,7 +498,7 @@ function generateLocalSvg(xml: string): string | null {
   const arrowColors = new Set<string>()
   for (const e of edges) {
     if (e.style.endArrow !== 'none' && e.style.endArrow !== '0') {
-      arrowColors.add(e.style.strokeColor || DEFAULT_STROKE)
+      arrowColors.add(color(e.style.strokeColor, DEFAULT_STROKE))
     }
   }
 

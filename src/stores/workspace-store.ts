@@ -27,6 +27,7 @@ interface WorkspaceState {
 let activeIndexer: WorkspaceIndexer | null = null
 let stopConversationPersistence: (() => Promise<void>) | null = null
 let initialization: Promise<void> | null = null
+let activation: Promise<void> = Promise.resolve()
 
 export const useWorkspaceStore = create<WorkspaceState>()(
   persist(
@@ -102,25 +103,42 @@ async function activate(
   set: (partial: Partial<WorkspaceState>) => void,
   get: () => WorkspaceState,
 ): Promise<void> {
-  try {
-    set({ status: 'indexing', error: null })
-    await activeIndexer?.stop()
-    const info = await load(root)
-    await stopConversationPersistence?.()
-    stopConversationPersistence = null
-    set({ workspaceRoot: info.root, project: info.project })
-    await restoreWorkspaceConversations(info.root)
-    stopConversationPersistence = startWorkspaceConversationPersistence(info.root)
-    const entries = await readWorkspaceTree(info.root)
-    activeIndexer = new WorkspaceIndexer(info.root, async (_change, indexStats) => {
-      if (get().workspaceRoot !== info.root) return
-      set({ entries: await readWorkspaceTree(info.root), indexStats })
-    })
-    const indexStats = await activeIndexer.start()
-    set({ entries, indexStats, status: 'ready' })
-  } catch (error) {
-    set({ status: 'error', error: errorMessage(error) })
-  }
+  // Serialize activations: two overlapping calls (e.g. layout initialize racing a
+  // user-triggered open) would each build an indexer, and the loser's Tauri event
+  // listener would never be unlistened — leaking a live listener for the process
+  // lifetime that keeps re-walking the tree on every fs change.
+  const previous = activation
+  activation = (async () => {
+    await previous
+    try {
+      set({ status: 'indexing', error: null })
+      await activeIndexer?.stop()
+      activeIndexer = null
+      // Flush and detach the previous workspace BEFORE `load` reassigns the
+      // native workspace authorization — a flush afterwards would be rejected by
+      // the Rust side because it still targets the old root.
+      await stopConversationPersistence?.()
+      stopConversationPersistence = null
+      await flushWorkspaceLedger()
+      configureLedgerWorkspace(null)
+
+      const info = await load(root)
+      set({ workspaceRoot: info.root, project: info.project })
+      await restoreWorkspaceConversations(info.root)
+      stopConversationPersistence = startWorkspaceConversationPersistence(info.root)
+      const entries = await readWorkspaceTree(info.root)
+      const indexer = new WorkspaceIndexer(info.root, async (_change, indexStats) => {
+        if (get().workspaceRoot !== info.root) return
+        set({ entries: await readWorkspaceTree(info.root), indexStats })
+      })
+      activeIndexer = indexer
+      const indexStats = await indexer.start()
+      set({ entries, indexStats, status: 'ready' })
+    } catch (error) {
+      set({ status: 'error', error: errorMessage(error) })
+    }
+  })()
+  return activation
 }
 
 function errorMessage(error: unknown): string {

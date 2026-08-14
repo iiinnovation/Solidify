@@ -22,6 +22,12 @@ export interface ModelConfig {
   model: string
   temperature?: number
   maxTokens?: number
+  /**
+   * Usable context window for this model, in tokens. Drives context trimming.
+   * Absent = a conservative default is used rather than assuming 200k, which
+   * would silently overflow every smaller model.
+   */
+  contextWindow?: number
 }
 
 export interface RunLimits {
@@ -78,6 +84,12 @@ export interface QueryContext {
   readonly platform?: Platform
   /** Trusted Harness-generated context appended to the system prompt. */
   readonly harnessContext?: readonly string[]
+  /**
+   * Untrusted content retrieved from the workspace (RAG / memory prefetch).
+   * Injected as a user-role message, never into the system prompt — it may
+   * contain text authored by anyone who can drop a file in the workspace.
+   */
+  readonly retrievedContext?: string
 }
 
 // ============================================================================

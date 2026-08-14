@@ -1,6 +1,20 @@
 import { getWorkspaceIndexStats, readWorkspaceFile, readWorkspaceTree, searchWorkspaceIndex } from '@/lib/tauri'
 import type { KnowledgeEntry, KnowledgeStats, RAGProvider, SearchOptions, SearchResult, UploadOptions } from './types'
 
+/**
+ * Map SQLite FTS5 `bm25()` onto a 0..1 similarity.
+ *
+ * bm25 returns NEGATIVE scores where more negative is a better match, so the
+ * previous `1 / (1 + Math.max(0, score))` clamped every real score to 0 and
+ * reported a constant similarity of 1 — discarding the ranking entirely.
+ * The short-query branch reports 0, which maps to a low but non-zero score.
+ */
+function similarityFromBm25(score: number): number {
+  if (!Number.isFinite(score)) return 0
+  const strength = Math.max(0, -score)
+  return strength === 0 ? 0.1 : 1 - 1 / (1 + strength)
+}
+
 export class WorkspaceRAGProvider implements RAGProvider {
   private readonly root: string
 
@@ -18,7 +32,7 @@ export class WorkspaceRAGProvider implements RAGProvider {
       content: match.text,
       source_type: 'workspace',
       metadata: { path: match.path },
-      similarity: 1 / (1 + Math.max(0, match.score)),
+      similarity: similarityFromBm25(match.score),
       created_at: new Date().toISOString(),
     }))
   }

@@ -51,7 +51,17 @@ export function snapshotJson(value: unknown): JsonValue {
     }
     const output: Record<string, JsonValue> = {}
     for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
-      if (value !== undefined) output[key] = convert(value)
+      if (value === undefined) continue
+      // `output[key] = ...` invokes the inherited __proto__ setter for that key:
+      // the property is silently dropped and the object's prototype is replaced,
+      // which then trips the prototype guard above on the next snapshot and
+      // kills the run. A model can emit {"__proto__": {}} as tool input.
+      Object.defineProperty(output, key, {
+        value: convert(value),
+        enumerable: true,
+        writable: false,
+        configurable: false,
+      })
     }
     seen.delete(input as object)
     return Object.freeze(output)

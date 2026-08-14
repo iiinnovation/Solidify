@@ -24,7 +24,7 @@ pub struct IndexSearchMatch {
     pub score: f64,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn initialize_index(
     workspace_root: String,
     authorization: State<'_, WorkspaceAuthorization>,
@@ -34,7 +34,7 @@ pub fn initialize_index(
     stats(&connection)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn rebuild_index(
     workspace_root: String,
     authorization: State<'_, WorkspaceAuthorization>,
@@ -77,7 +77,7 @@ pub fn rebuild_index_impl(workspace_root: &str) -> Result<IndexStats, String> {
     stats(&connection)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn upsert_index_document(
     workspace_root: String,
     path: String,
@@ -107,7 +107,7 @@ pub fn upsert_index_document(
     )
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn remove_index_path(
     workspace_root: String,
     path: String,
@@ -134,7 +134,7 @@ pub fn remove_index_path_impl(workspace_root: &str, path: &str) -> Result<(), St
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn search_index(
     workspace_root: String,
     query: String,
@@ -158,8 +158,16 @@ pub fn search_index_impl(
     let max_results = max_results.clamp(1, 1_000) as i64;
     if query.chars().count() < 3 {
         let pattern = format!("%{}%", escape_like(query));
+        // `substr` bounds what comes back. Selecting raw `content` returned up
+        // to `max_results` WHOLE files (2 MiB each) for a two-character query —
+        // trivially common in Chinese — which both dwarfs the caller's context
+        // budget and can materialise gigabytes in one call.
         let mut statement = connection
-            .prepare("SELECT path, content, 0.0 FROM files_fts WHERE path LIKE ?1 ESCAPE '\\' OR content LIKE ?1 ESCAPE '\\' ORDER BY path LIMIT ?2")
+            .prepare(
+                "SELECT path, substr(content, 1, 200), 0.0 FROM files_fts \
+                 WHERE path LIKE ?1 ESCAPE '\\' OR content LIKE ?1 ESCAPE '\\' \
+                 ORDER BY path LIMIT ?2",
+            )
             .map_err(|error| error.to_string())?;
         let rows = statement
             .query_map(params![pattern, max_results], |row| {
@@ -198,7 +206,7 @@ fn escape_like(value: &str) -> String {
         .replace('_', "\\_")
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn index_stats(
     workspace_root: String,
     authorization: State<'_, WorkspaceAuthorization>,

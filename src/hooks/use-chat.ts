@@ -298,14 +298,20 @@ ${result.content}
         ? processStreamingContent(assistantMsg.agentRun?.text ?? '').completeArtifacts.length
         : 0
 
-      const patchAssistantMessage = (patch: Partial<Message>) => {
+      /**
+       * `persist: false` updates only the local view. The conversation store is
+       * `persist()`-backed, so every write there re-serializes the whole
+       * conversation tree into localStorage — doing that once per streamed token
+       * is both O(n²) and a fast route to the storage quota.
+       */
+      const patchAssistantMessage = (patch: Partial<Message>, persist = true) => {
         setMessages((prev) => prev.map((message) =>
           message.id === assistantMsg.id ? { ...message, ...patch } : message,
         ))
-        patchMessageInConversation(currentConvId, assistantMsg.id, patch)
+        if (persist) patchMessageInConversation(currentConvId, assistantMsg.id, patch)
       }
 
-      const consumeArtifactContent = (fullContent: string, final = false) => {
+      const consumeArtifactContent = (fullContent: string, final = false, persist = true) => {
         const { cleanText, completeArtifacts, streamingArtifact } =
           processStreamingContent(fullContent)
 
@@ -354,7 +360,7 @@ ${result.content}
         patchAssistantMessage({
           content: cleanText,
           ...(final && knowledgeSources.length > 0 ? { knowledgeSources } : {}),
-        })
+        }, persist)
         return cleanText
       }
 
@@ -409,21 +415,34 @@ ${result.content}
             restoreSnapshot: Boolean(resume),
           })
 
+          let latestText: string | undefined
           for await (const event of runQuery(context)) {
-            runEvents.push(event)
+            // Deltas and progress ticks are transient UI signal, not run facts:
+            // the text is already accumulated into `run.text` by applyRunEvent.
+            // Persisting them grew runEvents without bound and made every patch
+            // copy an ever-larger array into localStorage.
+            const isDurableFact = event.type !== 'message.delta' && event.type !== 'tool.progress'
+            if (isDurableFact) runEvents.push(event)
             run = applyRunEvent(run, event)
-            const cleanText = event.type === 'message.delta' || event.type === 'message.completed'
-              ? consumeArtifactContent(run.text)
-              : undefined
+            if (event.type === 'message.delta' || event.type === 'message.completed') {
+              latestText = consumeArtifactContent(run.text, false, false)
+            }
+            // Durable facts (including run.completed / run.failed on abort) carry
+            // the latest text through to the stored conversation, so nothing is
+            // lost by skipping the per-token writes.
             patchAssistantMessage({
-              ...(cleanText !== undefined ? { content: cleanText } : {}),
+              ...(latestText !== undefined ? { content: latestText } : {}),
               agentRun: run,
-              runEvents: [...runEvents],
-            })
+              ...(isDurableFact ? { runEvents: [...runEvents] } : {}),
+            }, isDurableFact)
           }
 
-          consumeArtifactContent(run.text, true)
-          patchAssistantMessage({ agentRun: run, runEvents: [...runEvents] })
+          const finalText = consumeArtifactContent(run.text, true)
+          patchAssistantMessage({
+            ...(finalText !== undefined ? { content: finalText } : {}),
+            agentRun: run,
+            runEvents: [...runEvents],
+          })
           return
         }
 

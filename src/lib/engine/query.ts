@@ -4,7 +4,7 @@
  * @see docs/specs/agent-loop.md
  */
 
-import type { QueryContext, QueryEvent, UsageStats, Message, MessageContent } from './types'
+import type { QueryContext, QueryEvent, UsageStats, Message, MessageContent, RunError } from './types'
 import type { Tool, ToolCall, ToolResult, ToolProgress } from '../tools/types'
 import { prepareCall, executeCall, canRunInParallel } from '../tools/executor'
 import { buildToolUseContext } from './tool-context'
@@ -23,6 +23,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
   const logger = new SimpleRunLogger(ctx.runId)
   let turn = 0
   let totalToolCalls = 0
+  let completed = false
   const usage: UsageStats = {
     inputTokens: 0,
     outputTokens: 0,
@@ -42,6 +43,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
   // last completed tool turn after a renderer restart).
   let currentMessages = [...ctx.messages]
   let harnessContext = [...(ctx.harnessContext ?? [])]
+  let retrievedContext = ctx.retrievedContext
 
   try {
     harness?.ledger.append('run.started', { conversationId: ctx.conversationId })
@@ -50,8 +52,14 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
     if (harness) {
       const beforeQuery = await harness.hooks.waterfall('before_query', { messages: currentMessages }, { type: 'before_query', runId: ctx.runId, signal: runCtx.signal, onHookError: (id, error) => logger.warn('hook.failed', { id, error: String(error) }) })
       if (beforeQuery.action === 'abort') throw new Error(beforeQuery.reason)
-      if (beforeQuery.action === 'continue' && typeof beforeQuery.value === 'object' && beforeQuery.value && Array.isArray((beforeQuery.value as { context?: unknown }).context)) {
-        harnessContext = (beforeQuery.value as { context: unknown[] }).context.filter((text): text is string => typeof text === 'string')
+      if (beforeQuery.action === 'continue' && typeof beforeQuery.value === 'object' && beforeQuery.value) {
+        const envelope = beforeQuery.value as { context?: unknown; retrievedContext?: unknown }
+        if (Array.isArray(envelope.context)) {
+          harnessContext = envelope.context.filter((text): text is string => typeof text === 'string')
+        }
+        if (typeof envelope.retrievedContext === 'string') {
+          retrievedContext = envelope.retrievedContext
+        }
       }
     }
 
@@ -106,6 +114,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
           ...runCtx,
           messages: currentMessages,
           harnessContext,
+          retrievedContext,
         }, logger, {
           onModelPrepared: harness ? (request) => { harness.ledger.append('model.called', { turn, request }) } : undefined,
           onToolRequested: harness ? (call) => recordToolRequested(harness, call) : undefined,
@@ -147,6 +156,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
           textLength: response.text.length,
           stopReason: response.stopReason || 'end_turn'
         })
+        completed = true
         break
       }
 
@@ -213,8 +223,11 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       }
     }
 
-    // Check if we hit max turns
-    if (turn >= ctx.limits.maxTurns) {
+    // Only exhausted if the loop ran out of turns. A run that produced its final
+    // answer on the last allowed turn completed normally — reporting it as
+    // exhausted would suppress run.completed, the usage payload, the
+    // on_run_completed hook and snapshot cleanup.
+    if (!completed && turn >= ctx.limits.maxTurns) {
       harness?.ledger.append('run.exhausted', { reason: 'max_turns', usage })
       yield { type: 'run.exhausted', reason: 'max_turns' }
       logger.log('run.exhausted', { reason: 'max_turns', turns: turn })
@@ -225,6 +238,9 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
     yield { type: 'run.completed', usage }
     logger.log('run.completed', { usage })
     await harness?.hooks.observe('on_run_completed', { type: 'on_run_completed', runId: ctx.runId, usage, onHookError: (id, error) => logger.warn('hook.failed', { id, error: String(error) }) })
+    // Only the restore path clears here; a normal run's snapshot is cleared when
+    // the next run starts (see the !restoreSnapshot branch above), which keeps it
+    // available as a resume point if the renderer dies right after completion.
     if (ctx.restoreSnapshot) await clearSnapshot(ctx, logger)
 
   } catch (error) {
@@ -238,13 +254,11 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       logger.log('run.aborted')
     } else {
       const message = error instanceof Error ? error.message : String(error)
-      appendTerminalFact(harness, logger, 'run.failed', { kind: 'internal', message, usage })
+      const kind = error instanceof ModelStreamError ? error.runErrorKind : 'internal'
+      appendTerminalFact(harness, logger, 'run.failed', { kind, message, usage })
       yield {
         type: 'run.failed',
-        error: {
-          kind: 'internal',
-          message,
-        },
+        error: { kind, message },
       }
       logger.error('run.failed', error)
     }
@@ -254,6 +268,32 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
     internal.abort()
     unlink()
     await logger.flush()
+  }
+}
+
+/**
+ * Fatal model-stream failure that preserves the provider's classification.
+ * Without this every API failure surfaced as `kind: 'internal'`, so the UI could
+ * never tell a 429 from a genuine bug and the RunError union's rate_limit /
+ * api_error / timeout variants were unreachable.
+ */
+class ModelStreamError extends Error {
+  readonly runErrorKind: RunError['kind']
+  readonly retryable: boolean
+
+  constructor(error: { message: string; type?: string; retryable?: boolean }) {
+    super(`Model error: ${error.message}`)
+    this.name = 'ModelStreamError'
+    this.retryable = error.retryable === true
+    switch (error.type) {
+      case 'rate_limit': this.runErrorKind = 'rate_limit'; break
+      case 'timeout': this.runErrorKind = 'timeout'; break
+      case 'api_error':
+      case 'network':
+      case 'invalid_request':
+      case 'authentication': this.runErrorKind = 'api_error'; break
+      default: this.runErrorKind = 'internal'
+    }
   }
 }
 
@@ -402,9 +442,12 @@ async function* streamModelResponse(
             // Continue processing next frames
             break
           } else {
-            // Fatal error - throw and stop processing
+            // Fatal error - throw and stop processing. The provider's
+            // classification is carried on the thrown error so the terminal
+            // run.failed can distinguish "retry in a minute" (rate_limit /
+            // api_error) from "your code is broken" (internal).
             logger.error('stream.fatal_error', chunk.error)
-            throw new Error(`Model error: ${chunk.error.message}`)
+            throw new ModelStreamError(chunk.error)
           }
         }
 
@@ -488,8 +531,21 @@ async function* executeTools(
       }
     }
 
+    // Every promise gets a handler at creation time. Awaiting them one at a time
+    // would leave the later ones unhandled if an earlier one rejects (or if the
+    // consumer abandons the generator at the yield below), producing
+    // unhandledrejection and discarding results that already completed.
     const promises = runnable.map(({ tool, call }) =>
-      executeCall(tool, call, makeOpts(call))
+      executeCall(tool, call, makeOpts(call)).catch((error): ToolResult => ({
+        success: false,
+        content: `工具执行失败：${error instanceof Error ? error.message : String(error)}`,
+        error: {
+          kind: 'runtime',
+          message: error instanceof Error ? error.message : String(error),
+          recoverable: true,
+        },
+        metadata: { durationMs: 0 },
+      })),
     )
     for (let i = 0; i < runnable.length; i++) {
       const { call } = runnable[i]
@@ -550,14 +606,17 @@ async function* executeTools(
         const result: ToolResult & { callId: string } = { callId: call.id, success: false, content: reason, error: { kind: 'permission_denied', message: reason, recoverable: true }, metadata: { durationMs: 0 } }
         results.push(result); recordToolCompleted(harness, call.id, result); yield { type: 'tool.completed', callId: call.id, result }; continue
       }
-      const policy = harness.policy.evaluate(tool, call, {
+      const policy = Object.freeze(harness.policy.evaluate(tool, call, {
         workspace: toolCtx.workspace,
         platform: toolCtx.platform,
         settings: toolCtx.settings,
         permissions: toolCtx.permissions,
         toolContext: toolCtx,
         isOnline: typeof navigator === 'undefined' || navigator.onLine,
-      })
+      }))
+      // `observe` is the least-privileged hook mode and its exceptions are
+      // swallowed, so it must not be able to widen a decision. The decision is
+      // frozen and re-read from the frozen object after the await.
       await harness.hooks.observe('on_permission', { type: 'on_permission', runId: ctx.runId, callId: call.id, call, decision: policy, onHookError: (id, error) => logger.warn('hook.failed', { id, error: String(error) }) })
       let denied = policy.kind === 'deny' ? policy.reason : undefined
       const grantKey = sessionGrantKey(tool, call)
@@ -611,14 +670,31 @@ async function* executeTools(
       progress: { phase: 'executing', current: 0 }
     }
 
-    const executed = harness
-      ? await harness.hooks.around('execute_tool', { type: 'execute_tool', runId: ctx.runId, callId: call.id, call, signal: ctx.signal }, () => executeCall(tool, call, makeOpts(call)))
-      : await executeCall(tool, call, makeOpts(call))
+    // A throw here would leave every tool_use in this turn without a matching
+    // tool_result, which the APIs reject outright. Tools tombstone instead.
+    let executed: ToolResult
+    try {
+      executed = harness
+        ? await harness.hooks.around('execute_tool', { type: 'execute_tool', runId: ctx.runId, callId: call.id, call, signal: ctx.signal }, () => executeCall(tool, call, makeOpts(call)))
+        : await executeCall(tool, call, makeOpts(call))
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      logger.warn('tool.threw', { callId: call.id, name: call.name, error: message })
+      executed = {
+        success: false,
+        content: `工具执行失败：${message}`,
+        error: { kind: 'runtime', message, recoverable: true },
+        metadata: { durationMs: 0 },
+      }
+    }
     const result = { ...executed, callId: call.id }
     results.push(result)
     if (harness) recordToolCompleted(harness, call.id, result)
     yield { type: 'tool.completed', callId: call.id, result }
-    await harness?.hooks.observe('after_tool_call', { type: 'after_tool_call', runId: ctx.runId, callId: call.id, result, onHookError: (id, error) => logger.warn('hook.failed', { id, error: String(error) }) })
+    // Frozen: an after_tool_call observer must not be able to rewrite the result
+    // after it has been ledgered, which would diverge the audit trail from what
+    // the model actually sees.
+    await harness?.hooks.observe('after_tool_call', { type: 'after_tool_call', runId: ctx.runId, callId: call.id, result: Object.freeze({ ...result }), onHookError: (id, error) => logger.warn('hook.failed', { id, error: String(error) }) })
     logger.log('tool.completed', {
       callId: call.id,
       name: call.name,

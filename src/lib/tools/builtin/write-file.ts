@@ -17,7 +17,23 @@ export const writeFileTool: Tool<WriteFileInput> = {
     try {
       const bytes = await writeWorkspaceFile(input.path, input.content, ctx.cwd)
       return { ...success(`已写入 ${input.path}（${bytes} 字节）`, { path: input.path, bytes }), metadata: { durationMs: 0, bytesWritten: bytes } }
-    } catch (error) { return failure('permission_denied', `无法写入文件 ${input.path}：${errorMessage(error)}`, false) }
+    } catch (error) { return failure(writeErrorKind(error), `无法写入文件 ${input.path}：${errorMessage(error)}`, true) }
   },
-  renderCall: (input) => `写入 ${input.path}（${input.content.length} 字节，将覆盖已有文件）`,
+  // Byte count, not `content.length`: the latter counts UTF-16 code units and
+  // under-reports Chinese content 3x in the approval dialog the user decides on.
+  renderCall: (input) => `写入 ${input.path}（${new TextEncoder().encode(input.content).byteLength} 字节，将覆盖已有文件）`,
+}
+
+/**
+ * A write can fail for reasons the model can work around (path protected, disk
+ * full, transient IO). Reporting everything as an unrecoverable permission
+ * error tells the model the operation can never succeed.
+ */
+function writeErrorKind(error: unknown): 'permission_denied' | 'runtime' {
+  const message = errorMessage(error).toLowerCase()
+  if (message.includes('protected') || message.includes('escapes the workspace')
+    || message.includes('permission') || message.includes('denied')) {
+    return 'permission_denied'
+  }
+  return 'runtime'
 }

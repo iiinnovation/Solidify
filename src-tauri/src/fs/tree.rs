@@ -16,7 +16,7 @@ pub struct TreeEntry {
     pub modified_at: u64,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn read_tree(
     workspace_root: String,
     authorization: State<'_, WorkspaceAuthorization>,

@@ -506,6 +506,14 @@ export function SettingsPage() {
                     const value = event.target.checked
                     setToolCallingEnabled(value)
                     setFlagOverride('toolCalling', value)
+                    // Tool calling hands the model write_file. Turning it on
+                    // without the control plane means unconditional writes with
+                    // no approval, no policy and no ledger, so the gate comes
+                    // along with it. It can still be turned off deliberately.
+                    if (value && !harnessEnabled) {
+                      setHarnessEnabled(true)
+                      setFlagOverride('harness', true)
+                    }
                   }}
                   className="h-4 w-4 shrink-0 rounded border-border text-accent focus:ring-accent focus:ring-offset-0"
                 />
@@ -513,7 +521,7 @@ export function SettingsPage() {
               <label className="flex items-center justify-between gap-4 rounded-md border border-border bg-surface px-4 py-3">
                 <span>
                   <span className="block text-sm font-medium text-text-primary">安全控制平面</span>
-                  <span className="block text-xs text-text-tertiary mt-0.5">启用写入审批、权限 guard 和运行账本。</span>
+                  <span className="block text-xs text-text-tertiary mt-0.5">启用写入审批、权限 guard 和运行账本。关闭后模型的文件写入将不再需要确认。</span>
                 </span>
                 <input
                   type="checkbox"

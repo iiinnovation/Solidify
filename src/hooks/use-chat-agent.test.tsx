@@ -81,7 +81,10 @@ describe('useChat agent loop switch', () => {
     expect(mocks.fetchChatStream).not.toHaveBeenCalled()
     const assistant = result.current.messages.find((message) => message.role === 'assistant')
     expect(assistant?.content).toBe('Agent reply')
-    expect(assistant?.runEvents).toHaveLength(4)
+    // Deltas are transient UI signal and are deliberately not persisted onto the
+    // message — run.started / message.completed / run.completed are the run facts.
+    expect(assistant?.runEvents).toHaveLength(3)
+    expect(assistant?.runEvents?.some((event) => event.type === 'message.delta')).toBe(false)
     expect(assistant?.agentRun?.usage?.totalTokens).toBe(5)
   })
 

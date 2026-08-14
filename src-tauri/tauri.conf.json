@@ -24,7 +24,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; media-src 'self' data: blob:; connect-src 'self' ipc: http://ipc.localhost https: ws://127.0.0.1:* http://127.0.0.1:*; object-src 'none'; base-uri 'self'; frame-src 'none'"
     }
   },
   "bundle": {
@@ -46,7 +46,7 @@
   },
   "plugins": {
     "updater": {
-      "active": true,
+      "active": false,
       "endpoints": [
         "https://releases.solidify.app/{{target}}/{{arch}}/{{current_version}}"
       ],

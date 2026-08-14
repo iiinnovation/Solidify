@@ -16,6 +16,13 @@ import {
 
 const RICH_TEXT_EXTENSIONS = new Set(['pdf', 'docx'])
 
+/**
+ * Matches the Rust full-scan cap (`MAX_TEXT_BYTES`). The incremental path had
+ * no cap at all, so dropping a large log or CSV into the workspace pulled the
+ * whole file through IPC into the renderer as a JS string.
+ */
+const MAX_INDEXED_BYTES = 2 * 1024 * 1024
+
 export class WorkspaceIndexer {
   private unlisten: (() => void) | null = null
   private stopped = false
@@ -87,6 +94,13 @@ export class WorkspaceIndexer {
         await this.rebuild()
       } else if (change.kind === 'removed') {
         await removeWorkspaceIndexPath(this.root, change.path)
+      } else if (change.kind === 'renamed') {
+        // On macOS the platform watcher emits one path per rename event, so the
+        // old and the new path both arrive as `renamed` and cannot be paired.
+        // Reindex the path if it exists now, drop it from the index if it does
+        // not — otherwise the old path stays searchable forever and the model
+        // gets read_file failures on a path search just handed it.
+        await this.reconcilePath(change.path)
       } else {
         await this.indexDocument(change.path)
       }
@@ -95,6 +109,15 @@ export class WorkspaceIndexer {
       await this.onChange(change, stats)
     } catch (error) {
       console.error('Workspace incremental indexing failed:', error)
+    }
+  }
+
+  /** Reindex if the path still resolves, otherwise remove its index entry. */
+  private async reconcilePath(path: string): Promise<void> {
+    try {
+      await this.indexDocument(path)
+    } catch {
+      await removeWorkspaceIndexPath(this.root, path).catch(() => undefined)
     }
   }
 
@@ -113,7 +136,10 @@ export class WorkspaceIndexer {
       return
     }
     const result = await readWorkspaceFile(path, this.root)
-    await upsertWorkspaceIndexDocument(this.root, path, result.binary ? undefined : result.content ?? undefined)
+    // Index the path but not the body when the file is binary or oversized, so
+    // it stays discoverable by name without materializing it in the renderer.
+    const indexable = !result.binary && result.bytes <= MAX_INDEXED_BYTES
+    await upsertWorkspaceIndexDocument(this.root, path, indexable ? result.content ?? undefined : undefined)
   }
 }
 

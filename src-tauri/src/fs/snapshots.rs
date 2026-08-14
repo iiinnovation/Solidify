@@ -30,7 +30,7 @@ fn snapshot_path(
     )
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn append_snapshot(
     conversation_id: String,
     content: String,
@@ -65,7 +65,7 @@ fn append_snapshot_impl(
         .map_err(|error| format!("Unable to append snapshot: {error}"))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn read_snapshot(
     conversation_id: String,
     workspace_root: String,
@@ -90,7 +90,7 @@ fn read_snapshot_impl(
         .map_err(|error| format!("Unable to read snapshot: {error}"))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn clear_snapshot(
     conversation_id: String,
     workspace_root: String,

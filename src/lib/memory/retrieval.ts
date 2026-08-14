@@ -30,6 +30,10 @@ export class WorkspaceMemory implements MemoryState {
       this.memdir.search(query, limit),
       retrieveWorkspaceMemory(this.root, query, limit),
     ])
-    return [...shortTerm, ...workspace].slice(0, limit)
+    // Rank the merged set instead of concatenating: a plain concat let
+    // short-term handles occupy every slot and starve indexed workspace hits.
+    return [...shortTerm, ...workspace]
+      .sort((left, right) => (right.relevance ?? 0) - (left.relevance ?? 0))
+      .slice(0, limit)
   }
 }

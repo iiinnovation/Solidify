@@ -39,8 +39,18 @@ export function createHarnessRuntime(ctx: QueryContext, options: HarnessRuntimeO
   const hooks = new HookManager()
   hooks.register({ id: 'injectEnvironment', type: 'before_query', mode: 'waterfall', priority: 10, handler: (value: unknown) => ({ action: 'continue' as const, value: appendQueryContext(value, `Environment: cwd=${ctx.cwd}; platform=${ctx.platform ?? 'web'}; time=${new Date().toISOString()}`) }) })
   hooks.register({ id: 'prefetchWorkspaceMemory', type: 'before_query', mode: 'waterfall', priority: 15, handler: async (value: unknown) => {
-    const memoryContext = await prefetchMemory(ctx.messages, ctx.memory)
-    return { action: 'continue' as const, value: memoryContext ? appendQueryContext(value, memoryContext) : value }
+    // Retrieval is an optional enrichment: a failure here must never abort the
+    // run. It also must not reach `context` — that array lands in the system
+    // prompt, and retrieved file text is untrusted (M2-14). It travels in
+    // `retrievedContext`, which buildMessages injects as a user message.
+    try {
+      const memoryContext = await prefetchMemory(ctx.messages, ctx.memory)
+      if (!memoryContext || !isRecord(value)) return { action: 'continue' as const, value }
+      return { action: 'continue' as const, value: { ...value, retrievedContext: memoryContext } }
+    } catch (error) {
+      console.warn('[harness] Workspace memory prefetch failed, continuing without it:', error)
+      return { action: 'continue' as const, value }
+    }
   } })
   hooks.register({ id: 'injectSkillIndex', type: 'before_query', mode: 'waterfall', priority: 20, handler: (value: unknown) => ({ action: 'continue' as const, value: appendQueryContext(value, `Available skills:\n${builtinSkills.map((skill) => `- ${skill.name}: ${skill.description}`).join('\n')}`) }) })
   hooks.register({ id: 'enforceTokenBudget', type: 'before_model_call', mode: 'waterfall', priority: 30, handler: (value: unknown) => {
@@ -81,10 +91,26 @@ export function permissionGate(runtime: HarnessRuntime, ctx: QueryContext, tool:
   })
 }
 
+/** Input keys that carry a filesystem path in any current or future fs tool. */
+const PATH_INPUT_KEYS = ['path', 'source', 'destination', 'dest', 'from', 'to', 'filePath', 'file_path', 'target']
+
+/**
+ * Monotonic hard boundary: runs after approval and can only deny or abstain.
+ *
+ * Path candidates are derived from a key list rather than the single literal
+ * `path`, so a tool that names its parameter `source`/`dest` cannot silently
+ * escape the workspace boundary — the previous version simply abstained.
+ */
 export function hardGuard(ctx: QueryContext, tool: Tool, call: ToolCall): GuardDecision {
-  if (tool.permissions.some((scope) => scope.startsWith('fs:')) && typeof call.input?.path === 'string') {
+  if (tool.permissions.some((scope) => scope.startsWith('fs:'))) {
     const workspace = ctx.workspace
-    if (!workspace || !workspace.contains(call.input.path)) return { kind: 'deny', reason: '路径超出当前工作区边界。', source: 'workspace-boundary' }
+    for (const key of PATH_INPUT_KEYS) {
+      const value = call.input?.[key]
+      if (typeof value !== 'string') continue
+      if (!workspace || !workspace.contains(value)) {
+        return { kind: 'deny', reason: '路径超出当前工作区边界。', source: 'workspace-boundary' }
+      }
+    }
   }
   if (tool.availability === 'tauri-only' && ctx.platform !== 'tauri') return { kind: 'deny', reason: '当前平台不支持此工具。', source: 'platform' }
   return { kind: 'abstain' }
@@ -93,12 +119,27 @@ export function hardGuard(ctx: QueryContext, tool: Tool, call: ToolCall): GuardD
 export function recordToolRequested(runtime: HarnessRuntime, call: ToolCall): void { runtime.ledger.append('tool.requested', { callId: call.id, name: call.name, input: call.input }) }
 export function recordToolCompleted(runtime: HarnessRuntime, callId: string, result: ToolResult): void { runtime.ledger.append('tool.completed', { callId, success: result.success, content: result.content, error: result.error, metadata: result.metadata, handle: result.handle }) }
 
+/**
+ * Key under which a "always allow in this run" grant is stored.
+ *
+ * The grant must be no broader than what the confirmation dialog actually
+ * showed. A bare tool name would turn "写入 03-交付物/需求规格.md" into blanket
+ * authorization for every subsequent write to any path in the run — the user
+ * approved one file and would have granted the whole workspace.
+ */
 export function sessionGrantKey(tool: Tool, call: ToolCall): string {
-  if (!tool.permissions.includes('net:http')) return tool.name
-  const rawUrl = typeof call.input?.url === 'string' ? call.input.url : undefined
-  if (!rawUrl) return `${tool.name}:call:${call.id}`
-  try { return `${tool.name}:domain:${new URL(rawUrl).hostname.toLowerCase()}` }
-  catch { return `${tool.name}:call:${call.id}` }
+  if (tool.permissions.includes('net:http')) {
+    const rawUrl = typeof call.input?.url === 'string' ? call.input.url : undefined
+    if (!rawUrl) return `${tool.name}:call:${call.id}`
+    try { return `${tool.name}:domain:${new URL(rawUrl).hostname.toLowerCase()}` }
+    catch { return `${tool.name}:call:${call.id}` }
+  }
+  // Filesystem tools are scoped to the exact path the user saw and approved.
+  if (tool.permissions.some((scope) => scope.startsWith('fs:'))) {
+    const path = typeof call.input?.path === 'string' ? call.input.path : undefined
+    return path ? `${tool.name}:path:${path}` : `${tool.name}:call:${call.id}`
+  }
+  return tool.name
 }
 
 export function injectEnvironment(_ctx: QueryContext, messages: readonly Message[]): Message[] {

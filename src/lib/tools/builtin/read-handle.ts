@@ -17,8 +17,8 @@ export const readHandleTool: Tool<ReadHandleInput> = {
     type: 'object',
     properties: {
       handle: { type: 'string', minLength: 1 },
-      offset: { type: 'number', minimum: 0 },
-      limit: { type: 'number', minimum: 1, maximum: DEFAULT_LIMIT },
+      offset: { type: 'integer', minimum: 0 },
+      limit: { type: 'integer', minimum: 1, maximum: DEFAULT_LIMIT },
     },
     required: ['handle'],
   },

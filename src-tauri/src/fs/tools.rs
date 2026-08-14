@@ -1,4 +1,4 @@
-use super::sandbox::resolve_in_workspace;
+use super::sandbox::{resolve_in_workspace, resolve_tool_write_path};
 use super::workspace::WorkspaceAuthorization;
 use ignore::WalkBuilder;
 use serde::Serialize;
@@ -14,7 +14,7 @@ pub struct DirEntry {
     pub size: u64,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_dir(
     path: String,
     workspace_root: String,
@@ -84,7 +84,7 @@ pub struct FileReadResult {
     pub truncated: bool,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn read_file(
     path: String,
     workspace_root: String,
@@ -96,7 +96,7 @@ pub fn read_file(
     read_file_impl(path, workspace_root, offset, limit)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn read_file_bytes(
     path: String,
     workspace_root: String,
@@ -139,7 +139,7 @@ fn read_file_impl(
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn write_file(
     path: String,
     content: String,
@@ -151,14 +151,14 @@ pub fn write_file(
 }
 
 fn write_file_impl(path: String, content: String, workspace_root: String) -> Result<usize, String> {
-    let resolved = resolve_in_workspace(&path, &workspace_root, true)?;
+    let resolved = resolve_tool_write_path(&path, &workspace_root)?;
     if let Some(parent) = resolved.parent() {
         fs::create_dir_all(parent)
             .map_err(|e| format!("Unable to create parent directory: {e}"))?;
     }
     // Re-resolve after creating directories so a symlinked parent cannot turn
     // a missing target into an out-of-workspace write.
-    let resolved = resolve_in_workspace(&path, &workspace_root, true)?;
+    let resolved = resolve_tool_write_path(&path, &workspace_root)?;
     fs::write(&resolved, content.as_bytes()).map_err(|e| format!("Unable to write file: {e}"))?;
     Ok(content.len())
 }
@@ -170,7 +170,7 @@ pub struct SearchMatch {
     pub text: Option<String>,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn search_files(
     query: String,
     path: String,

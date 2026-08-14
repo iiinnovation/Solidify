@@ -4,7 +4,7 @@
  */
 
 export interface JSONSchemaProperty {
-  type?: 'string' | 'number' | 'boolean' | 'object' | 'array' | 'null'
+  type?: 'string' | 'number' | 'integer' | 'boolean' | 'object' | 'array' | 'null'
   description?: string
   enum?: unknown[]
   items?: JSONSchema
@@ -17,6 +17,8 @@ export interface JSONSchemaProperty {
   maxLength?: number
   minimum?: number
   maximum?: number
+  minItems?: number
+  maxItems?: number
   pattern?: string
 }
 

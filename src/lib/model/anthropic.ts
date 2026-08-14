@@ -55,8 +55,13 @@ export class AnthropicProvider implements ModelProvider {
       const tools = request.tools ? this.convertTools(request.tools) : undefined
 
       // Call Anthropic API
-      // M1-12: signal aborts the underlying HTTP request immediately
-      const stream = await this.client.messages.stream(
+      // M1-12: signal aborts the underlying HTTP request immediately.
+      // `create({stream:true})` returns a PULL-based Stream: the HTTP body is
+      // only advanced when the consumer calls next(). `messages.stream()` looks
+      // equivalent but feeds an unbounded internal queue from an independent
+      // producer loop, which defeats the backpressure guarantee in
+      // agent-loop.md §1 — a slow consumer would buffer the whole response.
+      const stream = await this.client.messages.create(
         {
           model: request.model,
           system: request.system,
@@ -65,6 +70,7 @@ export class AnthropicProvider implements ModelProvider {
           max_tokens: request.maxTokens ?? this.metadata.defaultMaxTokens,
           temperature: request.temperature,
           top_p: request.topP,
+          stream: true,
         },
         { signal: request.signal },
       )
@@ -73,6 +79,12 @@ export class AnthropicProvider implements ModelProvider {
 
       // Track tool_use blocks by stream index to accumulate input JSON
       const toolBlocks = new Map<number, { id: string; json: string }>()
+      // Usage and stop reason arrive incrementally; there is no finalMessage()
+      // to fall back on, and awaiting one would reintroduce a failure mode where
+      // a mid-stream error is reported as an empty successful turn.
+      let inputTokens = 0
+      let outputTokens = 0
+      let stopReason: 'end_turn' | 'max_tokens' | 'stop_sequence' | 'tool_use' | undefined
 
       // Convert Anthropic events to unified format
       for await (const event of stream) {
@@ -142,37 +154,31 @@ export class AnthropicProvider implements ModelProvider {
               break
             }
 
+            case 'message_start':
+              inputTokens = event.message.usage?.input_tokens ?? 0
+              outputTokens = event.message.usage?.output_tokens ?? 0
+              break
+
             case 'message_delta':
-              // Message delta (usage updates)
+              // Carries the final stop_reason and the cumulative output tokens.
+              if (event.usage?.output_tokens != null) outputTokens = event.usage.output_tokens
+              switch (event.delta.stop_reason) {
+                case 'end_turn':
+                case 'max_tokens':
+                case 'stop_sequence':
+                case 'tool_use':
+                  stopReason = event.delta.stop_reason
+                  break
+              }
               break
 
             case 'message_stop': {
-              const finalMessage = await stream.finalMessage()
-
-              // Map Anthropic stop_reason to unified format
-              let stopReason: 'end_turn' | 'max_tokens' | 'stop_sequence' | 'tool_use' | undefined
-              switch (finalMessage.stop_reason) {
-                case 'end_turn':
-                  stopReason = 'end_turn'
-                  break
-                case 'max_tokens':
-                  stopReason = 'max_tokens'
-                  break
-                case 'stop_sequence':
-                  stopReason = 'stop_sequence'
-                  break
-                case 'tool_use':
-                  stopReason = 'tool_use'
-                  break
-              }
-
               yield {
                 type: 'message_end',
                 usage: {
-                  inputTokens: finalMessage.usage.input_tokens,
-                  outputTokens: finalMessage.usage.output_tokens,
-                  totalTokens:
-                    finalMessage.usage.input_tokens + finalMessage.usage.output_tokens,
+                  inputTokens,
+                  outputTokens,
+                  totalTokens: inputTokens + outputTokens,
                 },
                 stopReason,
               }

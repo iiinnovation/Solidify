@@ -27,10 +27,16 @@ describe('SettingsPage M1 feature controls', () => {
     expect(localWorkspace.checked).toBe(false)
 
     fireEvent.click(agentLoop)
-    fireEvent.click(toolCalling)
-    fireEvent.click(harness)
     fireEvent.click(localWorkspace)
+    // Enabling tool calling hands the model write_file, so it pulls the control
+    // plane on with it rather than leaving writes unguarded.
+    fireEvent.click(toolCalling)
     expect(getFlags()).toMatchObject({ agentLoop: true, toolCalling: true, harness: true, localWorkspace: true })
+    expect(harness.checked).toBe(true)
+
+    // The gate can still be disabled deliberately afterwards.
+    fireEvent.click(harness)
+    expect(getFlags()).toMatchObject({ toolCalling: true, harness: false })
 
     fireEvent.click(toolCalling)
     expect(getFlags()).toMatchObject({ agentLoop: true, toolCalling: false })

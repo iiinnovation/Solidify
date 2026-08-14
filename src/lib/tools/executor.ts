@@ -54,7 +54,15 @@ function validateNode(
   // Type check
   if (schema.type) {
     const actual = typeOf(value)
-    if (actual !== schema.type) {
+    // 'integer' is not a JS type: it is 'number' plus an integrality constraint.
+    // Without it, `read_file{offset: 3.7}` validated and then failed serde
+    // deserialization into usize at the Rust boundary with an opaque message.
+    if (schema.type === 'integer') {
+      if (actual !== 'number' || !Number.isInteger(value)) {
+        errors.push(`${path}: expected integer, got ${actual === 'number' ? String(value) : actual}`)
+        return
+      }
+    } else if (actual !== schema.type) {
       errors.push(`${path}: expected ${schema.type}, got ${actual}`)
       return // Deeper checks are meaningless on wrong type
     }
@@ -66,30 +74,52 @@ function validateNode(
     return
   }
 
-  // Object checks
-  if (schema.type === 'object' && typeOf(value) === 'object') {
+  // Object checks. Driven by the actual value, not by a declared `type`:
+  // a schema node that omits `type` used to disable every constraint beneath
+  // it, so `required` and nested properties were silently unchecked.
+  if (typeOf(value) === 'object' && (schema.required || schema.properties || schema.additionalProperties !== undefined)) {
     const obj = value as Record<string, unknown>
+    const owns = (key: string) => Object.prototype.hasOwnProperty.call(obj, key)
 
     for (const key of schema.required ?? []) {
-      if (!(key in obj)) {
+      // `key in obj` walks the prototype chain, so `required: ['toString']`
+      // passed on `{}` and a property named `constructor` validated against
+      // Object.prototype's.
+      if (!owns(key)) {
         errors.push(`${path}: missing required parameter '${key}'`)
       }
     }
 
     if (schema.properties) {
       for (const [key, propSchema] of Object.entries(schema.properties)) {
-        if (key in obj) {
+        if (owns(key)) {
           validateNode(obj[key], propSchema, `${path}.${key}`, errors)
+        }
+      }
+    }
+
+    if (schema.additionalProperties === false && schema.properties) {
+      for (const key of Object.keys(obj)) {
+        if (!Object.prototype.hasOwnProperty.call(schema.properties, key)) {
+          errors.push(`${path}: unexpected parameter '${key}'`)
         }
       }
     }
   }
 
   // Array checks
-  if (schema.type === 'array' && Array.isArray(value) && schema.items) {
-    value.forEach((item, i) => {
-      validateNode(item, schema.items!, `${path}[${i}]`, errors)
-    })
+  if (Array.isArray(value)) {
+    if (schema.items) {
+      value.forEach((item, i) => {
+        validateNode(item, schema.items!, `${path}[${i}]`, errors)
+      })
+    }
+    if (schema.minItems !== undefined && value.length < schema.minItems) {
+      errors.push(`${path}: must have >= ${schema.minItems} items`)
+    }
+    if (schema.maxItems !== undefined && value.length > schema.maxItems) {
+      errors.push(`${path}: must have <= ${schema.maxItems} items`)
+    }
   }
 
   // String checks
@@ -225,7 +255,7 @@ export async function executeCall(
   let last: ToolResult | undefined
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     last = await executeOnce(tool, call, opts)
-    if (last.success || !shouldRetry(last)) break
+    if (last.success || !shouldRetry(tool, last)) break
 
     if (attempt < maxAttempts) {
       const completed = await abortableSleep(backoffMs * attempt, opts.signal)
@@ -239,13 +269,21 @@ export async function executeCall(
   return normalizeResult(last!, opts.ctx.memory)
 }
 
-/** Retry only transient failures; never aborts or input/permission errors */
-function shouldRetry(result: ToolResult): boolean {
+/**
+ * Retry only transient failures, and only for tools that are safe to re-run.
+ *
+ * A timeout means "we stopped waiting", not "nothing happened": the underlying
+ * Tauri command has no cancellation path, so a timed-out `write_file` may still
+ * land. Re-running a side-effecting tool would double-apply it. The gate lives
+ * here rather than relying on every tool author to omit a `retry` policy.
+ */
+function shouldRetry(tool: Tool, result: ToolResult): boolean {
   const kind = result.error?.kind
-  return (
-    (kind === 'timeout' || kind === 'runtime') &&
-    result.error?.recoverable !== false
-  )
+  const transient = (kind === 'timeout' || kind === 'runtime') && result.error?.recoverable !== false
+  if (!transient) return false
+  // A timeout may have partially applied; only replay tools with no side effects.
+  if (kind === 'timeout' && !(tool.readOnly && !tool.destructive)) return false
+  return true
 }
 
 async function executeOnce(
@@ -361,11 +399,14 @@ function abortedResult(toolName: string, durationMs: number): ToolResult {
 }
 
 function withDuration(result: ToolResult, started: number): ToolResult {
+  // `??` does not fall through 0, and several tools return a literal
+  // `durationMs: 0`, so an explicit zero must be treated as "unset".
+  const declared = result.metadata?.durationMs
   return {
     ...result,
     metadata: {
       ...result.metadata,
-      durationMs: result.metadata?.durationMs ?? Date.now() - started,
+      durationMs: declared ? declared : Date.now() - started,
     },
   }
 }
@@ -373,6 +414,10 @@ function withDuration(result: ToolResult, started: number): ToolResult {
 /**
  * Step ⑦: normalize the result shape and handleize oversized content
  * so a single tool cannot blow up the context window.
+ *
+ * Must not throw: `executeCall` guarantees it always returns a ToolResult, and
+ * a rejection here would leave the whole turn's tool_use blocks unanswered.
+ * `handleizeLargeResult` already degrades a failed store to inline truncation.
  */
 async function normalizeResult(result: ToolResult, memory: ToolUseContext['memory']): Promise<ToolResult> {
   const content = typeof result.content === 'string' ? result.content : ''
@@ -386,6 +431,8 @@ async function normalizeResult(result: ToolResult, memory: ToolUseContext['memor
     data: isHandleized && isLargeStructuredData(result.data) ? undefined : result.data,
     handle: result.handle ?? handle,
     truncated: result.truncated || isHandleized,
+    // withDuration has already stamped the real elapsed time; the 0 is only a
+    // floor for results that never went through it.
     metadata: { durationMs: 0, ...result.metadata },
   }
 }

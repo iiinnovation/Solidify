@@ -13,6 +13,11 @@ export interface ModelProvider {
   enabled: boolean
   /** Capability declaration; omitted legacy configs default to true. */
   supportsTools?: boolean
+  /**
+   * Usable context window in tokens. Drives context trimming; omitted configs
+   * fall back to a conservative default rather than assuming a 200k window.
+   */
+  contextWindow?: number
 }
 
 // 预设模板：用户可一键添加，只需填 Key
