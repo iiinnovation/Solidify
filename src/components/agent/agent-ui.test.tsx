@@ -3,7 +3,10 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { RunControls } from './run-controls'
 import { RunTimeline } from './run-timeline'
+import { ConfirmDialog } from './confirm-dialog'
 import type { RunState } from '@/lib/engine/run-state'
+import { RunLedger } from '@/lib/harness/ledger'
+import type { ApprovalRequest } from '@/lib/harness/approval'
 
 const completedRun: RunState = {
   runId: 'run-1',
@@ -42,5 +45,47 @@ describe('agent run UI', () => {
 
     rerender(<RunControls run={completedRun} onStop={onStop} />)
     expect(screen.queryByRole('button', { name: '停止' })).toBeNull()
+  })
+
+  it('returns the selected answer from the approval dialog', async () => {
+    const onAnswer = vi.fn()
+    const request: ApprovalRequest = {
+      requestId: 'approval-1',
+      runId: 'run-1',
+      callId: 'call-1',
+      toolName: 'write_file',
+      grantKey: 'write_file',
+      reason: '写入文件需要确认。',
+      prompt: {
+        title: '确认写入文件',
+        detail: '将写入 03-交付物/需求规格.md',
+        options: [
+          { label: '拒绝', decision: 'deny' },
+          { label: '允许', decision: 'allow' },
+        ],
+      },
+      signal: new AbortController().signal,
+    }
+
+    render(<ConfirmDialog request={request} onAnswer={onAnswer} />)
+    expect(screen.getByRole('dialog', { name: '确认写入文件' })).not.toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: '拒绝' }))
+    expect(onAnswer).toHaveBeenCalledWith('approval-1', 'deny')
+  })
+
+  it('shows the persisted ledger facts for a completed run', async () => {
+    const ledger = new RunLedger(completedRun.runId)
+    ledger.clear()
+    ledger.append('run.started', { conversationId: 'conversation-1' })
+    ledger.append('tool.requested', { callId: 'call-1', name: 'read_file', input: { path: 'notes.md' } })
+    ledger.append('tool.completed', { callId: 'call-1', success: true, content: 'file contents' })
+    ledger.append('run.completed', completedRun.usage)
+
+    render(<RunTimeline run={completedRun} />)
+    await userEvent.click(screen.getByRole('button', { name: /运行账本/ }))
+    expect(screen.getByText('run.started')).not.toBeNull()
+    expect(screen.getByText('tool.requested')).not.toBeNull()
+    expect(screen.getByText('run.completed')).not.toBeNull()
+    ledger.clear()
   })
 })

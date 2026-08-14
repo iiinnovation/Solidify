@@ -26,6 +26,7 @@ export type ClaudeContent =
  */
 interface SystemPromptParts {
   base: string
+  harness?: string
   skill?: string
   tools?: string
 }
@@ -54,6 +55,10 @@ export async function buildMessages(ctx: QueryContext): Promise<{
 function buildSystemPrompt(ctx: QueryContext): string {
   const parts: SystemPromptParts = {
     base: buildBaseSystemPrompt(ctx),
+  }
+
+  if (ctx.harnessContext?.length) {
+    parts.harness = ctx.harnessContext.join('\n\n')
   }
 
   if (ctx.skill?.content.trim()) {

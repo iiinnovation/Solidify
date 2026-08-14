@@ -294,6 +294,7 @@ export function SettingsPage() {
   const [editingSkillId, setEditingSkillId] = useState<string | null>(null)
   const [agentLoopEnabled, setAgentLoopEnabled] = useState(() => getFlags().agentLoop)
   const [toolCallingEnabled, setToolCallingEnabled] = useState(() => getFlags().toolCalling)
+  const [harnessEnabled, setHarnessEnabled] = useState(() => getFlags().harness)
 
   const editingProvider = editingId ? providers.find((p) => p.id === editingId) : null
   const editingSkill = editingSkillId ? customSkills.find((s) => s.id === editingSkillId) : null
@@ -487,6 +488,23 @@ export function SettingsPage() {
                     const value = event.target.checked
                     setToolCallingEnabled(value)
                     setFlagOverride('toolCalling', value)
+                  }}
+                  className="h-4 w-4 shrink-0 rounded border-border text-accent focus:ring-accent focus:ring-offset-0"
+                />
+              </label>
+              <label className="flex items-center justify-between gap-4 rounded-md border border-border bg-surface px-4 py-3">
+                <span>
+                  <span className="block text-sm font-medium text-text-primary">安全控制平面</span>
+                  <span className="block text-xs text-text-tertiary mt-0.5">启用写入审批、权限 guard 和运行账本。</span>
+                </span>
+                <input
+                  type="checkbox"
+                  aria-label="安全控制平面"
+                  checked={harnessEnabled}
+                  onChange={(event) => {
+                    const value = event.target.checked
+                    setHarnessEnabled(value)
+                    setFlagOverride('harness', value)
                   }}
                   className="h-4 w-4 shrink-0 rounded border-border text-accent focus:ring-accent focus:ring-offset-0"
                 />

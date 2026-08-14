@@ -116,21 +116,27 @@ export interface ToolResult<T = unknown> {
     ↓
 ③ inputSchema 校验 ──── 不通过 → tombstone + 回灌校验错误
     ↓
-④ Hook: before_tool_call
+④ 落持久事实 tool.requested（参数从此不可改写）
     ↓
-⑤ PolicyEngine 判定 ─── deny → error{permission_denied}
-    │                  ask  → 挂起循环，等用户确认
+⑤ pre-execute waterfall ── 可拒绝/短路，不得改写已记录参数
+    ↓
+⑥ PolicyEngine 判定 ─── deny → error{permission_denied}
+    │                  ask  → 审批服务挂起；缺应答者/异常/中止均 fail-closed
     ↓ allow
-⑥ execute(input, ctx, signal, onProgress)
+⑦ 单调硬 Guard ───────── 只能 deny/abstain；审批与插件不能覆盖硬拒绝
     ↓
-⑦ 结果规范化 + 大结果句柄化
+⑧ around-execute ──────── timeout / retry / metrics 包裹 execute()
     ↓
-⑧ Hook: after_tool_call
+⑨ post-execute waterfall ─ 可替换结果/附加上下文
     ↓
-⑨ 落账本 tool.completed
+⑩ 结果规范化、句柄化、无损 JSON 快照并冻结
+    ↓
+⑪ 发布 tool.completed 持久事实与 UI 结果
 ```
 
-③ 必须在 ⑤ 之前：不能对一个参数都不合法的调用去问用户要授权。
+③ 必须在 ⑥ 之前：不能对一个参数都不合法的调用去问用户要授权。审批通过后仍必须经过 ⑦，确保工作区边界、平台限制等不可放宽约束不会被用户授权或插件绕过。
+
+`tool.requested` 落账后禁止 hook 改写 input，否则 UI/账本展示的参数会与实际执行不一致。需要修改参数时，拒绝本次调用并给模型可执行的修正理由，让模型发起新调用。
 
 ## 5. 并发
 

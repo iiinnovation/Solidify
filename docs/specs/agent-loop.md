@@ -71,8 +71,8 @@ export type QueryEvent =
   | { type: 'message.delta';       text: string }
   | { type: 'message.completed';   content: string }
   | { type: 'tool.requested';      call: ToolCall }
-  | { type: 'permission.required'; call: ToolCall; reason: string }
-  | { type: 'permission.resolved'; callId: string; decision: PermissionDecision }
+  | { type: 'permission.required'; requestId: string; callId: string; prompt: ConfirmationPrompt }
+  | { type: 'permission.resolved'; requestId: string; callId: string; outcome: ApprovalOutcome }
   | { type: 'tool.progress';       callId: string; progress: ToolProgress }
   | { type: 'tool.completed';      callId: string; result: ToolResult }
   | { type: 'artifact.created';    artifact: ArtifactRef }
@@ -82,7 +82,9 @@ export type QueryEvent =
   | { type: 'run.exhausted';       reason: 'max_turns' | 'max_tokens' | 'max_tool_calls' }
 ```
 
-事件类型与 [ADR-0007](../04-decisions.md#adr-0007) 的运行账本事件一一对应 —— **UI 消费的事件流和落账本的事件流是同一份**，不要维护两套。
+事件遵循 [ADR-0008](../04-decisions.md#adr-0008)：UI 与账本共享领域命名和 `runId` / `callId` / `requestId`，但不是同一个序列化投影。`message.delta`、`tool.progress`、`permission.required` 属于可丢弃的实时控制事件；账本只保存无损 JSON 的稳定事实。禁止把 Promise resolver、`AbortSignal` 或其他运行时对象放入账本。
+
+这不是维护两套状态机：执行边界只产生一次领域事实，实时总线与账本分别投影所需形态。模型实际看到的消息、工具结果和权限拒绝必须能从持久事实重建。
 
 ## 3. Tombstoning
 

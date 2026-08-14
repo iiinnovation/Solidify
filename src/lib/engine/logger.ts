@@ -10,7 +10,7 @@ export class SimpleRunLogger implements RunLogger {
   private entries_: LogEntry[] = []
 
   constructor(_runId: string) {
-    // runId will be used in M2 for persistent logging
+    // Persistent M2 facts are written by RunLedger; this logger remains diagnostic.
   }
 
   log(event: string, data?: unknown): void {
@@ -57,8 +57,7 @@ export class SimpleRunLogger implements RunLogger {
   }
 
   async flush(): Promise<void> {
-    // TODO: Write to .solidify/runs/<runId>.jsonl in M2
-    // For now, just keep in memory
+    // Diagnostic entries remain in memory; RunLedger owns persistent facts.
   }
 
   entries(): LogEntry[] {

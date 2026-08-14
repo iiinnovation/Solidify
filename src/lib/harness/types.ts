@@ -118,23 +118,23 @@ export interface RunLogger {
 // Hook System (for harness extensibility)
 // ============================================================================
 
-export interface HookContext {
+export interface LegacyHookContext {
   runId: string
   conversationId: string
   timestamp: string
 }
 
 export interface BeforeToolCallHook {
-  (toolName: string, input: unknown, ctx: HookContext): Promise<void | { abort: true; reason: string }>
+  (toolName: string, input: unknown, ctx: LegacyHookContext): Promise<void | { abort: true; reason: string }>
 }
 
 export interface AfterToolCallHook {
-  (toolName: string, result: unknown, ctx: HookContext): Promise<void>
+  (toolName: string, result: unknown, ctx: LegacyHookContext): Promise<void>
 }
 
 export interface HookRegistry {
   registerBeforeToolCall(hook: BeforeToolCallHook): void
   registerAfterToolCall(hook: AfterToolCallHook): void
-  executeBeforeToolCall(toolName: string, input: unknown, ctx: HookContext): Promise<void | { abort: true; reason: string }>
-  executeAfterToolCall(toolName: string, result: unknown, ctx: HookContext): Promise<void>
+  executeBeforeToolCall(toolName: string, input: unknown, ctx: LegacyHookContext): Promise<void | { abort: true; reason: string }>
+  executeAfterToolCall(toolName: string, result: unknown, ctx: LegacyHookContext): Promise<void>
 }

@@ -3,6 +3,7 @@ import { CircleAlert, CircleCheck, LoaderCircle, Play, Square, TimerReset } from
 import { cn } from '@/lib/utils'
 import type { RunState } from '@/lib/engine/run-state'
 import { ToolCallCard } from './tool-call-card'
+import { LedgerPanel } from './ledger-panel'
 
 export function RunTimeline({ run, onStop }: { run: RunState | null; onStop?: () => void }) {
   const [elapsed, setElapsed] = useState(0)
@@ -44,6 +45,7 @@ export function RunTimeline({ run, onStop }: { run: RunState | null; onStop?: ()
           {run.error && <div className={cn('text-xs px-3 py-2 rounded-sm', run.status === 'failed' ? 'text-error bg-error-light' : 'text-text-secondary bg-surface')}>{run.error}</div>}
         </div>
       )}
+      <div className="pb-2"><LedgerPanel runId={run.runId} /></div>
     </section>
   )
 }

@@ -161,7 +161,7 @@ export interface ResolveContext {
 
 export interface ToolRegistry {
   /** Register a tool into the registry */
-  register(tool: Tool): void
+  register(tool: Tool): () => void
 
   /** Get a tool by name */
   get(name: string): Tool | undefined

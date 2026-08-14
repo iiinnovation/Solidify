@@ -2,8 +2,7 @@
  * Tool execution scheduler: validate → execute → normalize
  * M1-14 (dispatch), M1-15 (concurrency), M1-16 (timeout & retry)
  *
- * Steps ④ before_tool_call / ⑤ PolicyEngine hooks are deferred to M2
- * (per M1 plan: confirmation logic lands with the harness; M1 allows all).
+ * M2 policy and lifecycle interception wrap this scheduler in engine/query.ts.
  *
  * @module lib/tools/executor
  * @see docs/specs/tool-interface.md §4 (流程), §5 (并发)

@@ -10,6 +10,8 @@ import type { LoadedSkill } from '../skills/types'
 import type { ProviderRegistry } from '../model'
 import type { WorkspaceHandle } from '../workspace/types'
 import type { Settings, PermissionMap, Platform } from '../harness/types'
+import type { ConfirmationPrompt } from '../harness/policy'
+import type { ApprovalOutcome } from '../harness/approval'
 
 // ============================================================================
 // Query Context
@@ -74,6 +76,8 @@ export interface QueryContext {
   readonly settings?: Readonly<Settings>
   readonly permissions?: PermissionMap
   readonly platform?: Platform
+  /** Trusted Harness-generated context appended to the system prompt. */
+  readonly harnessContext?: readonly string[]
 }
 
 // ============================================================================
@@ -142,8 +146,8 @@ export type QueryEvent =
   | { type: 'message.delta'; text: string }
   | { type: 'message.completed'; content: string }
   | { type: 'tool.requested'; call: ToolCall }
-  | { type: 'permission.required'; call: ToolCall; reason: string }
-  | { type: 'permission.resolved'; callId: string; decision: PermissionDecision }
+  | { type: 'permission.required'; requestId: string; callId: string; prompt: ConfirmationPrompt }
+  | { type: 'permission.resolved'; requestId: string; callId: string; outcome: ApprovalOutcome }
   | { type: 'tool.progress'; callId: string; progress: ToolProgress }
   | { type: 'tool.completed'; callId: string; result: ToolResult }
   | { type: 'artifact.created'; artifact: ArtifactRef }

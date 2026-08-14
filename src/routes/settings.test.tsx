@@ -14,17 +14,20 @@ describe('SettingsPage M1 feature controls', () => {
     useSkillStore.setState({ customSkills: [] })
   })
 
-  it('persists Agent loop and tool calling through the shared flags module', () => {
+  it('persists Agent loop, tool calling and harness through the shared flags module', () => {
     render(<MemoryRouter><SettingsPage /></MemoryRouter>)
 
     const agentLoop = screen.getByRole<HTMLInputElement>('checkbox', { name: 'Agent 循环' })
     const toolCalling = screen.getByRole<HTMLInputElement>('checkbox', { name: '工具调用' })
+    const harness = screen.getByRole<HTMLInputElement>('checkbox', { name: '安全控制平面' })
     expect(agentLoop.checked).toBe(false)
     expect(toolCalling.checked).toBe(false)
+    expect(harness.checked).toBe(false)
 
     fireEvent.click(agentLoop)
     fireEvent.click(toolCalling)
-    expect(getFlags()).toMatchObject({ agentLoop: true, toolCalling: true })
+    fireEvent.click(harness)
+    expect(getFlags()).toMatchObject({ agentLoop: true, toolCalling: true, harness: true })
 
     fireEvent.click(toolCalling)
     expect(getFlags()).toMatchObject({ agentLoop: true, toolCalling: false })

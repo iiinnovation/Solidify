@@ -17,7 +17,8 @@ import { buildMessages } from './messages'
  * Stream model completion using the provider from context
  */
 export async function* streamModel(
-  ctx: QueryContext
+  ctx: QueryContext,
+  onPrepared?: (request: Omit<CompletionRequest, 'signal'>) => void | Promise<void>,
 ): AsyncGenerator<CompletionChunk> {
   // Get provider from registry
   const provider = ctx.providerRegistry.get(ctx.model.provider)
@@ -77,6 +78,17 @@ export async function* streamModel(
     // M1-12: Abort in-flight HTTP request when the run is cancelled
     signal: ctx.signal,
   }
+
+  await onPrepared?.({
+    model: request.model,
+    system: request.system,
+    messages: request.messages,
+    tools: request.tools,
+    temperature: request.temperature,
+    maxTokens: request.maxTokens,
+    topP: request.topP,
+    stream: request.stream,
+  })
 
   // Stream from provider
   yield* provider.stream(request)

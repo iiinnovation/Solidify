@@ -13,11 +13,12 @@ import type { Tool, ToolRegistry as IToolRegistry, ResolveContext } from './type
 export class ToolRegistry implements IToolRegistry {
   private tools = new Map<string, Tool>()
 
-  register(tool: Tool): void {
+  register(tool: Tool): () => void {
     if (this.tools.has(tool.name)) {
       throw new Error(`Tool "${tool.name}" is already registered`)
     }
     this.tools.set(tool.name, tool)
+    return () => { if (this.tools.get(tool.name) === tool) this.tools.delete(tool.name) }
   }
 
   get(name: string): Tool | undefined {
