@@ -92,7 +92,7 @@ pub struct WorkspaceInfo {
 }
 
 #[tauri::command]
-pub fn select_workspace(
+pub async fn select_workspace(
     app: AppHandle,
     authorization: State<'_, WorkspaceAuthorization>,
 ) -> Result<Option<String>, String> {
@@ -121,7 +121,7 @@ pub fn restore_workspace(
 }
 
 #[tauri::command]
-pub fn create_workspace(
+pub async fn create_workspace(
     app: AppHandle,
     name: String,
     authorization: State<'_, WorkspaceAuthorization>,
@@ -149,6 +149,35 @@ pub fn create_workspace(
 #[tauri::command]
 pub fn close_workspace(authorization: State<'_, WorkspaceAuthorization>) -> Result<(), String> {
     authorization.clear()
+}
+
+#[tauri::command(async)]
+pub fn update_project_stage(
+    workspace_root: String,
+    stage: String,
+    authorization: State<'_, WorkspaceAuthorization>,
+) -> Result<ProjectMetadata, String> {
+    let root = authorization.require(&workspace_root)?;
+    let allowed = [
+        "discovery",
+        "requirements",
+        "solution",
+        "delivery",
+        "completed",
+    ];
+    if !allowed.contains(&stage.as_str()) {
+        return Err("Unsupported project stage".into());
+    }
+    let path = root.join(".solidify/project.json");
+    let mut project: ProjectMetadata =
+        serde_json::from_slice(&fs::read(&path).map_err(|error| error.to_string())?)
+            .map_err(|error| format!("Invalid .solidify/project.json: {error}"))?;
+    project.stage = stage;
+    let encoded = serde_json::to_vec_pretty(&project).map_err(|error| error.to_string())?;
+    let temporary = root.join(".solidify/project.json.tmp");
+    fs::write(&temporary, encoded).map_err(|error| error.to_string())?;
+    fs::rename(temporary, path).map_err(|error| error.to_string())?;
+    Ok(project)
 }
 
 fn initialize_workspace(root: PathBuf) -> Result<WorkspaceInfo, String> {

@@ -19,6 +19,7 @@ import { useGlobalSearch } from '@/hooks/use-global-search'
 import { useAuthStore } from '@/stores/auth-store'
 import { queryClient } from '@/lib/query-client'
 import { initThemeListener } from '@/lib/theme'
+import { isEnabled } from '@/lib/harness/flags'
 
 export default function App() {
   const initialize = useAuthStore((s) => s.initialize)
@@ -52,7 +53,7 @@ export default function App() {
               <Route path="/usage" element={<UsagePage />} />
               <Route path="/templates" element={<TemplatesPage />} />
               <Route path="/knowledge" element={<KnowledgePage />} />
-              <Route path="/workspace" element={<WorkspacePage />} />
+              <Route path="/workspace" element={isEnabled('workbenchV2') ? <Navigate to="/chat" replace /> : <WorkspacePage />} />
             </Route>
           </Routes>
         </BrowserRouter>

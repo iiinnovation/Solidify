@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { Children, isValidElement, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
@@ -11,7 +11,7 @@ interface MarkdownRendererProps {
   className?: string
 }
 
-function CodeBlock({ children }: { children: React.ReactNode }) {
+function CodeBlock({ children, technical }: { children: React.ReactNode; technical: boolean }) {
   const preRef = useRef<HTMLPreElement>(null)
   const [copied, setCopied] = useState(false)
 
@@ -27,18 +27,30 @@ function CodeBlock({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="relative group/code my-3 rounded-lg overflow-hidden">
+    <div
+      className={cn(
+        'relative group/code my-3 overflow-hidden rounded-md border',
+        technical ? 'border-transparent bg-[#1E1E1C]' : 'border-border bg-background-secondary',
+      )}
+      data-code-kind={technical ? 'technical' : 'example'}
+    >
       <pre
         ref={preRef}
-        className="!bg-[#1E1E1C] !m-0 text-[#EDEDEB] p-4 overflow-x-auto text-[13px] leading-relaxed"
+        className={cn(
+          '!m-0 overflow-x-auto whitespace-pre-wrap break-words p-4 text-[13px] leading-relaxed',
+          technical ? '!bg-[#1E1E1C] text-[#EDEDEB]' : '!bg-transparent font-sans text-text-secondary',
+        )}
       >
         {children}
       </pre>
       <button
         onClick={handleCopy}
+        aria-label="复制代码块"
         className={cn(
           "absolute top-2.5 right-2.5 p-1.5 rounded-md transition-all",
-          "text-[#EDEDEB]/50 hover:text-[#EDEDEB] hover:bg-white/10",
+          technical
+            ? 'text-[#EDEDEB]/50 hover:bg-white/10 hover:text-[#EDEDEB]'
+            : 'text-text-tertiary hover:bg-surface-hover hover:text-text-primary',
           copied ? "opacity-100" : "opacity-0 group-hover/code:opacity-100"
         )}
       >
@@ -105,7 +117,10 @@ export function MarkdownRenderer({ content, className }: MarkdownRendererProps) 
             </blockquote>
           ),
           code: ({ className, children }) => {
-            const isBlock = className?.includes('hljs') || className?.includes('language-')
+            const technical = className?.includes('language-') ?? false
+            const isBlock = className?.includes('hljs')
+              || technical
+              || String(children).endsWith('\n')
             if (!isBlock) {
               return (
                 <code className="bg-accent-light text-accent-hover px-1.5 py-0.5 rounded text-[0.9em] font-mono">
@@ -114,12 +129,15 @@ export function MarkdownRenderer({ content, className }: MarkdownRendererProps) 
               )
             }
             return (
-              <code className={cn('text-[13px] font-mono !bg-transparent', className)}>
+              <code className={cn(
+                'text-[13px] !bg-transparent',
+                technical ? cn('font-mono', className) : 'font-sans text-inherit',
+              )}>
                 {children}
               </code>
             )
           },
-          pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
+          pre: ({ children }) => <CodeBlock technical={hasExplicitLanguage(children)}>{children}</CodeBlock>,
           table: ({ children }) => (
             <div className="overflow-x-auto my-3">
               <table className="w-full text-sm border-collapse">
@@ -147,4 +165,11 @@ export function MarkdownRenderer({ content, className }: MarkdownRendererProps) 
       </ReactMarkdown>
     </div>
   )
+}
+
+function hasExplicitLanguage(children: React.ReactNode): boolean {
+  return Children.toArray(children).some((child) => (
+    isValidElement<{ className?: string }>(child)
+    && child.props.className?.split(/\s+/).some((name) => name.startsWith('language-'))
+  ))
 }

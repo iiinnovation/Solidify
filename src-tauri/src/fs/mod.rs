@@ -1,3 +1,4 @@
+pub mod documents;
 pub mod index;
 pub mod persistence;
 pub mod sandbox;

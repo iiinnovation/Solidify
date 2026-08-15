@@ -1,10 +1,13 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { isTauri, readWorkspaceTree, searchWorkspaceIndex, type WorkspaceIndexStats } from '@/lib/tauri'
+import { isTauri, readWorkspaceTree, searchWorkspaceIndex, updateWorkspaceProjectStage, type WorkspaceIndexStats } from '@/lib/tauri'
 import { WorkspaceIndexer, closeLocalWorkspace, createLocalWorkspace, openLocalWorkspace, restoreLocalWorkspace, restoreWorkspaceConversations, startWorkspaceConversationPersistence } from '@/lib/workspace'
 import type { WorkspaceEntry, WorkspaceInfo, WorkspaceSearchResult } from '@/lib/workspace'
 import { useChatStore } from '@/stores/chat-store'
 import { configureLedgerWorkspace, flushWorkspaceLedger } from '@/lib/harness/ledger'
+import { migrateLegacyArtifactsToWorkspace } from '@/lib/migration'
+import { isEnabled } from '@/lib/harness/flags'
+import { useDocumentStore } from '@/stores/document-store'
 
 interface WorkspaceState {
   workspaceRoot: string | null
@@ -22,6 +25,7 @@ interface WorkspaceState {
   refreshTree: () => Promise<void>
   selectPath: (path: string | null) => void
   search: (query: string, limit?: number) => Promise<WorkspaceSearchResult[]>
+  setStage: (stage: string) => Promise<void>
 }
 
 let activeIndexer: WorkspaceIndexer | null = null
@@ -76,6 +80,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         configureLedgerWorkspace(null)
         await closeLocalWorkspace()
         useChatStore.setState({ conversations: [], artifacts: [], activeConversationId: null, activeArtifactId: null })
+        useDocumentStore.getState().reset()
         set({ workspaceRoot: null, project: null, entries: [], selectedPath: null, indexStats: null, status: 'idle', error: null })
       },
       refreshTree: async () => {
@@ -88,6 +93,12 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         const root = get().workspaceRoot
         if (!root || !query.trim()) return []
         return searchWorkspaceIndex(root, query, limit)
+      },
+      setStage: async (stage) => {
+        const root = get().workspaceRoot
+        if (!root) return
+        const project = await updateWorkspaceProjectStage(root, stage)
+        set({ project })
       },
     }),
     {
@@ -125,6 +136,7 @@ async function activate(
       const info = await load(root)
       set({ workspaceRoot: info.root, project: info.project })
       await restoreWorkspaceConversations(info.root)
+      if (isEnabled('workbenchV2')) await migrateLegacyArtifactsToWorkspace(info.root)
       stopConversationPersistence = startWorkspaceConversationPersistence(info.root)
       const entries = await readWorkspaceTree(info.root)
       const indexer = new WorkspaceIndexer(info.root, async (_change, indexStats) => {

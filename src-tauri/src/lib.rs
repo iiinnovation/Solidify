@@ -27,6 +27,9 @@ pub fn run() {
             fs::index::index_stats,
             fs::persistence::append_workspace_record,
             fs::persistence::read_workspace_records,
+            fs::documents::materialize_document,
+            fs::documents::list_document_versions,
+            fs::documents::rollback_document,
             fs::watcher::watch_dir,
             fs::watcher::unwatch_dir,
             fs::snapshots::append_snapshot,
@@ -36,6 +39,7 @@ pub fn run() {
             fs::workspace::restore_workspace,
             fs::workspace::create_workspace,
             fs::workspace::close_workspace,
+            fs::workspace::update_project_stage,
         ])
         .setup(|app| {
             app.manage(fs::workspace::WorkspaceAuthorization::load(app.handle())?);

@@ -124,6 +124,11 @@ When using tools:
 - Handle errors gracefully and explain what went wrong
 
 Think step by step and explain your reasoning when helpful.`
+    + `
+
+When producing a user-facing deliverable, stream it in this exact envelope:
+<solidify-artifact title="Human readable title" type="document" path="03-交付物/file.md">content</solidify-artifact>
+Always include a workspace-relative path. Valid types are document, code, mermaid, chart, drawio, and slides.`
 }
 
 /**

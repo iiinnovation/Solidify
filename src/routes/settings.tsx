@@ -296,6 +296,7 @@ export function SettingsPage() {
   const [toolCallingEnabled, setToolCallingEnabled] = useState(() => getFlags().toolCalling)
   const [harnessEnabled, setHarnessEnabled] = useState(() => getFlags().harness)
   const [localWorkspaceEnabled, setLocalWorkspaceEnabled] = useState(() => getFlags().localWorkspace)
+  const [workbenchV2Enabled, setWorkbenchV2Enabled] = useState(() => getFlags().workbenchV2)
 
   const editingProvider = editingId ? providers.find((p) => p.id === editingId) : null
   const editingSkill = editingSkillId ? customSkills.find((s) => s.id === editingSkillId) : null
@@ -472,6 +473,23 @@ export function SettingsPage() {
                     const value = event.target.checked
                     setAgentLoopEnabled(value)
                     setFlagOverride('agentLoop', value)
+                  }}
+                  className="h-4 w-4 shrink-0 rounded border-border text-accent focus:ring-accent focus:ring-offset-0"
+                />
+              </label>
+              <label className="flex items-center justify-between gap-4 rounded-md border border-border bg-surface px-4 py-3">
+                <span>
+                  <span className="block text-sm font-medium text-text-primary">统一工作台</span>
+                  <span className="block text-xs text-text-tertiary mt-0.5">在同一界面查看项目文件、对话和交付物版本；使用时需另行开启本地工作区。</span>
+                </span>
+                <input
+                  type="checkbox"
+                  aria-label="统一工作台"
+                  checked={workbenchV2Enabled}
+                  onChange={(event) => {
+                    const value = event.target.checked
+                    setWorkbenchV2Enabled(value)
+                    setFlagOverride('workbenchV2', value)
                   }}
                   className="h-4 w-4 shrink-0 rounded border-border text-accent focus:ring-accent focus:ring-offset-0"
                 />

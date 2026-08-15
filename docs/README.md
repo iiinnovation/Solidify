@@ -36,6 +36,7 @@ Solidify 的目标形态：**本地优先的 AI 交付工作台** —— 由文�
 | [M1](phases/M1-agent-runtime.md) | AI 交互引擎与工具系统 | 4–5 周 |
 | [M2](phases/M2-harness.md) | Harness 安全与控制平面 | 2–3 周 |
 | [M3](phases/M3-local-workspace.md) | 本地工作区与记忆 | 3–4 周 |
+| [M3.5](phases/M3.5-unified-workspace-ui.md) | 统一工作台与交付物模型 | 2–3 周 |
 | [M4](phases/M4-skill-system.md) | Skill 体系 | 2–3 周 |
 | [M5](phases/M5-pptd-engine.md) | PPTD 演示文稿引擎 | 5–7 周 |
 | [M6](phases/M6-multi-agent.md) | 多 Agent 协作 | 4–5 周 |

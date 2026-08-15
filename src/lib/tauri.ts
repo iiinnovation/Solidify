@@ -25,6 +25,8 @@ export interface LocalWorkspaceInfo { root: string; project: WorkspaceProject }
 export interface WorkspaceIndexStats { files: number; indexedDocuments: number }
 export interface WorkspaceIndexMatch { path: string; text: string; score: number }
 export interface WorkspaceFsChange { kind: 'created' | 'modified' | 'removed' | 'renamed' | 'rescan'; path: string; isDir: boolean }
+export interface DocumentVersion { n: number; ts: string; runId: string; messageId: string; content: string }
+export interface MaterializeDocumentResult { path: string; created: boolean; snapshotVersion: number | null; currentVersion: number; modifiedAt: number }
 
 export function resolveWorkspacePath(path: string, workspaceRoot: string): Promise<string> {
   return invokeCommand('resolve_path', { path, workspaceRoot })
@@ -50,6 +52,42 @@ export function writeWorkspaceFile(path: string, content: string, workspaceRoot:
   return invokeCommand('write_file', { path, content, workspaceRoot })
 }
 
+export function materializeWorkspaceDocument(options: {
+  path: string
+  content: string
+  workspaceRoot: string
+  runId: string
+  messageId: string
+  expectedModifiedAt?: number
+  force?: boolean
+}): Promise<MaterializeDocumentResult> {
+  return invokeCommand('materialize_document', {
+    path: options.path,
+    content: options.content,
+    workspaceRoot: options.workspaceRoot,
+    runId: options.runId,
+    messageId: options.messageId,
+    expectedModifiedAt: options.expectedModifiedAt,
+    force: options.force ?? false,
+  })
+}
+
+export function listWorkspaceDocumentVersions(path: string, workspaceRoot: string): Promise<DocumentVersion[]> {
+  return invokeCommand('list_document_versions', { path, workspaceRoot })
+}
+
+export function rollbackWorkspaceDocument(options: {
+  path: string
+  version: number
+  workspaceRoot: string
+  runId: string
+  messageId: string
+  expectedModifiedAt?: number
+  force?: boolean
+}): Promise<MaterializeDocumentResult> {
+  return invokeCommand('rollback_document', { ...options, force: options.force ?? false })
+}
+
 export function searchWorkspaceFiles(query: string, path: string, workspaceRoot: string, maxResults?: number): Promise<LocalSearchMatch[]> {
   return invokeCommand('search_files', { query, path, workspaceRoot, maxResults })
 }
@@ -68,6 +106,10 @@ export function createWorkspace(name: string): Promise<LocalWorkspaceInfo | null
 
 export function closeWorkspace(): Promise<void> {
   return invokeCommand('close_workspace', {})
+}
+
+export function updateWorkspaceProjectStage(workspaceRoot: string, stage: string): Promise<WorkspaceProject> {
+  return invokeCommand('update_project_stage', { workspaceRoot, stage })
 }
 
 export function initializeWorkspaceIndex(workspaceRoot: string): Promise<WorkspaceIndexStats> {

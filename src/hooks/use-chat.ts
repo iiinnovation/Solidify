@@ -13,6 +13,9 @@ import { applyRunEvent, createRunState } from '@/lib/engine/run-state'
 import { createChatQueryContext } from '@/lib/engine/chat-context'
 import type { QueryEvent } from '@/lib/engine/types'
 import { useWorkspaceStore } from '@/stores/workspace-store'
+import { useDocumentStore } from '@/stores/document-store'
+import { deriveArtifactPath, materializeArtifact, normalizeArtifactPath, normalizeArtifactType } from '@/lib/workspace/materialize'
+import { isTauri } from '@/lib/tauri'
 
 function genId() {
   return newId('msg')
@@ -25,43 +28,29 @@ interface ResumeRunOptions {
 
 /* ── 流式 Artifact 解析 ── */
 
-// AI 可能输出 diagram / flowchart 等旧类型，统一映射到合法 ArtifactType
-const typeAliasMap: Record<string, ArtifactType> = {
-  diagram: 'mermaid',
-  flowchart: 'mermaid',
-  flow: 'mermaid',
-  sequence: 'mermaid',
-  graph: 'mermaid',
-  bar: 'chart',
-  line: 'chart',
-  pie: 'chart',
-}
-
-function normalizeArtifactType(raw: string): ArtifactType {
-  const lower = raw.toLowerCase().trim()
-  if (['document', 'slides', 'code', 'mermaid', 'chart', 'drawio'].includes(lower)) {
-    return lower as ArtifactType
-  }
-  return typeAliasMap[lower] ?? 'document'
-}
-
 interface StreamingArtifactInfo {
   title: string
   type: ArtifactType
+  path: string
   content: string
 }
 
-function processStreamingContent(fullContent: string) {
+export function processStreamingContent(fullContent: string) {
   const completeRegex =
-    /<solidify-artifact\s+title="([^"]+)"\s+type="([^"]+)">([\s\S]*?)<\/solidify-artifact>/g
+    /<solidify-artifact\b([^>]*)>([\s\S]*?)<\/solidify-artifact>/g
 
   const completeArtifacts: StreamingArtifactInfo[] = []
   let match
   while ((match = completeRegex.exec(fullContent)) !== null) {
+    const attributes = parseArtifactAttributes(match[1])
+    const type = normalizeArtifactType(attributes.type ?? 'document')
+    const title = attributes.title?.trim() || '未命名交付物'
+    const content = match[2].trim()
     completeArtifacts.push({
-      title: match[1],
-      type: normalizeArtifactType(match[2]),
-      content: match[3].trim(),
+      title,
+      type,
+      path: normalizeArtifactPath(attributes.path, title, type, content),
+      content,
     })
   }
 
@@ -70,15 +59,19 @@ function processStreamingContent(fullContent: string) {
 
   // 检测未闭合的（正在流式传输的）artifact
   const partialRegex =
-    /<solidify-artifact\s+title="([^"]+)"\s+type="([^"]+)">([\s\S]*)$/
+    /<solidify-artifact\b([^>]*)>([\s\S]*)$/
   const partialMatch = cleanText.match(partialRegex)
 
   let streamingArtifact: StreamingArtifactInfo | null = null
   if (partialMatch) {
+    const attributes = parseArtifactAttributes(partialMatch[1])
+    const type = normalizeArtifactType(attributes.type ?? 'document')
+    const title = attributes.title?.trim() || '未命名交付物'
     streamingArtifact = {
-      title: partialMatch[1],
-      type: normalizeArtifactType(partialMatch[2]),
-      content: partialMatch[3],
+      title,
+      type,
+      path: normalizeArtifactPath(attributes.path, title, type, partialMatch[2]),
+      content: partialMatch[2],
     }
     cleanText = cleanText.replace(partialRegex, '')
   }
@@ -87,6 +80,14 @@ function processStreamingContent(fullContent: string) {
   cleanText = cleanText.replace(/\n{3,}/g, '\n\n').trim()
 
   return { cleanText, completeArtifacts, streamingArtifact }
+}
+
+function parseArtifactAttributes(source: string): Record<string, string> {
+  const attributes: Record<string, string> = {}
+  for (const match of source.matchAll(/([\w-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) {
+    attributes[match[1].toLowerCase()] = match[2] ?? match[3] ?? ''
+  }
+  return attributes
 }
 
 /* ── Hook ── */
@@ -294,6 +295,13 @@ ${result.content}
 
       // 流式 artifact 跟踪
       let streamingArtifactId: string | null = null
+      let streamingDocumentPath: string | null = null
+      let streamingDocumentModifiedAt: number | undefined
+      const pendingMaterializations: Promise<void>[] = []
+      const documentRefs: Array<{ path: string; messageId: string; version: number }> = []
+      const materializeRunId = assistantMsg.agentRun?.runId ?? newId('run')
+      const workspaceRoot = useWorkspaceStore.getState().workspaceRoot
+      const useFileDocuments = isEnabled('workbenchV2') && isEnabled('localWorkspace') && isTauri && Boolean(workspaceRoot)
       let completedArtifactCount = resume
         ? processStreamingContent(assistantMsg.agentRun?.text ?? '').completeArtifacts.length
         : 0
@@ -317,7 +325,38 @@ ${result.content}
 
         while (completedArtifactCount < completeArtifacts.length) {
           const artifact = completeArtifacts[completedArtifactCount]
-          if (streamingArtifactId) {
+          if (useFileDocuments && workspaceRoot) {
+            const finalPath = artifact.path
+            if (streamingDocumentPath && streamingDocumentPath !== finalPath) {
+              useDocumentStore.getState().removeDocument(streamingDocumentPath)
+            }
+            const finalModifiedAt = streamingDocumentPath === finalPath
+              ? streamingDocumentModifiedAt
+              : useWorkspaceStore.getState().entries
+                .find((entry) => entry.kind === 'file' && entry.path === finalPath)?.modifiedAt
+            const completed = { ...artifact, path: finalPath }
+            useDocumentStore.getState().upsertDocument({
+              ...completed, messageId: assistantMsg.id, streaming: false, version: 1,
+              modifiedAt: finalModifiedAt,
+            })
+            const task = materializeArtifact(completed, {
+              workspaceRoot,
+              runId: materializeRunId,
+              messageId: assistantMsg.id,
+              expectedModifiedAt: finalModifiedAt,
+            }).then(() => {
+              const saved = useDocumentStore.getState().documents[finalPath]
+              documentRefs.push({ path: finalPath, messageId: assistantMsg.id, version: saved?.version ?? 1 })
+            }).catch((reason) => {
+              useDocumentStore.getState().patchDocument(finalPath, {
+                streaming: false,
+                error: reason instanceof Error ? reason.message : String(reason),
+              })
+            })
+            pendingMaterializations.push(task)
+            streamingDocumentPath = null
+            streamingDocumentModifiedAt = undefined
+          } else if (streamingArtifactId) {
             updateArtifactContent(streamingArtifactId, artifact.content, false)
             streamingArtifactId = null
           } else {
@@ -334,7 +373,25 @@ ${result.content}
         }
 
         if (streamingArtifact) {
-          if (!streamingArtifactId) {
+          if (useFileDocuments) {
+            if (!streamingDocumentPath) {
+              streamingDocumentPath = streamingArtifact.path || deriveArtifactPath(streamingArtifact.title, streamingArtifact.type, streamingArtifact.content)
+              streamingDocumentModifiedAt = useWorkspaceStore.getState().entries
+                .find((entry) => entry.kind === 'file' && entry.path === streamingDocumentPath)?.modifiedAt
+              useDocumentStore.getState().upsertDocument({
+                ...streamingArtifact,
+                path: streamingDocumentPath,
+                messageId: assistantMsg.id,
+                streaming: true,
+                version: 1,
+                modifiedAt: streamingDocumentModifiedAt,
+              })
+            } else {
+              useDocumentStore.getState().patchDocument(streamingDocumentPath, {
+                content: streamingArtifact.content, streaming: true,
+              })
+            }
+          } else if (!streamingArtifactId) {
             streamingArtifactId = newId('artifact')
             addArtifact({
               id: streamingArtifactId,
@@ -362,6 +419,11 @@ ${result.content}
           ...(final && knowledgeSources.length > 0 ? { knowledgeSources } : {}),
         }, persist)
         return cleanText
+      }
+
+      const flushMaterializations = async () => {
+        await Promise.all(pendingMaterializations)
+        if (documentRefs.length > 0) patchAssistantMessage({ documents: [...documentRefs] })
       }
 
       try {
@@ -424,6 +486,14 @@ ${result.content}
             const isDurableFact = event.type !== 'message.delta' && event.type !== 'tool.progress'
             if (isDurableFact) runEvents.push(event)
             run = applyRunEvent(run, event)
+            if (useFileDocuments && event.type === 'tool.completed' && event.result.success) {
+              const data = event.result.data as { path?: unknown } | undefined
+              if (typeof data?.path === 'string') {
+                useWorkspaceStore.getState().selectPath(data.path)
+                useDocumentStore.getState().setActivePath(data.path)
+                void useWorkspaceStore.getState().refreshTree()
+              }
+            }
             if (event.type === 'message.delta' || event.type === 'message.completed') {
               latestText = consumeArtifactContent(run.text, false, false)
             }
@@ -438,6 +508,7 @@ ${result.content}
           }
 
           const finalText = consumeArtifactContent(run.text, true)
+          await flushMaterializations()
           patchAssistantMessage({
             ...(finalText !== undefined ? { content: finalText } : {}),
             agentRun: run,
@@ -510,6 +581,7 @@ ${result.content}
         reader.releaseLock()
 
         consumeArtifactContent(fullContent, true)
+        await flushMaterializations()
       } catch (err) {
         if (abortController.signal.aborted) return
         const error = err instanceof Error ? err : new Error('未知错误')

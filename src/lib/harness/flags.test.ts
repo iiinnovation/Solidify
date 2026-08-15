@@ -33,6 +33,7 @@ describe('feature flags', () => {
       'toolCalling',
       'harness',
       'localWorkspace',
+      'workbenchV2',
       'skillV2',
       'pptdEngine',
       'subAgents',

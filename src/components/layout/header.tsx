@@ -74,7 +74,7 @@ export function Header() {
       </div>
       <div className="relative z-10 flex min-w-0 items-center gap-0.5 sm:gap-2">
         {/* 导航按钮 */}
-        {isEnabled('localWorkspace') && (
+        {isEnabled('localWorkspace') && !isEnabled('workbenchV2') && (
           <Button variant="ghost" size="sm" onClick={() => navigate('/workspace')} className={cn(location.pathname === '/workspace' && 'bg-accent-light text-accent')} aria-label="工作区">
             <FolderTree size={18} strokeWidth={1.75} className="sm:mr-1.5" /><span className="hidden sm:inline">工作区</span>
           </Button>

@@ -21,6 +21,61 @@ export function ProjectPicker({ compact = false }: { compact?: boolean }) {
     )
   }
 
+  if (compact) {
+    const cancelCreating = () => {
+      setName('')
+      setCreating(false)
+    }
+
+    return (
+      <div className="border-b border-border-light bg-surface px-3 py-3">
+        <div className="flex min-w-0 items-center gap-2 text-sm font-medium text-text-primary">
+          <FolderOpen size={16} className="shrink-0 text-text-tertiary" />
+          <span className="truncate">未打开工作区</span>
+          {busy && <LoaderCircle size={13} className="ml-auto shrink-0 animate-spin text-accent" />}
+        </div>
+
+        {creating ? (
+          <form
+            className="mt-3 space-y-2"
+            onSubmit={(event) => {
+              event.preventDefault()
+              const value = name.trim()
+              if (!value) return
+              void create(value).then(cancelCreating)
+            }}
+          >
+            <input
+              autoFocus
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="项目名称"
+              aria-label="项目名称"
+              className="h-8 w-full min-w-0 rounded-md border border-border bg-background px-2 text-sm outline-none focus:border-border-focus"
+            />
+            <div className="grid grid-cols-2 gap-2">
+              <Button className="w-full" size="sm" variant="outline" type="button" onClick={cancelCreating}>
+                <X size={15} />取消
+              </Button>
+              <Button className="w-full" size="sm" type="submit" disabled={!name.trim() || busy}>创建</Button>
+            </div>
+          </form>
+        ) : (
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <Button className="w-full" size="sm" onClick={() => void open()} disabled={busy}>
+              <FolderOpen size={15} />打开
+            </Button>
+            <Button className="w-full" size="sm" variant="outline" onClick={() => setCreating(true)} disabled={busy}>
+              <FolderPlus size={15} />新建
+            </Button>
+          </div>
+        )}
+
+        {error && <p className="mt-2 text-xs text-error">{error}</p>}
+      </div>
+    )
+  }
+
   return (
     <div className="border-b border-border-light bg-surface px-4 py-3">
       <div className="flex flex-wrap items-center gap-2">

@@ -20,6 +20,8 @@ export interface FeatureFlags {
   harness: boolean
   /** M3 · 本地工作区与文件索引 */
   localWorkspace: boolean
+  /** M3.5 · 统一三栏工作台与文件交付物 */
+  workbenchV2: boolean
   /** M4 · 目录式 Skill 与渐进式披露 */
   skillV2: boolean
   /** M5 · PPTD 演示文稿引擎 */
@@ -35,6 +37,7 @@ const DEFAULT_FLAGS: Readonly<FeatureFlags> = Object.freeze({
   toolCalling: false,
   harness: false,
   localWorkspace: false,
+  workbenchV2: false,
   skillV2: false,
   pptdEngine: false,
   subAgents: false,

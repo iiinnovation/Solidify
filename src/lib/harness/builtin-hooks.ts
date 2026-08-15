@@ -72,7 +72,7 @@ export function permissionGate(runtime: HarnessRuntime, ctx: QueryContext, tool:
     model: { provider: 'anthropic' as const, model: ctx.model.model, temperature: 0.7, maxTokens: ctx.limits.maxOutputTokens },
     ui: { theme: 'auto' as const, fontSize: 14, codeTheme: 'default', compactMode: false },
     privacy: { allowTelemetry: false, allowCrashReports: false, shareUsageData: false },
-    features: { agentLoop: false, toolCalling: false, harness: true, localWorkspace: false, skillV2: false, pptdEngine: false, subAgents: false },
+    features: { agentLoop: false, toolCalling: false, harness: true, localWorkspace: false, workbenchV2: false, skillV2: false, pptdEngine: false, subAgents: false },
     disabledTools: [], workspaceRoot: ctx.cwd,
   }
   const toolContext = {

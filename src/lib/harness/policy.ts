@@ -79,6 +79,15 @@ export class PolicyEngine {
     if (projectEffect === 'ask' || userEffect === 'ask' || requiresConfirmation || tool.permissions.includes('net:http')) {
       return askForConfirmation(tool, call)
     }
+    if (
+      tool.name === 'materialize_document'
+      && call.input?.intent === 'artifact_materialize'
+      && call.input?.creating === true
+      && typeof call.input?.path === 'string'
+      && call.input.path.replace(/\\/g, '/').startsWith('03-交付物/')
+    ) {
+      return { kind: 'allow', reason: '交付物目录内的新文件按默认策略放行。', source: 'default' }
+    }
     if (tool.readOnly) {
       return { kind: 'allow', reason: '工作区内只读操作。', source: 'default' }
     }

@@ -1,5 +1,5 @@
 import type { Tool } from '../types'
-import { writeWorkspaceFile } from '@/lib/tauri'
+import { materializeWorkspaceDocument, writeWorkspaceFile } from '@/lib/tauri'
 import { failure, success, errorMessage, validateWorkspacePath } from './helpers'
 
 interface WriteFileInput { path: string; content: string }
@@ -15,6 +15,17 @@ export const writeFileTool: Tool<WriteFileInput> = {
     const pathError = validateWorkspacePath(input.path, ctx)
     if (pathError) return pathError
     try {
+      if (input.path.replace(/\\/g, '/').startsWith('03-交付物/')) {
+        const result = await materializeWorkspaceDocument({
+          path: input.path,
+          content: input.content,
+          workspaceRoot: ctx.cwd,
+          runId: ctx.runId,
+          messageId: `tool-${ctx.runId}`,
+        })
+        const bytes = new TextEncoder().encode(input.content).byteLength
+        return { ...success(`已写入 ${input.path}（${bytes} 字节）`, { path: input.path, bytes, version: result.currentVersion }), metadata: { durationMs: 0, bytesWritten: bytes } }
+      }
       const bytes = await writeWorkspaceFile(input.path, input.content, ctx.cwd)
       return { ...success(`已写入 ${input.path}（${bytes} 字节）`, { path: input.path, bytes }), metadata: { durationMs: 0, bytesWritten: bytes } }
     } catch (error) { return failure(writeErrorKind(error), `无法写入文件 ${input.path}：${errorMessage(error)}`, true) }

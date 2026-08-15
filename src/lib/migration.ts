@@ -89,6 +89,40 @@ function safeRecordId(value: string): string {
 }
 
 /**
+ * M3.5 one-shot export. Legacy artifacts remain readable in memory if any
+ * individual file cannot be exported; successful exports are never deleted.
+ */
+export async function migrateLegacyArtifactsToWorkspace(workspaceRoot: string): Promise<WorkspaceExportResult> {
+  const marker = `solidify-m3.5-artifacts-exported:${workspaceRoot}`
+  if (localStorage.getItem(marker) === 'true') return { conversations: 0, messages: 0, artifacts: 0 }
+  const artifacts = useChatStore.getState().artifacts
+  let exported = 0
+  for (const artifact of artifacts) {
+    try {
+      const extension = legacyArtifactExtension(artifact)
+      const title = artifact.title.replace(/[\\/:*?"<>|]/g, '-').slice(0, 70) || '未命名交付物'
+      const path = `03-交付物/_archive/${title}-${safeRecordId(artifact.id).slice(-12)}${extension}`
+      await writeWorkspaceFile(path, artifact.content, workspaceRoot)
+      exported++
+    } catch (error) {
+      console.error(`Unable to export legacy artifact ${artifact.id}:`, error)
+    }
+  }
+  if (exported === artifacts.length) localStorage.setItem(marker, 'true')
+  return { conversations: 0, messages: 0, artifacts: exported }
+}
+
+function legacyArtifactExtension(artifact: LocalArtifact): string {
+  if (artifact.type === 'document' || artifact.type === 'slides') return '.md'
+  if (artifact.type === 'mermaid') return '.mmd'
+  if (artifact.type === 'chart') return '.json'
+  if (artifact.type === 'drawio') return '.drawio'
+  const language = artifact.content.trim().match(/^```([\w+-]+)/)?.[1]?.toLowerCase()
+  const codeExtensions: Record<string, string> = { javascript: 'js', typescript: 'ts', python: 'py', rust: 'rs', html: 'html', css: 'css' }
+  return `.${(language && codeExtensions[language]) || 'txt'}`
+}
+
+/**
  * 迁移 localStorage 数据到 Supabase
  */
 export async function migrateLocalDataToCloud(projectId: string): Promise<MigrationResult> {

@@ -36,6 +36,8 @@ export interface Message {
     skillSystemPrompt?: string
     skillSkipConfirmation?: boolean
   }
+  /** M3.5: artifacts are file references; content lives in the workspace. */
+  documents?: Array<{ path: string; messageId: string; version: number }>
 }
 
 export interface Conversation {
