@@ -1,0 +1,12 @@
+pageType: cover
+background: { type: solid, color: '$bg' }
+elements:
+  - elementId: title
+    elementType: text
+    bounds: [60, 80, 840, 60]
+    content: { text: 'Minimal PPTD', style: title }
+  - elementId: accent
+    elementType: shape
+    bounds: [60, 170, 240, 12]
+    shapeName: rect
+    fill: { type: solid, color: '$accent' }

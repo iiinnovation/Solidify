@@ -56,16 +56,22 @@ describe('SkillLoader', () => {
     expect(isSkillWatcherPath('/tmp/.solidify/skills/demo/SKILL.md')).toBe(false)
   })
 
-  it('loads the ten bundled directory Skills when no override is provided', async () => {
+  it('loads the bundled directory Skills when no override is provided', async () => {
     const result = await new SkillLoader({ fileSystem: memoryFileSystem({}, {}) }).load()
     expect(result.errors).toEqual([])
-    expect(result.skills.filter((skill) => skill.source === 'builtin')).toHaveLength(10)
+    expect(result.skills.filter((skill) => skill.source === 'builtin')).toHaveLength(11)
     for (const skill of result.skills.filter((item) => item.source === 'builtin')) {
-      expect(skill.metadata.version, skill.metadata.name).toBe('2.1.0')
-      expect(skill.content, skill.metadata.name).toContain('reference/legacy-guidance.md')
-      expect(skill.content, skill.metadata.name).toContain('## 提交前自检')
-      expect(skill.resourceFiles?.['reference/legacy-guidance.md'], skill.metadata.name)
-        .toBe(builtinSkills.find((item) => item.id === skill.metadata.name)?.systemPrompt)
+      if (skill.metadata.name === 'pptd-deck') {
+        expect(skill.metadata.version).toBe('1.0.0')
+        expect(skill.content).toContain('PPTD v2')
+        expect(skill.resourceFiles?.['reference/pptd.md']).toContain('960, 540')
+      } else {
+        expect(skill.metadata.version, skill.metadata.name).toBe('2.1.0')
+        expect(skill.content, skill.metadata.name).toContain('reference/legacy-guidance.md')
+        expect(skill.content, skill.metadata.name).toContain('## 提交前自检')
+        expect(skill.resourceFiles?.['reference/legacy-guidance.md'], skill.metadata.name)
+          .toBe(builtinSkills.find((item) => item.id === skill.metadata.name)?.systemPrompt)
+      }
     }
     const requirement = result.skills.find((skill) => skill.metadata.name === 'requirement-analysis')
     expect(requirement?.content).toContain('reference/output-format.md')

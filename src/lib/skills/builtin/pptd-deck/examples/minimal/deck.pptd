@@ -1,0 +1,12 @@
+version: v2
+title: Minimal PPTD
+size: [960, 540]
+theme:
+  colors:
+    bg: '#ffffff'
+    text: '#111827'
+    accent: '#2563eb'
+  textStyles:
+    title: { fontSize: 32, bold: true, color: '$text' }
+pages:
+  - pages/01.page
