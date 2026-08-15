@@ -28,6 +28,7 @@ export function buildToolUseContext(
     // 'web' is the safe default: blocks tauri-only tools when unknown
     platform: ctx.platform ?? 'web',
     logger,
+    skillResources: ctx.skillResources,
   }
 }
 

@@ -452,7 +452,7 @@ describe('runQuery snapshot integration (M1-13)', () => {
     expect(JSON.stringify(requests[0].messages)).not.toContain('old snapshot')
   })
 
-  it('fails recovery without calling the model when no snapshot exists', async () => {
+  it('falls back to conversation history when no recovery snapshot exists', async () => {
     const requests: CompletionRequest[] = []
     const provider = makeMockProvider([finalTurn])
     const originalStream = provider.stream.bind(provider)
@@ -466,11 +466,10 @@ describe('runQuery snapshot integration (M1-13)', () => {
     const events = []
     for await (const event of runQuery(ctx)) events.push(event)
 
-    expect(requests).toHaveLength(0)
-    expect(events.at(-1)).toMatchObject({
-      type: 'run.failed',
-      error: { kind: 'internal', message: 'No recoverable Agent snapshot was found' },
-    })
+    expect(requests).toHaveLength(1)
+    expect(JSON.stringify(requests[0].messages)).toContain('hi')
+    expect(events.some((event) => event.type === 'run.failed')).toBe(false)
+    expect(events.at(-1)?.type).toBe('run.completed')
   })
 
   it('rejects a snapshot owned by another run', async () => {

@@ -14,6 +14,7 @@ import { useSkillStore, type CustomSkill } from '@/stores/skill-store'
 import { builtinSkills } from '@/lib/skills'
 import { useNavigate } from 'react-router-dom'
 import { getFlags, setFlagOverride } from '@/lib/harness/flags'
+import { migrateStoredCustomSkills } from '@/lib/skills/migration'
 
 function ProviderForm({
   initial,
@@ -297,6 +298,7 @@ export function SettingsPage() {
   const [harnessEnabled, setHarnessEnabled] = useState(() => getFlags().harness)
   const [localWorkspaceEnabled, setLocalWorkspaceEnabled] = useState(() => getFlags().localWorkspace)
   const [workbenchV2Enabled, setWorkbenchV2Enabled] = useState(() => getFlags().workbenchV2)
+  const [skillV2Enabled, setSkillV2Enabled] = useState(() => getFlags().skillV2)
 
   const editingProvider = editingId ? providers.find((p) => p.id === editingId) : null
   const editingSkill = editingSkillId ? customSkills.find((s) => s.id === editingSkillId) : null
@@ -469,6 +471,7 @@ export function SettingsPage() {
                   type="checkbox"
                   aria-label="Agent 循环"
                   checked={agentLoopEnabled}
+                  disabled={skillV2Enabled}
                   onChange={(event) => {
                     const value = event.target.checked
                     setAgentLoopEnabled(value)
@@ -520,6 +523,7 @@ export function SettingsPage() {
                   type="checkbox"
                   aria-label="工具调用"
                   checked={toolCallingEnabled}
+                  disabled={skillV2Enabled}
                   onChange={(event) => {
                     const value = event.target.checked
                     setToolCallingEnabled(value)
@@ -545,6 +549,7 @@ export function SettingsPage() {
                   type="checkbox"
                   aria-label="安全控制平面"
                   checked={harnessEnabled}
+                  disabled={skillV2Enabled}
                   onChange={(event) => {
                     const value = event.target.checked
                     setHarnessEnabled(value)
@@ -553,11 +558,51 @@ export function SettingsPage() {
                   className="h-4 w-4 shrink-0 rounded border-border text-accent focus:ring-accent focus:ring-offset-0"
                 />
               </label>
+              <label className="flex items-center justify-between gap-4 rounded-md border border-border bg-surface px-4 py-3">
+                <span>
+                  <span className="block text-sm font-medium text-text-primary">目录式 Skill</span>
+                  <span className="block text-xs text-text-tertiary mt-0.5">启用 Skill 目录、渐进式披露、工具白名单和管理页。</span>
+                </span>
+                <input
+                  type="checkbox"
+                  aria-label="目录式 Skill"
+                  checked={skillV2Enabled}
+                  onChange={(event) => {
+                    const value = event.target.checked
+                    setSkillV2Enabled(value)
+                    setFlagOverride('skillV2', value)
+                    if (value) {
+                      setAgentLoopEnabled(true)
+                      setToolCallingEnabled(true)
+                      setHarnessEnabled(true)
+                      setFlagOverride('agentLoop', true)
+                      setFlagOverride('toolCalling', true)
+                      setFlagOverride('harness', true)
+                      void migrateStoredCustomSkills().catch((error) => {
+                        console.warn('[skills] Legacy Skill migration failed:', error)
+                      })
+                    }
+                  }}
+                  className="h-4 w-4 shrink-0 rounded border-border text-accent focus:ring-accent focus:ring-offset-0"
+                />
+              </label>
             </div>
           </section>
 
           {/* 自定义技能管理区 */}
-          <section className="space-y-4">
+          {skillV2Enabled ? (
+            <section className="space-y-4">
+              <div>
+                <h2 className="text-lg font-semibold text-text-primary">Skill 管理</h2>
+                <p className="text-sm text-text-tertiary mt-1">自定义 Skill 已迁移到本地目录，由统一管理页维护。</p>
+              </div>
+              <Separator />
+              <Button variant="secondary" onClick={() => navigate('/skills')}>
+                <Sparkles size={16} strokeWidth={1.75} />
+                打开 Skill 管理
+              </Button>
+            </section>
+          ) : <section className="space-y-4">
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-lg font-semibold text-text-primary">自定义技能</h2>
@@ -685,7 +730,7 @@ export function SettingsPage() {
                 )}
               </div>
             )}
-          </section>
+          </section>}
         </div>
       </ScrollArea>
     </div>

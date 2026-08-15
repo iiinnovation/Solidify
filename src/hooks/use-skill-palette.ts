@@ -1,6 +1,8 @@
 import { useState, useCallback, useMemo } from 'react'
 import { type Skill } from '@/lib/skills'
 import { useSkillStore } from '@/stores/skill-store'
+import { useSkillRegistry } from './use-skill-registry'
+import { isEnabled } from '@/lib/harness/flags'
 
 export function useSkillPalette() {
   const [isOpen, setIsOpen] = useState(false)
@@ -9,7 +11,18 @@ export function useSkillPalette() {
   const [activeSkill, setActiveSkill] = useState<Skill | null>(null)
 
   const getAllSkills = useSkillStore((s) => s.getAllSkills)
-  const allSkills = getAllSkills()
+  const registryState = useSkillRegistry()
+  const directorySkills = useMemo(() => registryState.skills.map((skill) => ({
+        id: skill.name,
+        name: skill.displayName ?? skill.name,
+        description: skill.description,
+        icon: skill.icon ?? 'Sparkles',
+        placeholder: skill.placeholder ?? '',
+        skipConfirmation: skill.skipConfirmation ?? true,
+        systemPrompt: '',
+        recommendedModels: skill.recommendedModels,
+      })), [registryState.skills])
+  const allSkills = isEnabled('skillV2') ? directorySkills : getAllSkills()
 
   const filteredSkills = useMemo(() => {
     if (!query) return allSkills
@@ -117,6 +130,9 @@ export function useSkillPalette() {
     query,
     selectedIndex,
     activeSkill,
+    registry: registryState.registry,
+    registryLoading: registryState.loading,
+    registryErrors: registryState.errors,
     filteredSkills,
     handleInputChange,
     selectSkill,

@@ -20,6 +20,8 @@ import { useAuthStore } from '@/stores/auth-store'
 import { queryClient } from '@/lib/query-client'
 import { initThemeListener } from '@/lib/theme'
 import { isEnabled } from '@/lib/harness/flags'
+import { migrateStoredCustomSkills } from '@/lib/skills/migration'
+import { SkillsPage } from '@/routes/skills'
 
 export default function App() {
   const initialize = useAuthStore((s) => s.initialize)
@@ -36,6 +38,13 @@ export default function App() {
     return cleanup
   }, [])
 
+  useEffect(() => {
+    if (!isEnabled('skillV2')) return
+    void migrateStoredCustomSkills().catch((error) => {
+      console.warn('[skills] Legacy Skill migration failed:', error)
+    })
+  }, [])
+
   return (
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
@@ -50,6 +59,7 @@ export default function App() {
               <Route path="/chat" element={<ChatPage />} />
               <Route path="/chat/:conversationId" element={<ChatPage />} />
               <Route path="/settings" element={<SettingsPage />} />
+              <Route path="/skills" element={<SkillsPage />} />
               <Route path="/usage" element={<UsagePage />} />
               <Route path="/templates" element={<TemplatesPage />} />
               <Route path="/knowledge" element={<KnowledgePage />} />

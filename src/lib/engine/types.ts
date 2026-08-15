@@ -6,7 +6,7 @@
 
 import type { Tool, ToolCall, ToolResult, ToolProgress } from '../tools/types'
 import type { MemoryState } from '../memory/types'
-import type { LoadedSkill } from '../skills/types'
+import type { LoadedSkill, SkillResourceResolver, SkillRegistryApi } from '../skills/types'
 import type { ProviderRegistry } from '../model'
 import type { WorkspaceHandle } from '../workspace/types'
 import type { Settings, PermissionMap, Platform } from '../harness/types'
@@ -65,6 +65,8 @@ export interface QueryContext {
   readonly messages: readonly Message[]
   readonly tools: readonly Tool[]           // Available tools (filtered by permissions & env)
   readonly skill?: LoadedSkill
+  readonly skillResources?: SkillResourceResolver
+  readonly skillRegistry?: SkillRegistryApi
   readonly memory: MemoryState
   readonly model: ModelConfig
   readonly limits: RunLimits

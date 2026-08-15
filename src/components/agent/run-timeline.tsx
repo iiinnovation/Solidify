@@ -6,15 +6,18 @@ import { ToolCallCard } from './tool-call-card'
 import { LedgerPanel } from './ledger-panel'
 
 export function RunTimeline({ run, onStop }: { run: RunState | null; onStop?: () => void }) {
-  const [elapsed, setElapsed] = useState(0)
+  const [elapsed, setElapsed] = useState(() => run && !run.completedAt
+    ? Math.max(0, Date.now() - run.startedAt)
+    : 0)
 
   useEffect(() => {
     if (!run || run.completedAt) return
-    const update = () => setElapsed(Math.max(0, Date.now() - run.startedAt))
-    update()
-    const timer = window.setInterval(update, 1000)
+    const startedAt = run.startedAt
+    const timer = window.setInterval(() => {
+      setElapsed(Math.max(0, Date.now() - startedAt))
+    }, 1000)
     return () => window.clearInterval(timer)
-  }, [run])
+  }, [run?.runId, run?.startedAt, run?.completedAt])
 
   if (!run) return null
   const duration = run.completedAt ? run.completedAt - run.startedAt : elapsed

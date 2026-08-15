@@ -1,4 +1,4 @@
-import type { PropsWithChildren } from 'react'
+import { StrictMode, type PropsWithChildren } from 'react'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -37,6 +37,10 @@ vi.mock('@/lib/chat-api', () => ({
 
 function wrapper({ children }: PropsWithChildren) {
   return <MemoryRouter>{children}</MemoryRouter>
+}
+
+function strictWrapper({ children }: PropsWithChildren) {
+  return <StrictMode><MemoryRouter>{children}</MemoryRouter></StrictMode>
 }
 
 describe('useChat agent loop switch', () => {
@@ -86,6 +90,32 @@ describe('useChat agent loop switch', () => {
     expect(assistant?.runEvents).toHaveLength(3)
     expect(assistant?.runEvents?.some((event) => event.type === 'message.delta')).toBe(false)
     expect(assistant?.agentRun?.usage?.totalTokens).toBe(5)
+  })
+
+  it('starts only one run when send is triggered twice before React rerenders', async () => {
+    let finishRun: (() => void) | undefined
+    const runGate = new Promise<void>((resolve) => { finishRun = resolve })
+    mocks.runQuery.mockImplementation(async function* () {
+      yield { type: 'run.started', runId: 'run-once' }
+      await runGate
+      yield { type: 'message.completed', content: 'one reply' }
+      yield {
+        type: 'run.completed',
+        usage: { inputTokens: 2, outputTokens: 2, totalTokens: 4, turns: 1, toolCalls: 0 },
+      }
+    })
+    const { result } = renderHook(() => useChat(), { wrapper })
+
+    let firstSend: Promise<void> | undefined
+    await act(async () => {
+      firstSend = result.current.sendMessage('hello')
+      await result.current.sendMessage('hello')
+    })
+    expect(mocks.runQuery).toHaveBeenCalledOnce()
+
+    finishRun?.()
+    await act(async () => { await firstSend })
+    expect(result.current.messages).toHaveLength(2)
   })
 
   it('keeps using the legacy stream when the switch is off', async () => {
@@ -155,6 +185,9 @@ describe('useChat agent loop switch', () => {
       restoreSnapshot: true,
       cwd: '/',
     })
+    expect(context.messages).toEqual([
+      { role: 'user', content: 'inspect files' },
+    ])
     expect(context.settings.workspaceRoot).toBe('/')
     expect(mocks.runQuery).toHaveBeenCalledOnce()
     expect(result.current.messages).toHaveLength(2)
@@ -163,6 +196,51 @@ describe('useChat agent loop switch', () => {
       content: 'resumed reply',
       agentRun: { status: 'completed', text: 'resumed reply' },
     })
+  })
+
+  it('does not start duplicate recovery runs in React StrictMode', async () => {
+    const startedAt = Date.now() - 1000
+    useChatStore.setState({
+      conversations: [{
+        id: 'conv-strict-resume',
+        title: 'Strict resume',
+        createdAt: startedAt,
+        messages: [
+          { id: 'strict-user', role: 'user', content: 'continue once' },
+          {
+            id: 'strict-assistant',
+            role: 'assistant',
+            content: 'partial',
+            agentRun: {
+              runId: 'run-strict-resume',
+              status: 'running',
+              text: 'partial',
+              tools: [],
+              startedAt,
+            },
+            agentContext: { providerId: 'provider-1' },
+          },
+        ],
+      }],
+      artifacts: [],
+      activeArtifactId: null,
+    })
+    mocks.runQuery.mockImplementation(async function* () {
+      yield { type: 'run.started', runId: 'run-strict-resume' }
+      yield { type: 'message.completed', content: 'continued once' }
+      yield {
+        type: 'run.completed',
+        usage: { inputTokens: 2, outputTokens: 2, totalTokens: 4, turns: 1, toolCalls: 0 },
+      }
+    })
+
+    const { result } = renderHook(() => useChat('conv-strict-resume'), {
+      wrapper: strictWrapper,
+    })
+
+    await waitFor(() => expect(result.current.isStreaming).toBe(false))
+    await waitFor(() => expect(mocks.runQuery).toHaveBeenCalledOnce())
+    expect(result.current.messages).toHaveLength(2)
   })
 
   it('marks a persisted run failed when its Provider no longer exists', async () => {

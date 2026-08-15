@@ -6,12 +6,27 @@ interface ReadFileInput { path: string; offset?: number; limit?: number }
 
 export const readFileTool: Tool<ReadFileInput> = {
   name: 'read_file',
-  description: '读取工作区内文本、PDF 或 Word 文件，可用 offset 和 limit 读取片段。',
+  description: '读取工作区内文本、PDF、Word 文件或当前 Skill 的虚拟资源，可用 offset 和 limit 读取片段。',
   inputSchema: { type: 'object', properties: { path: { type: 'string', minLength: 1 }, offset: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 1 } }, required: ['path'] },
   readOnly: true, concurrencySafe: true, destructive: false, requiresConfirmation: false,
-  availability: 'tauri-only', permissions: ['fs:read'], timeoutMs: 30_000,
+  availability: 'tauri-or-skill-resource', permissions: ['fs:read'], timeoutMs: 30_000,
   async execute(input, ctx, signal) {
     if (signal.aborted) return failure('runtime', '文件读取已中断', true)
+    if (ctx.skillResources?.canRead(input.path)) {
+      try {
+        const result = await ctx.skillResources.read(input.path, input.offset, input.limit)
+        return {
+          ...success(result.content, { path: input.path, bytes: result.bytes, binary: false, truncated: result.truncated }),
+          truncated: result.truncated,
+          metadata: { durationMs: 0, bytesRead: result.bytes },
+        }
+      } catch (error) {
+        return failure('permission_denied', `无法读取 Skill 资源 ${input.path}：${errorMessage(error)}`, false)
+      }
+    }
+    if (isSkillVirtualPath(input.path)) {
+      return failure('permission_denied', '只能读取当前已选 Skill 的资源。', false)
+    }
     const pathError = validateWorkspacePath(input.path, ctx)
     if (pathError) return pathError
     try {
@@ -36,6 +51,11 @@ export const readFileTool: Tool<ReadFileInput> = {
     } catch (error) { return failure(readErrorKind(error), `无法读取文件 ${input.path}：${errorMessage(error)}`, true) }
   },
   renderCall: (input) => `读取文件 ${input.path}`,
+}
+
+function isSkillVirtualPath(path: string): boolean {
+  const normalized = path.replace(/\\/g, '/')
+  return normalized === '.solidify/skills' || normalized.startsWith('.solidify/skills/')
 }
 
 /**

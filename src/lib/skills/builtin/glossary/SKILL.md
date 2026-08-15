@@ -1,0 +1,18 @@
+---
+name: glossary
+version: 2.1.0
+displayName: 术语解释
+description: 用通俗语言解释技术术语。面向项目经理、实施工程师或售前顾问时使用。
+icon: BookOpen
+placeholder: 输入要解释的技术术语，多个术语用逗号分隔...
+allowed-tools: [read_file, write_file]
+skip-confirmation: true
+---
+
+# 术语解释
+
+第一步读取 `reference/legacy-guidance.md` 的完整解释格式。每个术语给出不超过 30 字的一句话定义、生活化类比、实施场景和相关概念。禁止用另一个未解释的专业术语循环解释。
+
+## 提交前自检
+
+定义必须能让非技术项目成员直接理解，类比要解释核心机制而非只追求有趣。相近术语明确指出差异，缩写首次出现时给出全称。删除循环定义、无关历史和不能帮助实施决策的术语堆叠。

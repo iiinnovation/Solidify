@@ -26,7 +26,7 @@ export interface Tool<I = unknown, O = unknown> {
   requiresConfirmation: boolean | ((input: I, ctx: ToolUseContext) => boolean)
 
   /** ── 环境要求 ── */
-  availability: ToolAvailability   // 'always' | 'tauri-only' | 'online-only'
+  availability: ToolAvailability   // 'always' | 'tauri-only' | 'online-only' | 'tauri-or-skill-resource'
   permissions: PermissionScope[]   // 需要的权限范围
 
   /** ── 执行策略 ── */
@@ -157,7 +157,7 @@ const canParallel = calls.every(c =>
 | 工具 | readOnly | 确认 | 环境 | 说明 |
 |---|---|---|---|---|
 | `list_dir` | ✅ | 否 | tauri-only | 列目录，支持 gitignore 风格过滤、深度限制 |
-| `read_file` | ✅ | 否 | tauri-only | 读文本，支持 offset/limit；二进制返回元信息 |
+| `read_file` | ✅ | 否 | tauri-or-skill-resource | 桌面端读工作区；Web 端仅可读当前内置 Skill 的虚拟资源；支持 offset/limit |
 | `write_file` | ❌ | **是** | tauri-only | 写文件，覆盖时在确认信息中明示 |
 | `search_files` | ✅ | 否 | tauri-only | 内容检索（ripgrep 风格）与文件名匹配 |
 | `capture_preview` | ✅ | 否 | always | 截取当前 artifact 渲染结果为图片，供视觉自检 |
@@ -188,7 +188,7 @@ export interface ToolRegistry {
 
 `resolve` 的三层过滤缺一不可：
 
-1. **环境** —— Web 端没有 `tauri-only` 工具
+1. **环境** —— Web 端没有 `tauri-only` 工具；`tauri-or-skill-resource` 仅在当前 Skill resolver 存在时可见
 2. **Skill 白名单** —— `SKILL.md` frontmatter 的 `allowed-tools`，未声明则用默认集
 3. **用户设置** —— 用户可全局禁用某些工具
 

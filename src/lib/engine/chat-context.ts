@@ -1,5 +1,9 @@
 import type { ModelProvider } from '@/stores/model-store'
 import type { LoadedSkill } from '@/lib/skills/types'
+import type { SkillRegistryApi, SkillResourceResolver } from '@/lib/skills/types'
+import { ensureUserSkillsRoot, SkillLoader } from '@/lib/skills/loader'
+import { SkillRegistry } from '@/lib/skills/registry'
+import { isSkillEnabled } from '@/lib/skills/settings'
 import type { Settings } from '@/lib/harness/types'
 import type { Message, QueryContext, RunLimits } from './types'
 import { getFlags, isEnabled } from '@/lib/harness/flags'
@@ -29,6 +33,9 @@ export interface ChatQueryContextOptions {
   signal: AbortSignal
   skillSystemPrompt?: string
   skillSkipConfirmation?: boolean
+  loadedSkill?: LoadedSkill
+  skillResources?: SkillResourceResolver
+  skillRegistry?: SkillRegistryApi
   workspaceRoot?: string | null
   restoreSnapshot?: boolean
 }
@@ -40,10 +47,10 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
   const selectedRoot = platform === 'tauri' ? options.workspaceRoot?.trim() : undefined
   const workspaceRoot = selectedRoot ? normalizeWorkspacePath(selectedRoot) : undefined
   const cwd = workspaceRoot || '/'
-  const skill = createInlineSkill(getSystemPrompt(
-    options.skillSystemPrompt,
-    options.skillSkipConfirmation,
-  ))
+  const skillV2Enabled = isEnabled('skillV2')
+  const skill = options.loadedSkill ?? (skillV2Enabled
+    ? undefined
+    : createInlineSkill(getSystemPrompt(options.skillSystemPrompt, options.skillSkipConfirmation)))
   const settings = createSettings(options.provider, cwd)
   const localWorkspaceEnabled = isEnabled('localWorkspace') && Boolean(workspaceRoot)
   configureLedgerWorkspace(localWorkspaceEnabled ? workspaceRoot ?? null : null)
@@ -52,6 +59,8 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
         // A real root is mandatory before exposing desktop filesystem tools.
         platform: platform === 'tauri' && workspaceRoot ? 'tauri' : 'web',
         skillAllowedTools: skill?.metadata.allowedTools,
+        skillActive: skillV2Enabled && Boolean(skill),
+        skillResourceAccess: Boolean(options.skillResources),
         userDisabledTools: settings.disabledTools,
         isOnline: typeof navigator === 'undefined' || navigator.onLine,
       })
@@ -64,6 +73,8 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
     messages: options.messages,
     tools,
     skill,
+    skillResources: options.skillResources,
+    skillRegistry: options.skillRegistry,
     memory: localWorkspaceEnabled && workspaceRoot ? new WorkspaceMemory(workspaceRoot) : new InMemoryState(),
     model: {
       provider: providerName,
@@ -90,6 +101,35 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
     settings,
     platform,
     workspace: workspaceRoot ? createWorkspaceHandle(workspaceRoot) : undefined,
+  }
+}
+
+export interface ChatSkillRuntime {
+  registry: SkillRegistry
+  loader: SkillLoader
+  skill?: LoadedSkill
+  resources?: SkillResourceResolver
+}
+
+/** Resolve the selected Skill once before a run; the query loop stays synchronous. */
+export async function loadChatSkillRuntime(options: {
+  workspaceRoot?: string | null
+  skillName?: string
+}): Promise<ChatSkillRuntime> {
+  const loader = new SkillLoader({
+    workspaceRoot: options.workspaceRoot,
+    userSkillsRoot: await ensureUserSkillsRoot(),
+  })
+  const registry = new SkillRegistry(loader)
+  await registry.reload()
+  const skill = options.skillName && isSkillEnabled(options.skillName)
+    ? await registry.resolve(options.skillName)
+    : undefined
+  return {
+    registry,
+    loader,
+    skill: skill ?? undefined,
+    resources: skill ? loader.createResourceResolver(skill) : undefined,
   }
 }
 
@@ -163,7 +203,7 @@ function createInlineSkill(content?: string): LoadedSkill | undefined {
   return {
     metadata: {
       name: 'chat-skill',
-      version: '1',
+      version: '1.0.0',
       description: 'Skill selected from the chat palette',
     },
     content,

@@ -35,6 +35,7 @@ export interface Message {
     workspaceRoot?: string
     skillSystemPrompt?: string
     skillSkipConfirmation?: boolean
+    skillId?: string
   }
   /** M3.5: artifacts are file references; content lives in the workspace. */
   documents?: Array<{ path: string; messageId: string; version: number }>

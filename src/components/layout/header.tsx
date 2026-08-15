@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { PanelLeftClose, PanelLeftOpen, Settings, LogOut, FileText, BarChart3, BookOpen, FolderTree } from 'lucide-react'
+import { PanelLeftClose, PanelLeftOpen, Settings, LogOut, FileText, BarChart3, BookOpen, FolderTree, Sparkles } from 'lucide-react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useHotkeys } from 'react-hotkeys-hook'
 import { Button } from '@/components/ui/button'
@@ -91,6 +91,19 @@ export function Header() {
           <BookOpen size={18} strokeWidth={1.75} className="sm:mr-1.5" />
           <span className="hidden sm:inline">知识库</span>
         </Button>
+
+        {isEnabled('skillV2') && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => navigate('/skills')}
+            className={cn(location.pathname === '/skills' && 'bg-accent-light text-accent')}
+            aria-label="Skill 管理"
+          >
+            <Sparkles size={18} strokeWidth={1.75} className="sm:mr-1.5" />
+            <span className="hidden sm:inline">Skill</span>
+          </Button>
+        )}
 
         <Button
           variant="ghost"

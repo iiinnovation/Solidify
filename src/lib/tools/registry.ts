@@ -41,12 +41,17 @@ export class ToolRegistry implements IToolRegistry {
       if (tool.availability === 'tauri-only' && ctx.platform === 'web') {
         continue
       }
+      if (tool.availability === 'tauri-or-skill-resource' && ctx.platform === 'web' && !ctx.skillResourceAccess) {
+        continue
+      }
       if (tool.availability === 'online-only' && !ctx.isOnline) {
         continue
       }
 
       // Layer 2: Skill whitelist filter
-      if (!runtimeRequired && ctx.skillAllowedTools && !ctx.skillAllowedTools.includes(tool.name)) {
+      if (!runtimeRequired && ctx.skillActive && !DEFAULT_SKILL_TOOLS.has(tool.name)) {
+        if (!ctx.skillAllowedTools?.includes(tool.name)) continue
+      } else if (!runtimeRequired && ctx.skillAllowedTools && !ctx.skillAllowedTools.includes(tool.name)) {
         continue
       }
 
@@ -85,6 +90,9 @@ export class ToolRegistry implements IToolRegistry {
     }))
   }
 }
+
+/** Tools available to a Skill that omits `allowed-tools`; never a write/network set. */
+const DEFAULT_SKILL_TOOLS: ReadonlySet<string> = new Set(['read_file', 'list_dir', 'search_files'])
 
 /**
  * Global tool registry instance

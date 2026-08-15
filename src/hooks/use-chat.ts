@@ -10,7 +10,7 @@ import { newId } from '@/lib/id'
 import { isEnabled } from '@/lib/harness/flags'
 import { runQuery } from '@/lib/engine/query'
 import { applyRunEvent, createRunState } from '@/lib/engine/run-state'
-import { createChatQueryContext } from '@/lib/engine/chat-context'
+import { createChatQueryContext, loadChatSkillRuntime } from '@/lib/engine/chat-context'
 import type { QueryEvent } from '@/lib/engine/types'
 import { useWorkspaceStore } from '@/stores/workspace-store'
 import { useDocumentStore } from '@/stores/document-store'
@@ -97,6 +97,7 @@ export function useChat(conversationId?: string) {
   const [isStreaming, setIsStreaming] = useState(false)
   const [error, setError] = useState<Error | null>(null)
   const abortRef = useRef<AbortController | null>(null)
+  const isStreamingRef = useRef(false)
   const resumedConversationsRef = useRef(new Set<string>())
   const navigate = useNavigate()
 
@@ -145,8 +146,12 @@ export function useChat(conversationId?: string) {
       skillSkipConfirmation?: boolean,
       resume?: ResumeRunOptions,
       historyOverride?: Message[],
+      skillId?: string,
     ) => {
-      if ((!content.trim() && !resume) || isStreaming) return
+      if ((!content.trim() && !resume) || isStreamingRef.current) return
+      // React state updates are asynchronous. Use a synchronous guard so two
+      // events in the same render cannot start duplicate model runs.
+      isStreamingRef.current = true
 
       setError(null)
 
@@ -177,6 +182,7 @@ export function useChat(conversationId?: string) {
             { agentRun: failedRun, runEvents },
           )
         }
+        isStreamingRef.current = false
         return
       }
 
@@ -427,7 +433,20 @@ ${result.content}
       }
 
       try {
-        const baseMessages = resume ? messages : historyOverride ?? messages
+        const persistedResumeMessages = resume
+          ? useChatStore.getState().conversations
+            .find((conversation) => conversation.id === resume.conversationId)
+            ?.messages
+          : undefined
+        const resumeMessages = persistedResumeMessages ?? messages
+        const resumedAssistantIndex = resume
+          ? resumeMessages.findIndex((message) => message.id === resume.assistantMessage.id)
+          : -1
+        const baseMessages = resume
+          ? resumedAssistantIndex >= 0
+            ? resumeMessages.slice(0, resumedAssistantIndex)
+            : resumeMessages.filter((message) => message.id !== resume.assistantMessage.id)
+          : historyOverride ?? messages
         const allMessages = (resume ? baseMessages : [...baseMessages, userMsg]).map((m) => ({
           role: m.role,
           content: m.content,
@@ -462,8 +481,24 @@ ${result.content}
             workspaceRoot: useWorkspaceStore.getState().workspaceRoot ?? undefined,
             skillSystemPrompt,
             skillSkipConfirmation,
+            skillId,
           }
           patchAssistantMessage({ agentRun: run, runEvents, agentContext })
+
+          const selectedSkillId = agentContext.skillId ?? skillId
+          let skillRuntime: Awaited<ReturnType<typeof loadChatSkillRuntime>> | undefined
+          if (isEnabled('skillV2')) {
+            try {
+              skillRuntime = await loadChatSkillRuntime({
+                workspaceRoot: agentContext.workspaceRoot,
+                skillName: selectedSkillId,
+              })
+            } catch (error) {
+              // The legacy inline prompt remains usable if a local Skill root
+              // is temporarily unavailable; surface the failure for diagnosis.
+              console.warn('[skills] Failed to load Skill registry:', error)
+            }
+          }
 
           const context = createChatQueryContext({
             runId,
@@ -473,6 +508,9 @@ ${result.content}
             signal: abortController.signal,
             skillSystemPrompt: agentContext.skillSystemPrompt,
             skillSkipConfirmation: agentContext.skillSkipConfirmation,
+            loadedSkill: skillRuntime?.skill,
+            skillResources: skillRuntime?.resources,
+            skillRegistry: skillRuntime?.registry,
             workspaceRoot: agentContext.workspaceRoot,
             restoreSnapshot: Boolean(resume),
           })
@@ -486,7 +524,17 @@ ${result.content}
             const isDurableFact = event.type !== 'message.delta' && event.type !== 'tool.progress'
             if (isDurableFact) runEvents.push(event)
             run = applyRunEvent(run, event)
-            if (useFileDocuments && event.type === 'tool.completed' && event.result.success) {
+            const completedTool = event.type === 'tool.completed'
+              ? [...runEvents].reverse().find((candidate) =>
+                  candidate.type === 'tool.requested' && candidate.call.id === event.callId)
+              : undefined
+            if (
+              useFileDocuments
+              && event.type === 'tool.completed'
+              && event.result.success
+              && completedTool?.type === 'tool.requested'
+              && ['write_file', 'materialize_document'].includes(completedTool.call.name)
+            ) {
               const data = event.result.data as { path?: unknown } | undefined
               if (typeof data?.path === 'string') {
                 useWorkspaceStore.getState().selectPath(data.path)
@@ -604,6 +652,7 @@ ${result.content}
           }
         }
       } finally {
+        isStreamingRef.current = false
         setIsStreaming(false)
         abortRef.current = null
         // 窗口不在前台时发送系统通知
@@ -612,7 +661,7 @@ ${result.content}
         }
       }
     },
-    [messages, isStreaming, addArtifact, updateArtifactContent, createConversation, addMessageToConversation, patchMessageInConversation, removeLastMessageFromConversation, navigate, getActiveProvider],
+    [messages, addArtifact, updateArtifactContent, createConversation, addMessageToConversation, patchMessageInConversation, removeLastMessageFromConversation, navigate, getActiveProvider],
   )
 
   useEffect(() => {

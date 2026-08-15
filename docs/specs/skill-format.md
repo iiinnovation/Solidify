@@ -176,9 +176,10 @@ meeting-notes  report-outline  glossary  presentation  drawio-diagram
 
 Web 端无文件系统：
 
-- 内置 Skill 打包进 bundle，读取时走内存而非 `read_file`
+- 内置 Skill 打包进 bundle，由 `SkillResourceResolver` 把虚拟路径映射到内存内容
 - 用户级/项目级 Skill 不可用
-- 渐进式披露改为：第 2 层内容由前端直接注入（因为没有 read_file 工具可用）
+- 选中内置 Skill 时仅开放 `read_file` 读取当前 Skill 的虚拟根；普通工作区路径和其他 Skill 根仍拒绝
+- 第 2 层继续由模型按需读取，不直接注入 system prompt
 
 ## 11. 验收测试
 

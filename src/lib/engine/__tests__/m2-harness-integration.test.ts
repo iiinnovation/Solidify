@@ -140,6 +140,60 @@ describe('M2 Harness query integration', () => {
         stream: true,
       },
     })
+    expect(ledger.find('run.started')[0].payload).toMatchObject({
+      conversationId: `${runId}-conversation`,
+      model: { provider: 'mock', model: 'mock-model' },
+      skill: null,
+    })
+  })
+
+  it('records the selected Skill identity and version at run start', async () => {
+    const runId = 'm4-skill-ledger'
+    const context: QueryContext = {
+      ...makeContext(runId, scriptedProvider([finalTurn]), []),
+      skill: {
+        metadata: { name: 'requirement-analysis', version: '2.0.0', description: 'requirements' },
+        content: '# Requirements',
+        path: 'builtin://requirement-analysis/SKILL.md',
+        source: 'builtin',
+      },
+    }
+
+    await collect(context)
+
+    expect(new RunLedger(runId).find('run.started')[0].payload).toMatchObject({
+      skill: { name: 'requirement-analysis', version: '2.0.0', source: 'builtin' },
+    })
+  })
+
+  it('allows a selected Skill virtual resource through the real harness execution path', async () => {
+    const path = '.solidify/skills/demo/reference/guide.md'
+    const read = vi.fn(async (): Promise<ToolResult> => ({ success: true, content: '# Guide' }))
+    const tool = {
+      ...makeTool('read_file', read),
+      availability: 'tauri-or-skill-resource' as const,
+      permissions: ['fs:read' as const],
+    }
+    const context: QueryContext = {
+      ...makeContext('m4-virtual-resource-policy', scriptedProvider([
+        toolTurn([{ id: 'read-skill', name: 'read_file', input: { path } }]),
+        finalTurn,
+      ]), [tool]),
+      platform: 'web',
+      skillResources: {
+        virtualRoot: '.solidify/skills/demo',
+        canRead: (candidate) => candidate === path,
+        read: async () => ({ content: '# Guide', bytes: 7, truncated: false }),
+      },
+    }
+
+    const events = await collect(context)
+    const completed = events.find(
+      (event): event is Extract<QueryEvent, { type: 'tool.completed' }> => event.type === 'tool.completed',
+    )
+
+    expect(read).toHaveBeenCalledOnce()
+    expect(completed?.result).toMatchObject({ success: true, content: '# Guide' })
   })
 
   it('freezes the authoritative tool call before exposing its ledgered input', async () => {

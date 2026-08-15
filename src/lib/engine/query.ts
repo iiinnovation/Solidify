@@ -37,7 +37,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
   const internal = new AbortController()
   const unlink = linkAbort(ctx.signal, internal)
   const runCtx: QueryContext = { ...ctx, signal: internal.signal }
-  const harness = isEnabled('harness') ? createHarnessRuntime(runCtx) : undefined
+  const harness = isEnabled('harness') ? createHarnessRuntime(runCtx, { skillRegistry: runCtx.skillRegistry }) : undefined
 
   // Current conversation state (reconstructed per turn or restored from the
   // last completed tool turn after a renderer restart).
@@ -46,7 +46,19 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
   let retrievedContext = ctx.retrievedContext
 
   try {
-    harness?.ledger.append('run.started', { conversationId: ctx.conversationId })
+    harness?.ledger.append('run.started', {
+      conversationId: ctx.conversationId,
+      model: {
+        provider: ctx.model.provider,
+        model: ctx.model.model,
+        temperature: ctx.model.temperature,
+      },
+      skill: ctx.skill ? {
+        name: ctx.skill.metadata.name,
+        version: ctx.skill.metadata.version,
+        source: ctx.skill.source ?? ctx.skill.metadata.source,
+      } : null,
+    })
     yield { type: 'run.started', runId: ctx.runId }
     logger.log('run.started', { runId: ctx.runId, conversationId: ctx.conversationId })
     if (harness) {
@@ -68,15 +80,20 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
     } else if (ctx.restoreSnapshot && ctx.snapshots) {
       try {
         const snapshot = await ctx.snapshots.loadLatest(ctx.conversationId)
-        if (!snapshot) throw new Error('No recoverable Agent snapshot was found')
-        if (snapshot.runId !== ctx.runId) {
+        if (!snapshot) {
+          logger.warn('snapshot.missing', {
+            fallback: 'conversation_history',
+            messageCount: currentMessages.length,
+          })
+        } else if (snapshot.runId !== ctx.runId) {
           throw new Error('The recoverable Agent snapshot belongs to a different run')
+        } else {
+          turn = snapshot.turn
+          currentMessages = [...snapshot.messages]
+          Object.assign(usage, snapshot.usage)
+          totalToolCalls = snapshot.usage.toolCalls
+          logger.log('snapshot.restored', { turn, messageCount: currentMessages.length })
         }
-        turn = snapshot.turn
-        currentMessages = [...snapshot.messages]
-        Object.assign(usage, snapshot.usage)
-        totalToolCalls = snapshot.usage.toolCalls
-        logger.log('snapshot.restored', { turn, messageCount: currentMessages.length })
       } catch (snapshotError) {
         logger.warn('snapshot.restore_failed', {
           error: snapshotError instanceof Error
@@ -612,6 +629,7 @@ async function* executeTools(
         settings: toolCtx.settings,
         permissions: toolCtx.permissions,
         toolContext: toolCtx,
+        skillResources: toolCtx.skillResources,
         isOnline: typeof navigator === 'undefined' || navigator.onLine,
       }))
       // `observe` is the least-privileged hook mode and its exceptions are

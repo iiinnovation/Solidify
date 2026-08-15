@@ -6,6 +6,8 @@ import { RunLedger } from './ledger'
 import { PolicyEngine, type PolicyInput, type PermissionDecision } from './policy'
 import { approvalResponder } from './approval-channel'
 import { builtinSkills } from '../skills'
+import { formatSkillIndex } from '../skills/registry'
+import type { SkillRegistryApi } from '../skills/types'
 import { prefetchMemory } from '../memory'
 
 export interface HarnessRuntimeOptions {
@@ -13,6 +15,7 @@ export interface HarnessRuntimeOptions {
   approvalResponder?: ApprovalResponder
   ledger?: RunLedger
   onApprovalEvent?: (event: { type: 'approval.asked' | 'approval.decided'; requestId: string; callId: string; outcome?: ApprovalOutcome }) => void | Promise<void>
+  skillRegistry?: SkillRegistryApi
 }
 
 export interface HarnessRuntime {
@@ -52,7 +55,12 @@ export function createHarnessRuntime(ctx: QueryContext, options: HarnessRuntimeO
       return { action: 'continue' as const, value }
     }
   } })
-  hooks.register({ id: 'injectSkillIndex', type: 'before_query', mode: 'waterfall', priority: 20, handler: (value: unknown) => ({ action: 'continue' as const, value: appendQueryContext(value, `Available skills:\n${builtinSkills.map((skill) => `- ${skill.name}: ${skill.description}`).join('\n')}`) }) })
+  hooks.register({ id: 'injectSkillIndex', type: 'before_query', mode: 'waterfall', priority: 20, handler: async (value: unknown) => {
+    const index = options.skillRegistry
+      ? formatSkillIndex(await options.skillRegistry.list())
+      : formatSkillIndex(builtinSkills.map((skill) => ({ name: skill.id, displayName: skill.name, version: '1.0.0', description: skill.description })))
+    return { action: 'continue' as const, value: appendQueryContext(value, index) }
+  } })
   hooks.register({ id: 'enforceTokenBudget', type: 'before_model_call', mode: 'waterfall', priority: 30, handler: (value: unknown) => {
     const usage = isRecord(value) && isRecord(value.usage) ? Number(value.usage.totalTokens ?? 0) : 0
     return usage >= ctx.limits.maxTokens ? { action: 'abort' as const, reason: 'Run token budget exhausted' } : { action: 'continue' as const, value }
@@ -80,6 +88,7 @@ export function permissionGate(runtime: HarnessRuntime, ctx: QueryContext, tool:
     platform: ctx.platform ?? 'web',
     settings: ctx.settings ?? fallbackSettings,
     permissions: ctx.permissions ?? new Map(),
+    skillResources: ctx.skillResources,
   }
   const decision = runtime.policy.evaluate(tool, call, toolContext)
   if (decision.kind !== 'ask') return Promise.resolve(decision)
@@ -107,12 +116,19 @@ export function hardGuard(ctx: QueryContext, tool: Tool, call: ToolCall): GuardD
     for (const key of PATH_INPUT_KEYS) {
       const value = call.input?.[key]
       if (typeof value !== 'string') continue
+      if (tool.name === 'read_file' && tool.readOnly && ctx.skillResources?.canRead(value)) continue
       if (!workspace || !workspace.contains(value)) {
         return { kind: 'deny', reason: '路径超出当前工作区边界。', source: 'workspace-boundary' }
       }
     }
   }
   if (tool.availability === 'tauri-only' && ctx.platform !== 'tauri') return { kind: 'deny', reason: '当前平台不支持此工具。', source: 'platform' }
+  if (tool.availability === 'tauri-or-skill-resource' && ctx.platform !== 'tauri') {
+    const path = typeof call.input?.path === 'string' ? call.input.path : undefined
+    if (!path || tool.name !== 'read_file' || !tool.readOnly || !ctx.skillResources?.canRead(path)) {
+      return { kind: 'deny', reason: 'Web 端只能读取当前 Skill 的资源。', source: 'platform' }
+    }
+  }
   return { kind: 'abstain' }
 }
 

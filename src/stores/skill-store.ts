@@ -20,6 +20,7 @@ interface SkillState {
   addSkill: (skill: Omit<CustomSkill, 'id' | 'isCustom'>) => string
   updateSkill: (id: string, updates: Partial<Omit<CustomSkill, 'id' | 'isCustom'>>) => void
   removeSkill: (id: string) => void
+  clearCustomSkills: () => void
   getAllSkills: () => Skill[]
 }
 
@@ -50,6 +51,8 @@ export const useSkillStore = create<SkillState>()(
           customSkills: state.customSkills.filter((s) => s.id !== id),
         }))
       },
+
+      clearCustomSkills: () => set({ customSkills: [] }),
 
       getAllSkills: () => {
         const { customSkills } = get()

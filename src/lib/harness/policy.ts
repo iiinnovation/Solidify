@@ -1,4 +1,5 @@
 import type { Tool, ToolCall, PermissionScope, ToolUseContext } from '../tools/types'
+import type { SkillResourceResolver } from '../skills/types'
 
 export type PolicySource = 'default' | 'project' | 'user' | 'session' | 'guard'
 export type PolicyEffect = 'allow' | 'ask' | 'deny'
@@ -24,6 +25,7 @@ export interface PolicyInput {
 export interface PolicyContext extends Pick<ToolUseContext, 'workspace' | 'platform' | 'settings' | 'permissions'> {
   isOnline?: boolean
   toolContext?: ToolUseContext
+  skillResources?: SkillResourceResolver
 }
 
 function effectFor<I>(source: Partial<Record<string, PolicyEffect>> | undefined, tool: Tool<I>): PolicyEffect | undefined {
@@ -35,18 +37,25 @@ export class PolicyEngine {
   constructor(input: PolicyInput = {}) { this.input = input }
 
   evaluate<I>(tool: Tool<I>, call: ToolCall, ctx: PolicyContext): PermissionDecision {
+    const skillResources = ctx.skillResources ?? ctx.toolContext?.skillResources
     if (ctx.settings.disabledTools.includes(tool.name)) {
       return { kind: 'deny', reason: `工具 ${tool.name} 已在设置中禁用。`, source: 'user' }
     }
     if (tool.availability === 'tauri-only' && ctx.platform !== 'tauri') {
       return { kind: 'deny', reason: `工具 ${tool.name} 仅可在桌面应用中使用。`, source: 'guard' }
     }
+    if (tool.availability === 'tauri-or-skill-resource' && ctx.platform !== 'tauri') {
+      const path = typeof call.input?.path === 'string' ? call.input.path : undefined
+      if (!path || !canReadSkillResource(tool, path, skillResources)) {
+        return { kind: 'deny', reason: `工具 ${tool.name} 在 Web 端只能读取当前 Skill 的资源。`, source: 'guard' }
+      }
+    }
     if (tool.availability === 'online-only' && ctx.isOnline === false) {
       return { kind: 'deny', reason: '当前没有网络连接，无法执行网络工具。', source: 'guard' }
     }
     if (tool.permissions.some((scope) => scope.startsWith('fs:'))) {
       const path = typeof call.input?.path === 'string' ? call.input.path : undefined
-      if (path && !ctx.workspace.contains(path)) {
+      if (path && !canReadSkillResource(tool, path, skillResources) && !ctx.workspace.contains(path)) {
         return { kind: 'deny', reason: `不允许访问工作区之外的路径。当前工作区是 ${ctx.workspace.root}，请改用相对路径。`, source: 'guard' }
       }
     }
@@ -96,6 +105,14 @@ export class PolicyEngine {
     }
     return askForConfirmation(tool, call)
   }
+}
+
+function canReadSkillResource<I>(
+  tool: Tool<I>,
+  path: string,
+  resolver: SkillResourceResolver | undefined,
+): boolean {
+  return tool.name === 'read_file' && tool.readOnly && Boolean(resolver?.canRead(path))
 }
 
 function askForConfirmation<I>(tool: Tool<I>, call: ToolCall): Extract<PermissionDecision, { kind: 'ask' }> {

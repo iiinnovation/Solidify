@@ -9,12 +9,13 @@ import type { WorkspaceHandle } from '../workspace/types'
 import type { MemoryState } from '../memory/types'
 import type { Settings, PermissionMap, Platform } from '../harness/types'
 import type { RunLogger } from '../harness/types'
+import type { SkillResourceResolver } from '../skills/types'
 
 // ============================================================================
 // Tool Definition
 // ============================================================================
 
-export type ToolAvailability = 'always' | 'tauri-only' | 'online-only'
+export type ToolAvailability = 'always' | 'tauri-only' | 'online-only' | 'tauri-or-skill-resource'
 
 export type PermissionScope =
   | 'fs:read'
@@ -90,6 +91,8 @@ export interface ToolUseContext {
   readonly permissions: PermissionMap
   readonly platform: Platform
   readonly logger: RunLogger              // Write to run ledger
+  /** Read-only resources for the currently selected Skill. */
+  readonly skillResources?: SkillResourceResolver
 }
 
 // ============================================================================
@@ -155,6 +158,10 @@ export interface ToolCall {
 export interface ResolveContext {
   platform: Platform
   skillAllowedTools?: string[]  // From SKILL.md frontmatter
+  /** A selected Skill with no declaration receives the default read-only set. */
+  skillActive?: boolean
+  /** Allows read_file to expose only the selected Skill's bundled virtual root on Web. */
+  skillResourceAccess?: boolean
   userDisabledTools: string[]   // From settings
   isOnline: boolean
 }

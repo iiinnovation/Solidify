@@ -22,11 +22,13 @@ describe('SettingsPage M1 feature controls', () => {
     const harness = screen.getByRole<HTMLInputElement>('checkbox', { name: '安全控制平面' })
     const localWorkspace = screen.getByRole<HTMLInputElement>('checkbox', { name: '本地工作区' })
     const workbenchV2 = screen.getByRole<HTMLInputElement>('checkbox', { name: '统一工作台' })
+    const skillV2 = screen.getByRole<HTMLInputElement>('checkbox', { name: '目录式 Skill' })
     expect(agentLoop.checked).toBe(false)
     expect(toolCalling.checked).toBe(false)
     expect(harness.checked).toBe(false)
     expect(localWorkspace.checked).toBe(false)
     expect(workbenchV2.checked).toBe(false)
+    expect(skillV2.checked).toBe(false)
 
     fireEvent.click(agentLoop)
     fireEvent.click(workbenchV2)
@@ -45,5 +47,12 @@ describe('SettingsPage M1 feature controls', () => {
 
     fireEvent.click(toolCalling)
     expect(getFlags()).toMatchObject({ agentLoop: true, toolCalling: false })
+
+    fireEvent.click(skillV2)
+    expect(getFlags()).toMatchObject({ skillV2: true, agentLoop: true, toolCalling: true, harness: true })
+    expect(agentLoop.disabled).toBe(true)
+    expect(toolCalling.disabled).toBe(true)
+    expect(harness.disabled).toBe(true)
+    expect(screen.getByRole('button', { name: '打开 Skill 管理' })).not.toBeNull()
   })
 })

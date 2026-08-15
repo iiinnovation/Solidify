@@ -47,6 +47,20 @@ describe('feature flags', () => {
     expect(isEnabled('toolCalling')).toBe(false)
   })
 
+  it('目录式 Skill 始终带上 Agent、工具调用和安全控制平面', () => {
+    setFlagOverride('agentLoop', false)
+    setFlagOverride('toolCalling', false)
+    setFlagOverride('harness', false)
+    setFlagOverride('skillV2', true)
+
+    expect(getFlags()).toMatchObject({
+      skillV2: true,
+      agentLoop: true,
+      toolCalling: true,
+      harness: true,
+    })
+  })
+
   it('传 null 清除覆盖，回落到默认值', () => {
     setFlagOverride('agentLoop', true)
     expect(isEnabled('agentLoop')).toBe(true)

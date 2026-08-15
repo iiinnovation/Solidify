@@ -96,6 +96,11 @@ let cache: FeatureFlags | null = null
 export function getFlags(): FeatureFlags {
   if (!cache) {
     cache = { ...DEFAULT_FLAGS, ...readEnvOverrides(), ...readStorageOverrides() }
+    if (cache.skillV2) {
+      cache.agentLoop = true
+      cache.toolCalling = true
+      cache.harness = true
+    }
   }
   return cache
 }

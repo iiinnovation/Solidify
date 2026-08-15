@@ -26,4 +26,20 @@ describe('M3 rich workspace read', () => {
     expect(result.content).toBe('文档中的客户')
     expect(mocks.extractText).toHaveBeenCalledOnce()
   })
+
+  it('reads only the selected Skill virtual resource', async () => {
+    const skillContext = {
+      ...context,
+      skillResources: {
+        virtualRoot: '.solidify/skills/demo',
+        canRead: (path: string) => path.startsWith('.solidify/skills/demo/'),
+        read: async (path: string) => ({ content: `resource:${path}`, bytes: path.length, truncated: false }),
+      },
+    } as unknown as ToolUseContext
+    const result = await readFileTool.execute({ path: '.solidify/skills/demo/reference/guide.md' }, skillContext, new AbortController().signal)
+    expect(result).toMatchObject({ success: true, content: 'resource:.solidify/skills/demo/reference/guide.md' })
+
+    const denied = await readFileTool.execute({ path: '.solidify/skills/other/reference/guide.md' }, skillContext, new AbortController().signal)
+    expect(denied).toMatchObject({ success: false, error: { kind: 'permission_denied' } })
+  })
 })

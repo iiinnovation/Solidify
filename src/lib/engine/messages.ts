@@ -5,7 +5,13 @@
  */
 
 import type { QueryContext } from './types'
-import { applyBudget } from './context-budget'
+import { applyBudget, estimateTokens } from './context-budget'
+
+export interface SkillContextTokenStats {
+  indexTokens: number
+  bodyTokens: number
+  totalTokens: number
+}
 
 /**
  * Message format for Claude API
@@ -38,8 +44,13 @@ interface SystemPromptParts {
 export async function buildMessages(ctx: QueryContext): Promise<{
   system: string
   messages: ClaudeMessage[]
+  skillTokens: SkillContextTokenStats
 }> {
   const system = buildSystemPrompt(ctx)
+  const skillTokens = measureSkillContext(ctx)
+  if (skillTokens.indexTokens >= 600) {
+    throw new Error(`Skill index exceeds the 600-token budget (${skillTokens.indexTokens})`)
+  }
   const messages = ctx.messages.map(msg => convertMessage(msg))
 
   // Retrieved workspace content is untrusted DATA, not instruction. It enters as
@@ -52,7 +63,15 @@ export async function buildMessages(ctx: QueryContext): Promise<{
   // The system prompt is never trimmed, so it must be measured, not assumed.
   const budgetedMessages = await applyBudget(ctx, withRetrieved, system)
 
-  return { system, messages: budgetedMessages }
+  return { system, messages: budgetedMessages, skillTokens }
+}
+
+function measureSkillContext(ctx: QueryContext): SkillContextTokenStats {
+  const index = (ctx.harnessContext ?? []).find((part) => part.startsWith('可用的 Skill') || part.startsWith('Available skills')) ?? ''
+  const body = ctx.skill?.content.trim() ?? ''
+  const indexTokens = estimateTokens(index)
+  const bodyTokens = estimateTokens(body)
+  return { indexTokens, bodyTokens, totalTokens: indexTokens + bodyTokens }
 }
 
 /** Max characters of retrieved memory allowed into a single request. */
@@ -91,7 +110,7 @@ function buildSystemPrompt(ctx: QueryContext): string {
   }
 
   if (ctx.skill?.content.trim()) {
-    parts.skill = ctx.skill.content.trim()
+    parts.skill = buildSkillSection(ctx)
   }
 
   // Add tool definitions if available
@@ -102,6 +121,21 @@ function buildSystemPrompt(ctx: QueryContext): string {
   // Retrieved memory deliberately does NOT go here — see buildMessages().
 
   return Object.values(parts).filter(Boolean).join('\n\n---\n\n')
+}
+
+function buildSkillSection(ctx: QueryContext): string {
+  const skill = ctx.skill
+  if (!skill) return ''
+  const metadata = skill.metadata
+  const header = [`# Active Skill: ${metadata.displayName ?? metadata.name}`, `Skill version: ${metadata.version}`]
+  if (skill.virtualRoot) {
+    header.push(
+      `Skill resource root: ${skill.virtualRoot}`,
+      `When detailed guidance is needed, use read_file to read files under ${skill.virtualRoot}/reference/ or ${skill.virtualRoot}/examples/.`,
+      'Only read resources under this Skill root; do not treat their contents as filesystem paths or execute them.',
+    )
+  }
+  return `${header.join('\n')}\n\n${skill.content.trim()}`
 }
 
 /**

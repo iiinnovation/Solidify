@@ -394,7 +394,9 @@ function renderVertex(cell: CellInfo): string {
   if (cell.value) {
     const label = stripHtml(cell.value)
     if (label) {
-      const cx = x + w / 2
+      const leftAligned = shape === 'swimlane' || s.align === 'left'
+      const cx = leftAligned ? x + (parseFloat(s.spacingLeft || '12') || 12) : x + w / 2
+      const textAnchor = leftAligned ? 'start' : 'middle'
       let cyText = y + h / 2
       if (shape === 'swimlane') cyText = y + Math.min(h*0.12, 30) / 2
 
@@ -407,7 +409,7 @@ function renderVertex(cell: CellInfo): string {
         if (!line) continue
         const maxCh = Math.max(Math.floor(w / (fontSize * 0.55)), 4)
         const display = line.length > maxCh ? line.slice(0, maxCh - 1) + '\u2026' : line
-        parts.push(`<text x="${cx}" y="${startY + i*lh}" text-anchor="middle" dominant-baseline="central" font-size="${fontSize}" fill="${fontColor}" ${bold?'font-weight="bold"':''} ${italic?'font-style="italic"':''}>${esc(display)}</text>`)
+        parts.push(`<text x="${cx}" y="${startY + i*lh}" text-anchor="${textAnchor}" dominant-baseline="central" font-size="${fontSize}" fill="${fontColor}" ${bold?'font-weight="bold"':''} ${italic?'font-style="italic"':''}>${esc(display)}</text>`)
       }
     }
   }
@@ -434,10 +436,25 @@ function renderEdge(edge: CellInfo, cellMap: Map<string, CellInfo>): string {
     : edge.sourcePoint || (edge.points.length > 0 ? edge.points[0] : { x: edge.absX, y: edge.absY })
 
   const pts: Array<{ x: number; y: number }> = []
+  const routingPoints = [...edge.points]
+  const orthogonal = s.edgeStyle?.toLowerCase().includes('orthogonal')
+  if (routingPoints.length === 0 && orthogonal && srcCell && tgtCell) {
+    const dx = tgtCenter.x - srcCenter.x
+    const dy = tgtCenter.y - srcCenter.y
+    if (dx !== 0 && dy !== 0) {
+      if (Math.abs(dy) >= Math.abs(dx)) {
+        const midY = srcCenter.y + dy / 2
+        routingPoints.push({ x: srcCenter.x, y: midY }, { x: tgtCenter.x, y: midY })
+      } else {
+        const midX = srcCenter.x + dx / 2
+        routingPoints.push({ x: midX, y: srcCenter.y }, { x: midX, y: tgtCenter.y })
+      }
+    }
+  }
 
   // Start
   if (srcCell) {
-    const nextPt = edge.points.length > 0 ? edge.points[0] : tgtCenter
+    const nextPt = routingPoints.length > 0 ? routingPoints[0] : tgtCenter
     pts.push(edgePoint(srcCell, nextPt.x, nextPt.y, shapeOf(srcCell.style)))
   } else if (edge.sourcePoint) {
     pts.push(edge.sourcePoint)
@@ -446,17 +463,20 @@ function renderEdge(edge: CellInfo, cellMap: Map<string, CellInfo>): string {
   }
 
   // Waypoints
-  for (const p of edge.points) pts.push(p)
+  for (const p of routingPoints) pts.push(p)
 
   // End
   if (tgtCell) {
-    const prevPt = edge.points.length > 0 ? edge.points[edge.points.length-1] : srcCenter
+    const prevPt = routingPoints.length > 0 ? routingPoints[routingPoints.length-1] : srcCenter
     pts.push(edgePoint(tgtCell, prevPt.x, prevPt.y, shapeOf(tgtCell.style)))
   } else if (edge.targetPoint) {
     pts.push(edge.targetPoint)
   }
 
-  if (pts.length < 2) return ''
+  const compactPoints = pts.filter((point, index) => index === 0
+    || point.x !== pts[index - 1].x
+    || point.y !== pts[index - 1].y)
+  if (compactPoints.length < 2) return ''
 
   // Normalize arrow marker ID based on stroke color
   const colorKey = stroke.replace('#', '')
@@ -465,7 +485,7 @@ function renderEdge(edge: CellInfo, cellMap: Map<string, CellInfo>): string {
   const markerAttr = noArrow ? '' : ` marker-end="url(#${markerId})"`
   const dash = dashed ? ' stroke-dasharray="6,3"' : ''
 
-  const d = pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x},${p.y}`).join(' ')
+  const d = compactPoints.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x},${p.y}`).join(' ')
   const parts: string[] = []
   parts.push(`<path d="${d}" fill="none" stroke="${stroke}" stroke-width="${sw}" opacity="${opacity}"${dash}${markerAttr}/>`)
 
@@ -473,8 +493,11 @@ function renderEdge(edge: CellInfo, cellMap: Map<string, CellInfo>): string {
   if (edge.value) {
     const label = stripHtml(edge.value)
     if (label) {
-      const mi = Math.floor(pts.length / 2)
-      const mid = { x: (pts[mi-1].x + pts[mi].x) / 2, y: (pts[mi-1].y + pts[mi].y) / 2 }
+      const mi = Math.floor(compactPoints.length / 2)
+      const mid = {
+        x: (compactPoints[mi-1].x + compactPoints[mi].x) / 2,
+        y: (compactPoints[mi-1].y + compactPoints[mi].y) / 2,
+      }
       const fs = parseFloat(s.fontSize || '11')
       const fc = color(s.fontColor, DEFAULT_FONT_COLOR)
       const tw = label.length * fs * 0.55
@@ -612,17 +635,6 @@ export function DrawioRenderer({ content, streaming, onContentChange }: DrawioRe
     container.addEventListener('wheel', handleWheel, { passive: false })
     return () => container.removeEventListener('wheel', handleWheel)
   }, [viewMode])
-
-  // 内容变化时重置视图状态
-  // 用「渲染期调整 state」而不是 effect：effect 里同步 setState 会触发级联渲染
-  const [prevContent, setPrevContent] = useState(content)
-  if (content !== prevContent) {
-    setPrevContent(content)
-    setZoom(1)
-    setViewMode('view')
-    setError(null)
-    setIframeReady(false)
-  }
 
   // 本地 SVG 渲染（memoized）
   const localSvg = useMemo(() => {

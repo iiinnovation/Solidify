@@ -1,0 +1,233 @@
+import { describe, expect, it, vi } from 'vitest'
+import { builtinSkills } from '@/lib/skills'
+import { isSkillWatcherPath, SkillLoader, type SkillFileSystem } from './loader'
+import { SkillParseError, parseSkillDocument } from './parse'
+import { SkillRegistry } from './registry'
+import { formatSkillIndex } from './registry'
+
+function document(name: string, description = `${name} description`, body = '# Skill'): string {
+  return `---\nname: ${name}\nversion: 1.2.3\ndescription: ${description}\ndisplayName: ${name} display\nallowed-tools: [read_file, list_dir]\n---\n\n${body}\n`
+}
+
+function memoryFileSystem(files: Record<string, string>, directories: Record<string, string[]>): SkillFileSystem {
+  return {
+    async listDirectories(path) { return directories[path] ?? [] },
+    async readFile(path) {
+      const content = files[path]
+      if (content === undefined) throw Object.assign(new Error('not found'), { code: 'ENOENT' })
+      return content
+    },
+  }
+}
+
+describe('parseSkillDocument', () => {
+  it('parses metadata and keeps the body separate', () => {
+    const skill = parseSkillDocument(document('requirement-analysis'), '/skills/requirement-analysis/SKILL.md', 'user')
+
+    expect(skill.metadata).toMatchObject({
+      name: 'requirement-analysis',
+      version: '1.2.3',
+      description: 'requirement-analysis description',
+      allowedTools: ['read_file', 'list_dir'],
+      source: 'user',
+    })
+    expect(skill.content).toBe('# Skill')
+    expect(skill.path).toContain('SKILL.md')
+  })
+
+  it('fails explicitly when description is missing', () => {
+    expect(() => parseSkillDocument('---\nname: broken\nversion: 1.0.0\n---\nbody', '/broken/SKILL.md'))
+      .toThrowError(/缺少必填字段 description/)
+    expect(() => parseSkillDocument('---\nname: broken\nversion: 1.0.0\n---\nbody', '/broken/SKILL.md'))
+      .toThrowError(SkillParseError)
+  })
+
+  it('rejects invalid names and versions', () => {
+    expect(() => parseSkillDocument(document('Bad_Name'), '/bad/SKILL.md')).toThrowError(/kebab-case/)
+    expect(() => parseSkillDocument(document('valid').replace('1.2.3', 'v1'), '/bad/SKILL.md')).toThrowError(/语义化版本/)
+  })
+})
+
+describe('SkillLoader', () => {
+  it('matches only workspace-relative Skill watcher paths', () => {
+    expect(isSkillWatcherPath('.solidify/skills/demo/SKILL.md')).toBe(true)
+    expect(isSkillWatcherPath('.solidify/skills')).toBe(true)
+    expect(isSkillWatcherPath('03-交付物/demo.md')).toBe(false)
+    expect(isSkillWatcherPath('/tmp/.solidify/skills/demo/SKILL.md')).toBe(false)
+  })
+
+  it('loads the ten bundled directory Skills when no override is provided', async () => {
+    const result = await new SkillLoader({ fileSystem: memoryFileSystem({}, {}) }).load()
+    expect(result.errors).toEqual([])
+    expect(result.skills.filter((skill) => skill.source === 'builtin')).toHaveLength(10)
+    for (const skill of result.skills.filter((item) => item.source === 'builtin')) {
+      expect(skill.metadata.version, skill.metadata.name).toBe('2.1.0')
+      expect(skill.content, skill.metadata.name).toContain('reference/legacy-guidance.md')
+      expect(skill.content, skill.metadata.name).toContain('## 提交前自检')
+      expect(skill.resourceFiles?.['reference/legacy-guidance.md'], skill.metadata.name)
+        .toBe(builtinSkills.find((item) => item.id === skill.metadata.name)?.systemPrompt)
+    }
+    const requirement = result.skills.find((skill) => skill.metadata.name === 'requirement-analysis')
+    expect(requirement?.content).toContain('reference/output-format.md')
+    expect(requirement?.resourceFiles?.['SKILL.md']).toContain('name: requirement-analysis')
+    expect(requirement?.resourceFiles?.['reference/output-format.md']).toContain('需求规格文档')
+    const drawio = result.skills.find((skill) => skill.metadata.name === 'drawio-diagram')
+    expect(drawio?.content).toContain('reference/layout-guidance.md')
+    expect(drawio?.resourceFiles?.['reference/layout-guidance.md']).toContain('输出前几何检查')
+    expect(drawio?.resourceFiles?.['reference/xml-checklist.md']).toContain('连线不穿过')
+  })
+
+  it('merges roots with project-over-user-over-builtin precedence', async () => {
+    const fs = memoryFileSystem(
+      {
+        '/user/same/SKILL.md': document('same', 'user description'),
+        '/project/.solidify/skills/same/SKILL.md': document('same', 'project description'),
+        '/project/.solidify/skills/project-only/SKILL.md': document('project-only'),
+      },
+      {
+        '/user': ['same'],
+        '/project/.solidify/skills': ['same', 'project-only'],
+      },
+    )
+    const loader = new SkillLoader({
+      workspaceRoot: '/project',
+      userSkillsRoot: '/user',
+      fileSystem: fs,
+      builtins: [{ metadata: { name: 'same', version: '1.0.0', description: 'builtin', source: 'builtin' }, content: 'builtin', path: 'builtin://same' }],
+    })
+
+    const result = await loader.load()
+    expect(result.errors).toEqual([])
+    expect(result.skills.map((skill) => skill.metadata.name)).toEqual(['project-only', 'same'])
+    expect(result.skills.find((skill) => skill.metadata.name === 'same')?.metadata.description).toBe('project description')
+  })
+
+  it('returns invalid skill errors without silently hiding them', async () => {
+    const loader = new SkillLoader({
+      userSkillsRoot: '/user',
+      fileSystem: memoryFileSystem(
+        { '/user/broken/SKILL.md': '---\nname: broken\nversion: 1.0.0\n---\nbody' },
+        { '/user': ['broken'] },
+      ),
+      builtins: [],
+    })
+
+    const result = await loader.load()
+    expect(result.skills).toEqual([])
+    expect(result.errors).toHaveLength(1)
+    expect(result.errors[0].message).toMatch(/description/)
+  })
+
+  it('ignores import transaction directories while scanning Skills', async () => {
+    const readFile = vi.fn(async (path: string) => {
+      if (path === '/user/installed/SKILL.md') return document('installed')
+      throw Object.assign(new Error('not found'), { code: 'ENOENT' })
+    })
+    const loader = new SkillLoader({
+      userSkillsRoot: '/user',
+      fileSystem: {
+        listDirectories: async () => [
+          '__solidify-import-demo-transaction',
+          '__solidify-backup-demo-transaction',
+          'installed',
+        ],
+        readFile,
+      },
+      builtins: [],
+    })
+
+    const result = await loader.load()
+
+    expect(result.errors).toEqual([])
+    expect(result.skills.map((skill) => skill.metadata.name)).toEqual(['installed'])
+    expect(readFile).toHaveBeenCalledOnce()
+  })
+
+  it('fails explicitly when frontmatter name differs from its directory', async () => {
+    const loader = new SkillLoader({
+      userSkillsRoot: '/user',
+      fileSystem: memoryFileSystem(
+        { '/user/wrong-directory/SKILL.md': document('actual-name') },
+        { '/user': ['wrong-directory'] },
+      ),
+      builtins: [],
+    })
+
+    const result = await loader.load()
+    expect(result.skills).toEqual([])
+    expect(result.errors[0].message).toMatch(/name 必须与目录名一致/)
+  })
+
+  it('hot-reloads a Skill added to the user directory without recreating the registry', async () => {
+    vi.useFakeTimers()
+    const files: Record<string, string> = {}
+    const directories: Record<string, string[]> = { '/user': [] }
+    const registry = new SkillRegistry(new SkillLoader({
+      userSkillsRoot: '/user',
+      fileSystem: memoryFileSystem(files, directories),
+      builtins: [],
+    }))
+
+    try {
+      await registry.reload()
+      const stop = await registry.startWatching()
+      directories['/user'] = ['installed']
+      files['/user/installed/SKILL.md'] = document('installed')
+      await vi.advanceTimersByTimeAsync(1_000)
+
+      expect(await registry.resolve('installed')).not.toBeNull()
+      stop()
+    } finally {
+      await registry.stopWatching()
+      vi.useRealTimers()
+    }
+  })
+
+  it('maps only the selected Skill resources into the virtual read-only root', async () => {
+    const fs = memoryFileSystem(
+      {
+        '/user/pptd/SKILL.md': document('pptd'),
+        '/user/pptd/reference/pptd.md': '# PPTD reference',
+      },
+      { '/user': ['pptd'] },
+    )
+    const loader = new SkillLoader({ userSkillsRoot: '/user', fileSystem: fs, builtins: [] })
+    const skill = (await loader.load()).skills[0]
+    const resolver = loader.createResourceResolver(skill)
+
+    expect(resolver.canRead('.solidify/skills/pptd/reference/pptd.md')).toBe(true)
+    expect(resolver.canRead('.solidify/skills/other/reference/pptd.md')).toBe(false)
+    expect(resolver.canRead('.solidify/skills/pptd/../other.txt')).toBe(false)
+    await expect(resolver.read('.solidify/skills/other/reference/pptd.md')).rejects.toThrow()
+    await expect(resolver.read('.solidify/skills/pptd/reference/pptd.md')).resolves.toMatchObject({ content: '# PPTD reference' })
+  })
+})
+
+describe('SkillRegistry', () => {
+  it('reloads and notifies subscribers', async () => {
+    const listener = vi.fn()
+    const loader = new SkillLoader({
+      fileSystem: memoryFileSystem({}, {}),
+      builtins: [{ metadata: { name: 'builtin', version: '1.0.0', description: 'builtin' }, content: 'body', path: 'builtin://builtin' }],
+    })
+    const registry = new SkillRegistry(loader)
+    registry.subscribe(listener)
+
+    await registry.reload()
+
+    expect(await registry.resolve('builtin')).not.toBeNull()
+    expect(await registry.list()).toHaveLength(1)
+    expect(listener).toHaveBeenCalledOnce()
+  })
+
+  it('keeps the layer-0 index below 600 estimated tokens', () => {
+    const index = formatSkillIndex(Array.from({ length: 100 }, (_, i) => ({
+      name: `skill-${i}`,
+      version: '1.0.0',
+      description: '这是一个用于处理访谈材料并生成结构化交付物的详细 Skill 描述。',
+    })))
+    const cjk = [...index].filter((char) => /[\u3400-\u9fff]/.test(char)).length
+    const estimate = Math.ceil(cjk + ([...index].length - cjk) / 4)
+    expect(estimate).toBeLessThan(600)
+  })
+})

@@ -47,6 +47,21 @@ describe('agent run UI', () => {
     expect(screen.queryByRole('button', { name: '停止' })).toBeNull()
   })
 
+  it('does not restart the elapsed timer for every streamed run object', () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      const running = { ...completedRun, status: 'running' as const, completedAt: undefined }
+      const view = render(<RunTimeline run={running} />)
+      for (let index = 0; index < 100; index++) {
+        view.rerender(<RunTimeline run={{ ...running, text: `token-${index}` }} />)
+      }
+
+      expect(consoleError.mock.calls.flat().join(' ')).not.toContain('Maximum update depth exceeded')
+    } finally {
+      consoleError.mockRestore()
+    }
+  })
+
   it('returns the selected answer from the approval dialog', async () => {
     const onAnswer = vi.fn()
     const request: ApprovalRequest = {

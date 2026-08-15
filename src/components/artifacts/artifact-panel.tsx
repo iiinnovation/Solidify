@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef } from 'react'
 import { FileText, Code, Presentation, GitGraph, Sparkles, Copy, BarChart3, Eye, Network } from 'lucide-react'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { MarkdownRenderer } from '@/components/artifacts/markdown-renderer'
@@ -103,13 +103,6 @@ function CodeRenderer({ content, streaming }: { content: string; streaming?: boo
   const [viewMode, setViewMode] = useState<'preview' | 'source'>('preview')
   const isHtml = !streaming && isHtmlContent(content)
 
-  // content 变化时重置为 preview（渲染期调整，避免 effect 里同步 setState 造成级联渲染）
-  const [prevContent, setPrevContent] = useState(content)
-  if (content !== prevContent) {
-    setPrevContent(content)
-    setViewMode('preview')
-  }
-
   if (!isHtml) return <SourceView content={content} streaming={streaming} />
 
   return (
@@ -184,18 +177,7 @@ export function ArtifactPanel({ conversationId }: { conversationId?: string }) {
   const conversations = useChatStore((s) => s.conversations)
   const contentRef = useRef<HTMLDivElement>(null)
   const chartContainerRef = useRef<HTMLDivElement>(null)
-  const [mermaidSvg, setMermaidSvg] = useState('')
-
-  const handleMermaidSvgReady = useCallback((svg: string) => {
-    setMermaidSvg(svg)
-  }, [])
-
-  // 切换 artifact 时重置 mermaid SVG 状态（渲染期调整，理由同上）
-  const [prevArtifactId, setPrevArtifactId] = useState(activeArtifactId)
-  if (activeArtifactId !== prevArtifactId) {
-    setPrevArtifactId(activeArtifactId)
-    setMermaidSvg('')
-  }
+  const [mermaidExport, setMermaidExport] = useState<{ artifactId: string; svg: string } | null>(null)
 
   // 按当前对话过滤 artifacts
   const conv = conversationId
@@ -211,6 +193,10 @@ export function ArtifactPanel({ conversationId }: { conversationId?: string }) {
   }
 
   const activeArtifact = filteredArtifacts.find((a) => a.id === activeArtifactId) ?? filteredArtifacts[filteredArtifacts.length - 1]
+  const handleMermaidSvgReady = (svg: string) => {
+    setMermaidExport({ artifactId: activeArtifact.id, svg })
+  }
+  const mermaidSvg = mermaidExport?.artifactId === activeArtifact.id ? mermaidExport.svg : undefined
 
   return (
     <div className="h-full flex flex-col bg-background">

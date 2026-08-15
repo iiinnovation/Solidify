@@ -409,7 +409,7 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
       textareaRef.current.style.height = 'auto'
     }
     isNearBottomRef.current = true
-    sendMessage(text, attachments.length > 0 ? attachments : undefined, activeSkill?.systemPrompt, activeSkill?.skipConfirmation)
+    sendMessage(text, attachments.length > 0 ? attachments : undefined, activeSkill?.systemPrompt, activeSkill?.skipConfirmation, undefined, undefined, activeSkill?.id)
     clearSkill()
   }
 
