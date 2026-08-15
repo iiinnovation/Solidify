@@ -46,6 +46,24 @@ describe('Skill progressive disclosure context', () => {
     expect(result.system).toContain('read_file')
   })
 
+  it('lists only the resource files actually bundled with the selected Skill', async () => {
+    const result = await buildMessages(context({
+      skill: {
+        metadata: { name: 'test-plan', version: '2.1.0', description: '生成测试方案' },
+        content: '先读取 reference/legacy-guidance.md。',
+        path: 'builtin://test-plan/SKILL.md',
+        virtualRoot: '.solidify/skills/test-plan',
+        resourceFiles: {
+          'SKILL.md': 'document',
+          'reference/legacy-guidance.md': 'guidance',
+        },
+      },
+    }))
+
+    expect(result.system).toContain('.solidify/skills/test-plan/reference/legacy-guidance.md')
+    expect(result.system).not.toContain('.solidify/skills/test-plan/examples/')
+  })
+
   it('rejects an oversized layer-0 index instead of silently exceeding the budget', async () => {
     await expect(buildMessages(context({ harnessContext: [`可用的 Skill\n${'x'.repeat(4000)}`] })))
       .rejects.toThrow(/600-token budget/)

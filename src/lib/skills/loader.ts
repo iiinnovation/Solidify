@@ -84,6 +84,9 @@ export class SkillLoader {
       async read(path, offset, limit): Promise<SkillResourceRead> {
         const relative = relativeSkillResourcePath(path, virtualRoot)
         if (relative === null) throw new Error('Skill 资源路径不在当前 Skill 范围内')
+        if (!relative || relative.endsWith('/')) {
+          throw new Error(`Skill 资源路径必须指向具体文件，不能读取目录：${relative || virtualRoot}`)
+        }
         const content = skill.resourceFiles?.[relative]
           ?? (realRoot && !realRoot.startsWith('builtin://') ? await fileSystem.readFile(joinPath(realRoot, relative)) : undefined)
         if (content === undefined) throw new Error(`Skill 资源不存在：${relative}`)
@@ -109,13 +112,9 @@ export class SkillLoader {
     }
     // ~/.solidify/skills is outside the workspace watcher scope. Poll only
     // that optional root so drag-and-drop installs appear without a restart.
-    const timer = this.options.userSkillsRoot
-      ? setInterval(() => { void onChange() }, 1_000)
-      : undefined
-    return () => {
-      stopWorkspaceWatcher()
-      if (timer !== undefined) clearInterval(timer)
-    }
+    return this.options.userSkillsRoot
+      ? composeStop(stopWorkspaceWatcher, pollUserSkillsRoot(onChange))
+      : stopWorkspaceWatcher
   }
 
   private async listDirectories(root: SkillRoot, errors: SkillLoadResult['errors']): Promise<string[]> {
@@ -136,6 +135,43 @@ export class SkillLoader {
 export function isSkillWatcherPath(path: string): boolean {
   const normalized = normalizePath(path)
   return normalized === '.solidify/skills' || normalized.startsWith('.solidify/skills/')
+}
+
+const USER_SKILLS_POLL_MS = 1_000
+
+/**
+ * One pass costs a directory listing plus a read per Skill, all over IPC.
+ * `setInterval` fires regardless of whether the previous pass finished, so a
+ * slow pass stacks another on top of it — and while the window is occluded
+ * (a macOS Space switch) the webview suspends JS, leaving every queued pass to
+ * resolve in one burst on the way back. Reschedule after each pass instead,
+ * and skip passes the user cannot see.
+ */
+function pollUserSkillsRoot(onChange: () => void | Promise<void>): () => void {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let stopped = false
+
+  const schedule = () => {
+    if (stopped) return
+    timer = setTimeout(() => { void tick() }, USER_SKILLS_POLL_MS)
+  }
+
+  const tick = async () => {
+    if (typeof document !== 'undefined' && document.hidden) return schedule()
+    // Load errors reach the UI through the registry's own error list.
+    try { await onChange() } catch { /* keep polling */ }
+    schedule()
+  }
+
+  schedule()
+  return () => {
+    stopped = true
+    if (timer !== undefined) clearTimeout(timer)
+  }
+}
+
+function composeStop(...stops: Array<() => void>): () => void {
+  return () => { for (const stop of stops) stop() }
 }
 
 function buildRoots(options: SkillLoaderOptions): SkillRoot[] {
@@ -194,10 +230,16 @@ function relativeSkillResourcePath(path: string, root: string): string | null {
     || normalized.includes('\0')
     || normalized.split('/').some((part) => part === '..' || part === '.')
   ) return null
+  if (normalized === root || normalized === `${root}/`) return ''
   const prefix = `${root}/`
   if (!normalized.startsWith(prefix)) return null
   const relative = normalized.slice(prefix.length)
-  return relative && !relative.split('/').some((part) => !part) ? relative : null
+  if (!relative) return ''
+  if (relative.endsWith('/')) {
+    const directory = relative.slice(0, -1)
+    return directory && !directory.split('/').some((part) => !part) ? `${directory}/` : null
+  }
+  return !relative.split('/').some((part) => !part) ? relative : null
 }
 
 function createTauriSkillFileSystem(workspaceRoot?: string | null): SkillFileSystem {

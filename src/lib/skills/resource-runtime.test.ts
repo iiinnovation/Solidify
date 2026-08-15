@@ -75,6 +75,15 @@ describe('bundled Skill resource runtime', () => {
     }, toolContext, context.signal)
     expect(reference).toMatchObject({ success: true })
     expect(reference.content).toContain('需求规格文档')
+
+    const directory = await readFileTool.execute({
+      path: '.solidify/skills/requirement-analysis/examples/',
+    }, toolContext, context.signal)
+    expect(directory).toMatchObject({
+      success: false,
+      error: { kind: 'invalid_input', recoverable: true },
+    })
+    expect(directory.content).toContain('必须指向具体文件')
   })
 
   it('keeps the active Skill empty when skillV2 is enabled without a selection', async () => {

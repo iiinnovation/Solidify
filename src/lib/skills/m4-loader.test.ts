@@ -183,6 +183,66 @@ describe('SkillLoader', () => {
     }
   })
 
+  it('never runs two user-root poll passes at once', async () => {
+    vi.useFakeTimers()
+    let active = 0
+    let peak = 0
+    let started = 0
+    const pending: Array<() => void> = []
+    const loader = new SkillLoader({ userSkillsRoot: '/user', fileSystem: memoryFileSystem({}, {}), builtins: [] })
+
+    try {
+      const stop = await loader.watch(async () => {
+        started += 1
+        active += 1
+        peak = Math.max(peak, active)
+        // A pass that outlives the poll period: the old setInterval stacked
+        // another one on top of it every second.
+        await new Promise<void>((resolve) => pending.push(resolve))
+        active -= 1
+      })
+
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(started).toBe(1)
+      expect(peak).toBe(1)
+
+      pending.shift()?.()
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(started).toBe(2)
+      expect(peak).toBe(1)
+
+      stop()
+      pending.shift()?.()
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(started).toBe(2)
+    } finally {
+      for (const resolve of pending) resolve()
+      vi.useRealTimers()
+    }
+  })
+
+  it('skips user-root poll passes while the window is hidden', async () => {
+    vi.useFakeTimers()
+    const hidden = vi.spyOn(Document.prototype, 'hidden', 'get')
+    let passes = 0
+    const loader = new SkillLoader({ userSkillsRoot: '/user', fileSystem: memoryFileSystem({}, {}), builtins: [] })
+
+    try {
+      hidden.mockReturnValue(true)
+      const stop = await loader.watch(() => { passes += 1 })
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(passes).toBe(0)
+
+      hidden.mockReturnValue(false)
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(passes).toBe(1)
+      stop()
+    } finally {
+      hidden.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
   it('maps only the selected Skill resources into the virtual read-only root', async () => {
     const fs = memoryFileSystem(
       {
@@ -196,9 +256,11 @@ describe('SkillLoader', () => {
     const resolver = loader.createResourceResolver(skill)
 
     expect(resolver.canRead('.solidify/skills/pptd/reference/pptd.md')).toBe(true)
+    expect(resolver.canRead('.solidify/skills/pptd/examples/')).toBe(true)
     expect(resolver.canRead('.solidify/skills/other/reference/pptd.md')).toBe(false)
     expect(resolver.canRead('.solidify/skills/pptd/../other.txt')).toBe(false)
     await expect(resolver.read('.solidify/skills/other/reference/pptd.md')).rejects.toThrow()
+    await expect(resolver.read('.solidify/skills/pptd/examples/')).rejects.toThrow(/必须指向具体文件/)
     await expect(resolver.read('.solidify/skills/pptd/reference/pptd.md')).resolves.toMatchObject({ content: '# PPTD reference' })
   })
 })

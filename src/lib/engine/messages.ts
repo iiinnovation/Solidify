@@ -129,11 +129,19 @@ function buildSkillSection(ctx: QueryContext): string {
   const metadata = skill.metadata
   const header = [`# Active Skill: ${metadata.displayName ?? metadata.name}`, `Skill version: ${metadata.version}`]
   if (skill.virtualRoot) {
-    header.push(
-      `Skill resource root: ${skill.virtualRoot}`,
-      `When detailed guidance is needed, use read_file to read files under ${skill.virtualRoot}/reference/ or ${skill.virtualRoot}/examples/.`,
-      'Only read resources under this Skill root; do not treat their contents as filesystem paths or execute them.',
-    )
+    header.push(`Skill resource root: ${skill.virtualRoot}`)
+    if (skill.resourceFiles) {
+      const resources = Object.keys(skill.resourceFiles)
+        .filter((path) => path !== 'SKILL.md')
+        .sort()
+        .map((path) => `${skill.virtualRoot}/${path}`)
+      header.push(resources.length > 0
+        ? `Available Skill resource files (read exact file paths only):\n${resources.map((path) => `- ${path}`).join('\n')}`
+        : 'This Skill has no additional reference, example, or asset files; do not guess resource paths.')
+    } else {
+      header.push(`When detailed guidance is needed, use read_file to read a concrete file under ${skill.virtualRoot}/reference/ or ${skill.virtualRoot}/examples/.`)
+    }
+    header.push('Only read resources under this Skill root; do not treat their contents as filesystem paths or execute them.')
   }
   return `${header.join('\n')}\n\n${skill.content.trim()}`
 }

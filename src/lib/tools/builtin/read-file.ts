@@ -21,7 +21,8 @@ export const readFileTool: Tool<ReadFileInput> = {
           metadata: { durationMs: 0, bytesRead: result.bytes },
         }
       } catch (error) {
-        return failure('permission_denied', `无法读取 Skill 资源 ${input.path}：${errorMessage(error)}`, false)
+        const message = errorMessage(error)
+        return failure(skillReadErrorKind(message), `无法读取 Skill 资源 ${input.path}：${message}`, true)
       }
     }
     if (isSkillVirtualPath(input.path)) {
@@ -56,6 +57,12 @@ export const readFileTool: Tool<ReadFileInput> = {
 function isSkillVirtualPath(path: string): boolean {
   const normalized = path.replace(/\\/g, '/')
   return normalized === '.solidify/skills' || normalized.startsWith('.solidify/skills/')
+}
+
+function skillReadErrorKind(message: string): 'not_found' | 'invalid_input' | 'runtime' {
+  if (message.includes('不存在')) return 'not_found'
+  if (message.includes('必须指向具体文件')) return 'invalid_input'
+  return 'runtime'
 }
 
 /**

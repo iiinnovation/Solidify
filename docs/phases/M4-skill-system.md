@@ -8,7 +8,9 @@
 | **规格** | [specs/skill-format.md](../specs/skill-format.md) |
 | **相关决策** | [ADR-0004](../04-decisions.md#adr-0004) |
 | **特性开关** | `skillV2` |
-| **状态** | ✅ 实现与自动化验收完成（桌面 GUI Demo 待人工演示） |
+| **状态** | ✅ 已完成（2026-08-15） |
+
+> **归档决定（2026-08-15）**：目录加载、渐进式披露、工具白名单、迁移、管理 UI 与自动化验收全部完成；桌面 GUI 热加载、10 个内置 Skill 逐项质量对比及典型场景的一次性交办均已人工验收。M4 形成稳定检查点，允许进入 M5-A。
 
 ## 目标
 
@@ -51,7 +53,7 @@ M4-07 容易被忽略但很关键：模型得知道 `reference/` 在哪。system
 ```
 当前 Skill: pptd-deck
 Skill 目录: .solidify/skills/pptd-deck/
-可用参考文档: reference/pptd.md, reference/slide-categories.md, examples/
+可用参考文档: reference/pptd.md, reference/slide-categories.md
 需要详细规范时，用 read_file 读取上述文件。
 ```
 
@@ -89,18 +91,20 @@ M4-10 的拆分原则见 [skill-format.md §7](../specs/skill-format.md)：把"�
 | # | 任务 | 估时 | 状态 |
 |---|---|---|---|
 | M4-15 | [skill-format.md §11](../specs/skill-format.md) 的 7 个用例 | 1pd | ✅ |
+| M4-16 | 桌面 GUI Demo、10 Skill 质量对比、典型场景一次性交办与归档门禁 | 0.5pd | ✅ |
 
 自动化覆盖包括目录热重载、无选择时只注入索引、选中 Skill 后真实 `read_file` 资源读取、工具白名单、三级优先级、显式解析错误和 localStorage 三 Skill 迁移。M4 阶段尚无 M5 的 PPTD Skill，因此用内置 `requirement-analysis` / `presentation` 验证相同的第 2 层读取链路。
 
-真实模型验收使用 DeepSeek-compatible OpenAI 协议端点，不配置或回退到 Anthropic。`npm run test:m4-live` 已验证 `deepseek-v4-flash` 在最终回答前依次读取：
+真实模型验收使用 DeepSeek-compatible OpenAI 协议端点，不配置或回退到 Anthropic。2026-08-15 的 `npm run test:m4-live` 已验证 `deepseek-v4-flash` 在最终回答前依次读取：
 
 ```text
 .solidify/skills/requirement-analysis/reference/legacy-guidance.md
 .solidify/skills/requirement-analysis/reference/output-format.md
-.solidify/skills/requirement-analysis/SKILL.md
 ```
 
-该次运行共 3 次工具调用、3 轮、7959 tokens。普通测试默认跳过此付费测试，只有显式执行 `test:m4-live` 才会调用真实模型。
+该次运行共 2 次工具调用、2 轮、4968 tokens，最终状态为 `run.completed`。普通测试默认跳过此付费测试，只有显式执行 `test:m4-live` 才会调用真实模型。
+
+桌面人工验收覆盖全部 10 个迁移 Skill：`demo-code`、`drawio-diagram`、`gap-analysis`、`glossary`、`meeting-notes`、`presentation`、`report-outline`、`requirement-analysis`、`solution-design`、`test-plan`。同输入对比未发现相对旧 prompt 的明显结构或质量退化；目录热加载、管理页导入导出和典型场景的一次性交办均通过。验收中发现模型会猜测不存在的 `examples/` 目录，收口时已改为只向模型列出实际打包的资源文件，并将目录读取明确归类为可恢复的 `invalid_input`，不再误报工作区越界。
 
 ## 风险
 
@@ -113,9 +117,23 @@ M4-10 的拆分原则见 [skill-format.md §7](../specs/skill-format.md)：把"�
 
 ## 完成定义
 
-- [ ] Demo 能当着人跑通
+- [x] Demo 能当着人跑通
 - [x] [skill-format.md §11](../specs/skill-format.md) 的 7 个用例全部通过
-- [ ] 10 个内置 Skill 全部迁移，产出质量不低于迁移前（目录迁移与旧 prompt 完整性已自动校验，10 个 Skill 的逐个模型输出对比尚未执行）
+- [x] 10 个内置 Skill 全部迁移，产出质量不低于迁移前
 - [x] 未选 Skill 时上下文中的 Skill 索引 < 600 token
 - [x] Web 端降级可用
-- [ ] **[00-vision-and-scope.md §4](../00-vision-and-scope.md) 的典型场景能一次交办跑通**（PPT 部分可用旧的降级导出）
+- [x] **[00-vision-and-scope.md §4](../00-vision-and-scope.md) 的典型场景能一次交办跑通**（PPT 部分使用旧的降级导出）
+
+## 归档证据
+
+| 门禁 | 结果 |
+|---|---|
+| `vitest run` | ✅ 48 个测试文件、291 项测试通过；M4/M1 联网 suite 按设计跳过 |
+| M4 真实模型验收 | ✅ `deepseek-v4-flash`，2 次 reference 读取、2 轮、4968 tokens |
+| 桌面 GUI Demo | ✅ 热加载、管理页、10 个内置 Skill 与一次性交办人工验收通过 |
+| `eslint .` | ✅ 0 错误 0 警告 |
+| `tsc -b && vite build` | ✅ 生产构建成功 |
+| `cargo test` | ✅ 36 项通过，含 1 万文件压力用例 |
+| `git diff --check` | ✅ 通过 |
+
+生产构建仍有既有 Tailwind 选择器、Anthropic SDK browser externalization、动态导入和大 chunk 警告，均不影响退出状态，未由 M4 引入新的阻断项。

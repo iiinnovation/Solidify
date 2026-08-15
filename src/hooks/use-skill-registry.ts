@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { isEnabled } from '@/lib/harness/flags'
 import { useWorkspaceStore } from '@/stores/workspace-store'
 import { ensureUserSkillsRoot, SkillLoader } from '@/lib/skills/loader'
 import { SkillRegistry } from '@/lib/skills/registry'
-import type { SkillLoadError, SkillMetadata } from '@/lib/skills/types'
+import type { SkillLoadError, SkillLoadResult, SkillMetadata } from '@/lib/skills/types'
 import { getDisabledSkillNames } from '@/lib/skills/settings'
 
 export interface SkillRegistryState {
@@ -24,6 +24,23 @@ export function useSkillRegistry(): SkillRegistryState {
   const [allSkills, setAllSkills] = useState<SkillMetadata[]>([])
   const [errors, setErrors] = useState<SkillLoadError[]>([])
   const [loading, setLoading] = useState(enabled)
+  const appliedRef = useRef<string | null>(null)
+
+  /**
+   * The user Skill root is polled, so most reloads return byte-identical
+   * metadata. Publishing fresh array identities anyway re-rendered every
+   * consumer — the chat panel included — on each poll.
+   */
+  const apply = useCallback((result: SkillLoadResult) => {
+    const metadata = result.skills.map((skill) => skill.metadata)
+    const disabled = getDisabledSkillNames()
+    const signature = JSON.stringify([metadata, result.errors, [...disabled].sort()])
+    if (signature === appliedRef.current) return
+    appliedRef.current = signature
+    setAllSkills(metadata)
+    setSkills(metadata.filter((skill) => !disabled.has(skill.name)))
+    setErrors(result.errors)
+  }, [])
 
   const key = useMemo(() => `${enabled}:${workspaceRoot ?? ''}`, [enabled, workspaceRoot])
 
@@ -41,10 +58,7 @@ export function useSkillRegistry(): SkillRegistryState {
       current = created
       const unsubscribe = created.subscribe((result) => {
         if (cancelled) return
-        const metadata = result.skills.map((skill) => skill.metadata)
-        setAllSkills(metadata)
-        setSkills(metadata.filter((skill) => !getDisabledSkillNames().has(skill.name)))
-        setErrors(result.errors)
+        apply(result)
       })
       const result = await created.reload()
       if (cancelled) {
@@ -52,10 +66,7 @@ export function useSkillRegistry(): SkillRegistryState {
         return
       }
       setRegistry(created)
-      const metadata = result.skills.map((skill) => skill.metadata)
-      setAllSkills(metadata)
-      setSkills(metadata.filter((skill) => !getDisabledSkillNames().has(skill.name)))
-      setErrors(result.errors)
+      apply(result)
       setLoading(false)
       stopWatching = await created.startWatching()
       if (cancelled) stopWatching()
@@ -71,15 +82,11 @@ export function useSkillRegistry(): SkillRegistryState {
       stopWatching?.()
       void current?.stopWatching()
     }
-  }, [key, enabled, workspaceRoot])
+  }, [key, enabled, workspaceRoot, apply])
 
   const refresh = async () => {
     if (!registry) return
-    const result = await registry.reload()
-    const metadata = result.skills.map((skill) => skill.metadata)
-    setAllSkills(metadata)
-    setSkills(metadata.filter((skill) => !getDisabledSkillNames().has(skill.name)))
-    setErrors(result.errors)
+    apply(await registry.reload())
   }
 
   return enabled
