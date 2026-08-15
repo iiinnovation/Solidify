@@ -1,9 +1,9 @@
-import { useState } from 'react'
+import { memo, useState } from 'react'
 import { Check, ChevronDown, CircleAlert, Clock3, LoaderCircle, Wrench } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { RunToolItem } from '@/lib/engine/run-state'
 
-export function ToolCallCard({ item }: { item: RunToolItem }) {
+export const ToolCallCard = memo(function ToolCallCard({ item }: { item: RunToolItem }) {
   const [expanded, setExpanded] = useState(false)
   const duration = item.completedAt ? Math.max(0, item.completedAt - item.startedAt) : undefined
   const failed = item.result && !item.result.success
@@ -46,4 +46,4 @@ export function ToolCallCard({ item }: { item: RunToolItem }) {
       )}
     </div>
   )
-}
+})

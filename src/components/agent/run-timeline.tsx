@@ -5,22 +5,26 @@ import type { RunState } from '@/lib/engine/run-state'
 import { ToolCallCard } from './tool-call-card'
 import { LedgerPanel } from './ledger-panel'
 
-export function RunTimeline({ run, onStop }: { run: RunState | null; onStop?: () => void }) {
-  const [elapsed, setElapsed] = useState(() => run && !run.completedAt
-    ? Math.max(0, Date.now() - run.startedAt)
-    : 0)
+function ElapsedTime({ startedAt, completedAt }: { startedAt: number; completedAt?: number }) {
+  const [now, setNow] = useState(() => Date.now())
 
   useEffect(() => {
-    if (!run || run.completedAt) return
-    const startedAt = run.startedAt
+    if (completedAt) return
+    const refresh = window.setTimeout(() => setNow(Date.now()), 0)
     const timer = window.setInterval(() => {
-      setElapsed(Math.max(0, Date.now() - startedAt))
+      if (!document.hidden) setNow(Date.now())
     }, 1000)
-    return () => window.clearInterval(timer)
-  }, [run?.runId, run?.startedAt, run?.completedAt])
+    return () => {
+      window.clearTimeout(refresh)
+      window.clearInterval(timer)
+    }
+  }, [startedAt, completedAt])
 
+  return <>{completedAt ? completedAt - startedAt : Math.max(0, now - startedAt)}ms</>
+}
+
+export function RunTimeline({ run, onStop }: { run: RunState | null; onStop?: () => void }) {
   if (!run) return null
-  const duration = run.completedAt ? run.completedAt - run.startedAt : elapsed
   const active = run.status === 'running'
   const statusLabel = run.status === 'running' ? '运行中' : run.status === 'completed' ? '已完成' : run.status === 'aborted' ? '已停止' : run.status === 'exhausted' ? '已达上限' : run.status === 'failed' ? '失败' : '准备中'
 
@@ -35,7 +39,7 @@ export function RunTimeline({ run, onStop }: { run: RunState | null; onStop?: ()
             {run.usage.totalTokens.toLocaleString()} tokens
           </span>
         )}
-        <span className="ml-auto inline-flex items-center gap-1 text-[11px] text-text-tertiary tabular-nums"><TimerReset size={12} />{duration}ms</span>
+        <span className="ml-auto inline-flex items-center gap-1 text-[11px] text-text-tertiary tabular-nums"><TimerReset size={12} /><ElapsedTime startedAt={run.startedAt} completedAt={run.completedAt} /></span>
         {active && onStop && (
           <button type="button" onClick={onStop} className="ml-2 inline-flex items-center gap-1 px-2 py-1 rounded-sm text-[11px] text-error hover:bg-error-light" title="停止运行">
             <Square size={11} fill="currentColor" />停止
@@ -48,7 +52,7 @@ export function RunTimeline({ run, onStop }: { run: RunState | null; onStop?: ()
           {run.error && <div className={cn('text-xs px-3 py-2 rounded-sm', run.status === 'failed' ? 'text-error bg-error-light' : 'text-text-secondary bg-surface')}>{run.error}</div>}
         </div>
       )}
-      <div className="pb-2"><LedgerPanel runId={run.runId} /></div>
+      <div className="pb-2"><LedgerPanel runId={run.runId} revision={run.tools.reduce((count, tool) => count + (tool.completedAt ? 2 : 1), 0) + (run.completedAt ? 1 : 0)} /></div>
     </section>
   )
 }

@@ -92,6 +92,64 @@ describe('useChat agent loop switch', () => {
     expect(assistant?.agentRun?.usage?.totalTokens).toBe(5)
   })
 
+  it('flushes a trailing delta and materializes an artifact once', async () => {
+    const artifact = '<solidify-artifact title="交付物" type="document">内容</solidify-artifact>'
+    mocks.runQuery.mockImplementation(async function* () {
+      yield { type: 'run.started', runId: 'run-artifact' }
+      yield { type: 'message.delta', text: artifact.slice(0, 35) }
+      yield { type: 'message.delta', text: artifact.slice(35) }
+      yield {
+        type: 'run.completed',
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, turns: 1, toolCalls: 0 },
+      }
+    })
+    const { result } = renderHook(() => useChat(), { wrapper })
+
+    await act(async () => result.current.sendMessage('create it'))
+    await waitFor(() => expect(result.current.isStreaming).toBe(false))
+
+    expect(result.current.messages.find((message) => message.role === 'assistant')?.content).toBe('')
+    expect(useChatStore.getState().artifacts.filter((item) => item.title === '交付物')).toHaveLength(1)
+  })
+
+  it('flushes streamed deltas while the run is still open', async () => {
+    vi.useFakeTimers()
+    try {
+      let releaseRun: (() => void) | undefined
+      const runGate = new Promise<void>((resolve) => { releaseRun = resolve })
+      mocks.runQuery.mockImplementation(async function* () {
+        yield { type: 'run.started', runId: 'run-frame' }
+        yield { type: 'message.delta', text: 'hello' }
+        yield { type: 'message.delta', text: ' ' }
+        yield { type: 'message.delta', text: 'world' }
+        await runGate
+        yield {
+          type: 'run.completed',
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, turns: 1, toolCalls: 0 },
+        }
+      })
+      const { result } = renderHook(() => useChat(), { wrapper })
+
+      let sendPromise: Promise<void>
+      await act(async () => {
+        sendPromise = result.current.sendMessage('stream')
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+
+      expect(result.current.messages.find((message) => message.role === 'assistant')?.content).toBe('')
+      await act(async () => { await vi.advanceTimersByTimeAsync(59) })
+      expect(result.current.messages.find((message) => message.role === 'assistant')?.content).toBe('')
+      await act(async () => { await vi.advanceTimersByTimeAsync(1) })
+      expect(result.current.messages.find((message) => message.role === 'assistant')?.content).toBe('hello world')
+
+      releaseRun?.()
+      await act(async () => { await sendPromise })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('starts only one run when send is triggered twice before React rerenders', async () => {
     let finishRun: (() => void) | undefined
     const runGate = new Promise<void>((resolve) => { finishRun = resolve })

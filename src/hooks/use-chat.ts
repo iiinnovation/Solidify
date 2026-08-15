@@ -36,6 +36,14 @@ interface StreamingArtifactInfo {
 }
 
 export function processStreamingContent(fullContent: string) {
+  if (!fullContent.includes('<solidify-artifact')) {
+    return {
+      cleanText: fullContent.replace(/\n{3,}/g, '\n\n').trim(),
+      completeArtifacts: [],
+      streamingArtifact: null,
+    }
+  }
+
   const completeRegex =
     /<solidify-artifact\b([^>]*)>([\s\S]*?)<\/solidify-artifact>/g
 
@@ -515,44 +523,78 @@ ${result.content}
             restoreSnapshot: Boolean(resume),
           })
 
+          const STREAM_FRAME_MS = 60
           let latestText: string | undefined
-          for await (const event of runQuery(context)) {
-            // Deltas and progress ticks are transient UI signal, not run facts:
-            // the text is already accumulated into `run.text` by applyRunEvent.
-            // Persisting them grew runEvents without bound and made every patch
-            // copy an ever-larger array into localStorage.
-            const isDurableFact = event.type !== 'message.delta' && event.type !== 'tool.progress'
-            if (isDurableFact) runEvents.push(event)
-            run = applyRunEvent(run, event)
-            const completedTool = event.type === 'tool.completed'
-              ? [...runEvents].reverse().find((candidate) =>
-                  candidate.type === 'tool.requested' && candidate.call.id === event.callId)
-              : undefined
-            if (
-              useFileDocuments
-              && event.type === 'tool.completed'
-              && event.result.success
-              && completedTool?.type === 'tool.requested'
-              && ['write_file', 'materialize_document'].includes(completedTool.call.name)
-            ) {
-              const data = event.result.data as { path?: unknown } | undefined
-              if (typeof data?.path === 'string') {
-                useWorkspaceStore.getState().selectPath(data.path)
-                useDocumentStore.getState().setActivePath(data.path)
-                void useWorkspaceStore.getState().refreshTree()
+          let frameDirty = false
+          let frameTimer: ReturnType<typeof setTimeout> | undefined
+
+          const flushStreamFrame = () => {
+            if (frameTimer !== undefined) {
+              clearTimeout(frameTimer)
+              frameTimer = undefined
+            }
+            if (!frameDirty) return
+            frameDirty = false
+            latestText = consumeArtifactContent(run.text, false, false)
+            patchAssistantMessage({ content: latestText, agentRun: run }, false)
+          }
+
+          try {
+            for await (const event of runQuery(context)) {
+              if (event.type === 'message.delta') {
+                run = applyRunEvent(run, event)
+                frameDirty = true
+                if (frameTimer === undefined) {
+                  frameTimer = setTimeout(flushStreamFrame, STREAM_FRAME_MS)
+                }
+                continue
               }
+
+              flushStreamFrame()
+
+              // Deltas and progress ticks are transient UI signal, not run facts:
+              // the text is already accumulated into `run.text` by applyRunEvent.
+              // Persisting them grew runEvents without bound and made every patch
+              // copy an ever-larger array into localStorage.
+              const isDurableFact = event.type !== 'tool.progress'
+              if (isDurableFact) runEvents.push(event)
+              run = applyRunEvent(run, event)
+              const completedTool = event.type === 'tool.completed'
+                ? [...runEvents].reverse().find((candidate) =>
+                    candidate.type === 'tool.requested' && candidate.call.id === event.callId)
+                : undefined
+              if (
+                useFileDocuments
+                && event.type === 'tool.completed'
+                && event.result.success
+                && completedTool?.type === 'tool.requested'
+                && ['write_file', 'materialize_document'].includes(completedTool.call.name)
+              ) {
+                const data = event.result.data as { path?: unknown } | undefined
+                if (typeof data?.path === 'string') {
+                  useWorkspaceStore.getState().selectPath(data.path)
+                  useDocumentStore.getState().setActivePath(data.path)
+                  void useWorkspaceStore.getState().refreshTree()
+                }
+              }
+              if (event.type === 'message.completed') {
+                latestText = consumeArtifactContent(run.text, false, false)
+              }
+              // Durable facts (including run.completed / run.failed on abort) carry
+              // the latest text through to the stored conversation, so nothing is
+              // lost by skipping the per-token writes.
+              patchAssistantMessage({
+                ...(latestText !== undefined ? { content: latestText } : {}),
+                agentRun: run,
+                ...(isDurableFact ? { runEvents: [...runEvents] } : {}),
+              }, isDurableFact)
             }
-            if (event.type === 'message.delta' || event.type === 'message.completed') {
-              latestText = consumeArtifactContent(run.text, false, false)
+          } finally {
+            if (frameTimer !== undefined) {
+              clearTimeout(frameTimer)
+              frameTimer = undefined
             }
-            // Durable facts (including run.completed / run.failed on abort) carry
-            // the latest text through to the stored conversation, so nothing is
-            // lost by skipping the per-token writes.
-            patchAssistantMessage({
-              ...(latestText !== undefined ? { content: latestText } : {}),
-              agentRun: run,
-              ...(isDurableFact ? { runEvents: [...runEvents] } : {}),
-            }, isDurableFact)
+            frameDirty = false
           }
 
           const finalText = consumeArtifactContent(run.text, true)
@@ -618,7 +660,7 @@ ${result.content}
                   : undefined)
               if (delta) {
                 fullContent += delta
-                consumeArtifactContent(fullContent)
+                consumeArtifactContent(fullContent, false, false)
               }
             } catch {
               // 非 JSON 行，跳过

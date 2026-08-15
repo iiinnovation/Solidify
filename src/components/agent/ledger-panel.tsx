@@ -1,10 +1,15 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { BookOpen, ChevronDown, ChevronRight } from 'lucide-react'
 import { RunLedger } from '@/lib/harness/ledger'
 
-export function LedgerPanel({ runId }: { runId: string }) {
+export function LedgerPanel({ runId, revision = 0 }: { runId: string; revision?: number }) {
   const [open, setOpen] = useState(false)
-  const events = open ? new RunLedger(runId).events() : []
+  const events = useMemo(() => {
+    if (!open) return []
+    // revision 只用于让账本增长时重新读取快照，不参与读取条件。
+    void revision
+    return new RunLedger(runId).events()
+  }, [open, runId, revision])
   return (
     <div className="border-t border-border-light pt-2">
       <button type="button" onClick={() => setOpen((value) => !value)} className="flex items-center gap-1.5 text-xs text-text-secondary hover:text-text-primary">
