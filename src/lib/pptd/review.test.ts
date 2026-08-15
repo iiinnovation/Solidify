@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { parsePptdProject } from './parse'
-import { runPptdReviewLoop } from './review'
+import { buildPptdReviewPrompt, runPptdReviewLoop } from './review'
 
 const project = parsePptdProject({
   manifest: 'version: v2\ntitle: demo\nsize: [960, 540]\npages: [pages/01.page]\n',
@@ -8,6 +8,11 @@ const project = parsePptdProject({
 })
 
 describe('PPTD visual review loop', () => {
+  it('provides a deterministic page self-check prompt', () => {
+    expect(buildPptdReviewPrompt(1, 3)).toContain('第 2/3 页')
+    expect(buildPptdReviewPrompt(1, 3)).toContain('elementId')
+  })
+
   it('repairs validation errors before capture and stops when approved', async () => {
     const order: string[] = []
     const result = await runPptdReviewLoop(project, {

@@ -27,4 +27,18 @@ describe('PPTD parser and validator', () => {
     const result = validatePptdProject(project)
     expect(result.errors.map((item) => item.code)).toEqual(expect.arrayContaining(['out-of-bounds', 'duplicate-element-id', 'missing-media']))
   })
+
+  it('treats unresolved variables and text overlap as blocking errors', () => {
+    const project = parsePptdProject({
+      manifest,
+      pages: { 'pages/01.page': `${page.replace('color: "$accent"', 'color: "$missing"').replace('bounds: [48, 40, 800, 100]', 'bounds: [48, 40, 800, 100]')}
+  - elementId: subtitle
+    elementType: text
+    bounds: [100, 60, 200, 40]
+    content: {text: Overlap}
+` },
+    })
+    const result = validatePptdProject(project)
+    expect(result.errors.map((item) => item.code)).toEqual(expect.arrayContaining(['undefined-token', 'text-overlap']))
+  })
 })

@@ -71,11 +71,12 @@ function TextElement({ element, project, style, onClick }: ElementRenderProps) {
   const text = typeof content.text === 'string' ? content.text : ''
   const html = DOMPurify.sanitize(text, { ALLOWED_TAGS: ['p', 'br', 'strong', 'b', 'em', 'i', 'u', 's', 'span'], ALLOWED_ATTR: ['style'] })
   const css: CSSProperties = {
-    ...style, color: color(textStyle.color, '#000000'), background: color(textStyle.backgroundColor, 'transparent'),
+    ...style, color: color(textStyle.color, '#000000'), background: resolveTextBackground(textStyle),
     fontFamily: typeof textStyle.fontFamily === 'string' ? textStyle.fontFamily : undefined,
     fontSize: number(textStyle.fontSize, 18), fontWeight: textStyle.bold ? 700 : 400, fontStyle: textStyle.italic ? 'italic' : 'normal',
     lineHeight: number(textStyle.lineHeightPx, 0) || number(textStyle.lineHeight, 1), letterSpacing: number(textStyle.letterSpacing, 0),
     textAlign: alignment(content.align, 0), whiteSpace: content.wrap === false ? 'nowrap' : 'normal', padding: 0,
+    textShadow: resolveShadow(textStyle.shadow),
   }
   return <div style={css} onClick={onClick} dangerouslySetInnerHTML={{ __html: html }} />
 }
@@ -84,7 +85,7 @@ function ShapeElement({ element, project, style, onClick }: ElementRenderProps) 
   const fill = resolveFill(element.fill, project)
   const stroke = element.stroke as Record<string, unknown> | undefined
   const shapeName = typeof element.shapeName === 'string' ? element.shapeName : 'rect'
-  const css: CSSProperties = { ...style, background: fill, border: stroke ? `${number(stroke.width, 1)}px solid ${color(stroke.color, '#000000')}` : undefined, borderRadius: shapeName === 'ellipse' ? '50%' : shapeName === 'roundRect' ? 12 : undefined, clipPath: shapeName === 'triangle' ? 'polygon(50% 0%, 100% 100%, 0% 100%)' : undefined }
+  const css: CSSProperties = { ...style, background: fill, border: stroke ? `${number(stroke.width, 1)}px solid ${color(stroke.color, '#000000')}` : undefined, borderRadius: shapeName === 'ellipse' ? '50%' : shapeName === 'roundRect' ? 12 : undefined, clipPath: shapeName === 'triangle' ? 'polygon(50% 0%, 100% 100%, 0% 100%)' : shapeName === 'arrow' ? 'polygon(0 25%, 60% 25%, 60% 0, 100% 50%, 60% 100%, 60% 75%, 0 75%)' : undefined, boxShadow: resolveShadow(element.shadow) }
   return <div style={css} onClick={onClick} />
 }
 
@@ -108,7 +109,11 @@ function IconElement({ element, style, onClick }: ElementRenderProps) {
 
 function TableElement({ element, style, onClick }: ElementRenderProps) {
   const rows = Array.isArray(element.rows) ? element.rows : []
-  return <table style={{ ...style, borderCollapse: 'collapse', color: color(element.color, '#000000'), fontSize: number(element.fontSize, 12) }} onClick={onClick}><tbody>{rows.map((row, rowIndex) => <tr key={rowIndex}>{(Array.isArray(row) ? row : []).map((cell, cellIndex) => <td key={cellIndex} style={{ border: '1px solid #999', padding: 4 }}>{String(cell)}</td>)}</tr>)}</tbody></table>
+  return <table style={{ ...style, borderCollapse: 'collapse', color: color(element.color, '#000000'), fontSize: number(element.fontSize, 12) }} onClick={onClick}><tbody>{rows.map((row, rowIndex) => <tr key={rowIndex}>{(Array.isArray(row) ? row : []).map((cell, cellIndex) => {
+    const cellValue = cellRecord(cell)
+    const cellStyle = cellValue.style ?? {}
+    return <td key={cellIndex} style={{ border: '1px solid #999', padding: 4, color: optionalColor(cellStyle.color), background: optionalColor(cellStyle.backgroundColor ?? cellStyle.fill), fontWeight: cellStyle.bold ? 700 : undefined, textAlign: alignment(cellStyle.align, 0) }}>{String(cellValue.text ?? '')}</td>
+  })}</tr>)}</tbody></table>
 }
 
 function ChartElement({ element, style, onClick }: ElementRenderProps) {
@@ -136,6 +141,31 @@ function resolveFill(fill: Record<string, unknown> | undefined, project: PptdPro
   return color(project.theme.colors.bg, 'transparent')
 }
 
+function resolveTextBackground(style: Record<string, unknown>): string {
+  const fill = style.fill
+  if (fill && typeof fill === 'object') {
+    const fillValue = fill as Record<string, unknown>
+    if (fillValue.type === 'gradient') return `linear-gradient(${number(fillValue.angle, 180)}deg, ${gradientStops(fillValue.stops)})`
+    return color(fillValue.color, 'transparent')
+  }
+  return color(style.backgroundColor, 'transparent')
+}
+
+function resolveShadow(value: unknown): string | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const shadow = value as Record<string, unknown>
+  const x = number(shadow.offsetX, 0)
+  const y = number(shadow.offsetY, 2)
+  const blur = number(shadow.blur, 4)
+  const opacity = number(shadow.opacity, 0.25)
+  return `${x}px ${y}px ${blur}px ${color(shadow.color, `rgba(0,0,0,${opacity})`)}`
+}
+
+function cellRecord(value: unknown): { text?: unknown; style?: Record<string, unknown> } {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value as { text?: unknown; style?: Record<string, unknown> }
+  return { text: value }
+}
+
 function gradientStops(value: unknown): string {
   if (!Array.isArray(value)) return '#00000000, #00000000'
   return value.map((stop) => { const item = stop as Record<string, unknown>; return `${color(item.color, '#000000')} ${number(item.position, 0) * 100}%` }).join(', ')
@@ -147,3 +177,4 @@ function alignment(value: unknown, index: number): CSSProperties['textAlign'] {
 
 function number(value: unknown, fallback: number): number { return typeof value === 'number' && Number.isFinite(value) ? value : fallback }
 function color(value: unknown, fallback: string): string { return typeof value === 'string' && value.trim() ? value : fallback }
+function optionalColor(value: unknown): string | undefined { return typeof value === 'string' && value.trim() ? value : undefined }
