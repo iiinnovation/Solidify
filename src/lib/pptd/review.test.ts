@@ -39,4 +39,16 @@ describe('PPTD visual review loop', () => {
     expect(capture).not.toHaveBeenCalled()
     expect(result.feedback[0]).toContain('不支持 vision')
   })
+
+  it('uses the local validator when no adapter override is supplied', async () => {
+    const repair = vi.fn(async (current: typeof project) => current)
+    const result = await runPptdReviewLoop(project, {
+      visionAvailable: false,
+      capture: async () => [],
+      review: async () => ({ approved: true, feedback: '' }),
+      repair,
+    })
+    expect(result.validation.valid).toBe(true)
+    expect(repair).not.toHaveBeenCalled()
+  })
 })

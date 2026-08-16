@@ -28,10 +28,10 @@ describe('PPTD parser and validator', () => {
     expect(result.errors.map((item) => item.code)).toEqual(expect.arrayContaining(['out-of-bounds', 'duplicate-element-id', 'missing-media']))
   })
 
-  it('treats unresolved variables and text overlap as blocking errors', () => {
+  it('reports an unresolved variable as a warning and text overlap as an error', () => {
     const project = parsePptdProject({
       manifest,
-      pages: { 'pages/01.page': `${page.replace('color: "$accent"', 'color: "$missing"').replace('bounds: [48, 40, 800, 100]', 'bounds: [48, 40, 800, 100]')}
+      pages: { 'pages/01.page': `${page.replace('color: "$accent"', 'color: "$missing"')}
   - elementId: subtitle
     elementType: text
     bounds: [100, 60, 200, 40]
@@ -39,6 +39,27 @@ describe('PPTD parser and validator', () => {
 ` },
     })
     const result = validatePptdProject(project)
-    expect(result.errors.map((item) => item.code)).toEqual(expect.arrayContaining(['undefined-token', 'text-overlap']))
+    expect(project.unresolvedTokens).toEqual([{ path: 'pages/01.page', token: 'missing' }])
+    expect(result.warnings.map((item) => item.code)).toContain('undefined-token')
+    expect(result.errors.map((item) => item.code)).toEqual(expect.arrayContaining(['text-overlap']))
+    expect(result.errors.map((item) => item.code)).not.toContain('undefined-token')
+  })
+
+  it('treats $$ as a literal dollar so prose is never read as a token', () => {
+    // A function replacement: `$$` in a replacement *string* would collapse to
+    // a single `$` before the YAML ever sees it.
+    const prose = page.replace('text: "Hello"', () => 'text: "$$USD 100 与 $$Apple 的对比"')
+    const project = parsePptdProject({ manifest, pages: { 'pages/01.page': prose } })
+
+    expect(project.pages[0].elements[0].content?.text).toBe('$USD 100 与 $Apple 的对比')
+    expect(project.unresolvedTokens).toEqual([])
+    expect(validatePptdProject(project).warnings.some((item) => item.code === 'undefined-token')).toBe(false)
+  })
+
+  it('does not re-resolve a dollar that an escape just produced', () => {
+    const escaped = page.replace('color: "$bg"', () => 'color: "$$bg"')
+    const project = parsePptdProject({ manifest, pages: { 'pages/01.page': escaped } })
+
+    expect(project.pages[0].background?.color).toBe('$bg')
   })
 })

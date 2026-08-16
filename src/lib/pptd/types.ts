@@ -43,6 +43,12 @@ export interface PptdPage {
   [key: string]: unknown
 }
 
+/** A `$name` reference the parser could not resolve against the theme. */
+export interface PptdUnresolvedToken {
+  path: string
+  token: string
+}
+
 export interface PptdProject {
   version: string
   title: string
@@ -51,6 +57,12 @@ export interface PptdProject {
   pages: PptdPage[]
   pagePaths: string[]
   media: Record<string, string | Uint8Array>
+  /**
+   * Recorded while parsing, where a literal `$$` is still distinguishable from
+   * a real reference. Absent for projects built in memory (migrations, tests),
+   * which have no token syntax to resolve.
+   */
+  unresolvedTokens?: PptdUnresolvedToken[]
   source?: {
     manifestPath?: string
   }

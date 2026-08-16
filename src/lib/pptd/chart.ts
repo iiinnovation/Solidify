@@ -18,6 +18,7 @@ export interface PptdChartSpec {
 }
 
 const DEFAULT_COLORS = ['#2563eb', '#d97706', '#059669', '#dc2626', '#7c3aed', '#0891b2']
+const HEX_COLOR_RE = /^#[0-9a-fA-F]{3,8}$/
 
 export function getPptdChartSpec(element: PptdElement): PptdChartSpec {
   const content = element.content ?? {}
@@ -28,8 +29,12 @@ export function getPptdChartSpec(element: PptdElement): PptdChartSpec {
   const configured = Array.isArray(element.series) ? element.series : Array.isArray(content.series) ? content.series : []
   const series = configured.length > 0
     ? configured.map((item, index) => {
-      const value = item as Record<string, unknown>
-      return { key: String(value.key ?? value.name ?? yKey), label: typeof value.label === 'string' ? value.label : undefined, color: typeof value.color === 'string' ? value.color : DEFAULT_COLORS[index % DEFAULT_COLORS.length] }
+      const value = item && typeof item === 'object' && !Array.isArray(item) ? item as Record<string, unknown> : {}
+      return {
+        key: String(value.key ?? value.name ?? yKey),
+        label: typeof value.label === 'string' ? value.label : undefined,
+        color: safeChartColor(value.color, DEFAULT_COLORS[index % DEFAULT_COLORS.length]),
+      }
     })
     : [{ key: yKey, label: yKey, color: DEFAULT_COLORS[0] }]
   return { chartType, data: dataValue.filter((item): item is PptdChartRecord => Boolean(item && typeof item === 'object' && !Array.isArray(item))), xKey, yKey, title: typeof element.title === 'string' ? element.title : typeof content.title === 'string' ? content.title : undefined, series }
@@ -76,8 +81,9 @@ export function chartToSvg(spec: PptdChartSpec, width: number, height: number): 
   else {
     body = spec.series.map((series) => {
       const points = spec.data.map((row, index) => `${xAt(index)},${valueY(numeric(row[series.key]))}`).join(' ')
-      const area = spec.chartType === 'area' ? `<polygon points="${points} ${xAt(labels.length - 1)},${margin.top + plotHeight} ${xAt(0)},${margin.top + plotHeight}" fill="${series.color ?? DEFAULT_COLORS[0]}" opacity="0.18"/>` : ''
-      return `${area}<polyline points="${points}" fill="none" stroke="${series.color ?? DEFAULT_COLORS[0]}" stroke-width="2"/>`
+      const seriesColor = safeChartColor(series.color, DEFAULT_COLORS[0])
+      const area = spec.chartType === 'area' ? `<polygon points="${points} ${xAt(labels.length - 1)},${margin.top + plotHeight} ${xAt(0)},${margin.top + plotHeight}" fill="${seriesColor}" opacity="0.18"/>` : ''
+      return `${area}<polyline points="${points}" fill="none" stroke="${seriesColor}" stroke-width="2"/>`
     }).join('')
   }
   const labelSvg = labels.map((label, index) => `<text x="${xAt(index)}" y="${safeHeight - 8}" text-anchor="middle" font-size="10" fill="#475569">${label}</text>`).join('')
@@ -142,7 +148,7 @@ function barSvg(spec: PptdChartSpec, left: number, top: number, width: number, h
     const value = numeric(row[series.key])
     const y = top + height - ((value - min) / range) * height
     const zero = top + height - ((0 - min) / range) * height
-    return `<rect x="${left + index * groupWidth + seriesIndex * (groupWidth / spec.series.length) + 2}" y="${Math.min(y, zero)}" width="${barWidth}" height="${Math.max(1, Math.abs(zero - y))}" fill="${series.color ?? DEFAULT_COLORS[0]}" rx="2"/>`
+    return `<rect x="${left + index * groupWidth + seriesIndex * (groupWidth / spec.series.length) + 2}" y="${Math.min(y, zero)}" width="${barWidth}" height="${Math.max(1, Math.abs(zero - y))}" fill="${safeChartColor(series.color, DEFAULT_COLORS[0])}" rx="2"/>`
   })).join('')
 }
 
@@ -170,7 +176,7 @@ function scatterSvg(spec: PptdChartSpec, xAt: (index: number) => number, valueY:
   return spec.data.flatMap((row, index) => spec.series.map((series) => {
     const value = numeric(row[series.key])
     const radius = spec.chartType === 'bubble' ? Math.max(3, Math.min(18, Math.sqrt(Math.abs(numeric(row.size ?? value))))) : 4
-    return `<circle cx="${xAt(index)}" cy="${valueY(value)}" r="${radius}" fill="${series.color ?? DEFAULT_COLORS[0]}" opacity="0.75"/>`
+    return `<circle cx="${xAt(index)}" cy="${valueY(value)}" r="${radius}" fill="${safeChartColor(series.color, DEFAULT_COLORS[0])}" opacity="0.75"/>`
   })).join('')
 }
 
@@ -184,7 +190,10 @@ function radarSvg(spec: PptdChartSpec, left: number, top: number, width: number,
     return `${cx + Math.cos(angle) * radius * (value / max)},${cy + Math.sin(angle) * radius * (value / max)}`
   }
   const grid = `<circle cx="${cx}" cy="${cy}" r="${radius}" fill="none" stroke="#cbd5e1"/><circle cx="${cx}" cy="${cy}" r="${radius * 0.5}" fill="none" stroke="#e2e8f0"/>`
-  const polygons = spec.series.map((series) => `<polygon points="${spec.data.map((row, index) => point(index, numeric(row[series.key]))).join(' ')}" fill="${series.color ?? DEFAULT_COLORS[0]}" opacity="0.22" stroke="${series.color ?? DEFAULT_COLORS[0]}"/>`).join('')
+  const polygons = spec.series.map((series) => {
+    const seriesColor = safeChartColor(series.color, DEFAULT_COLORS[0])
+    return `<polygon points="${spec.data.map((row, index) => point(index, numeric(row[series.key]))).join(' ')}" fill="${seriesColor}" opacity="0.22" stroke="${seriesColor}"/>`
+  }).join('')
   return `${grid}${polygons}`
 }
 
@@ -195,6 +204,16 @@ function numeric(value: unknown): number {
 
 function escapeXml(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;')
+}
+
+/**
+ * Chart colours are inserted into an SVG attribute.  Keep this deliberately
+ * narrower than CSS colour syntax: accepting only hex colours both makes the
+ * output deterministic and prevents an untrusted value from closing the
+ * attribute and injecting markup.
+ */
+function safeChartColor(value: unknown, fallback: string): string {
+  return typeof value === 'string' && HEX_COLOR_RE.test(value) ? value : fallback
 }
 
 export function svgDataUri(svg: string): string {

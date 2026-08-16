@@ -72,12 +72,15 @@ function TextElement({ element, project, style, onClick }: ElementRenderProps) {
   const textStyle = resolveTextStyle(content, project)
   const text = typeof content.text === 'string' ? content.text : ''
   const html = DOMPurify.sanitize(text, { ALLOWED_TAGS: ['p', 'br', 'strong', 'b', 'em', 'i', 'u', 's', 'span'], ALLOWED_ATTR: ['style'] })
+  const lineHeightPx = finiteNumber(textStyle.lineHeightPx)
+  const verticalAlign = verticalAlignment(content.valign ?? (Array.isArray(content.align) ? content.align[1] : undefined))
   const css: CSSProperties = {
     ...style, color: color(textStyle.color, '#000000'), background: resolveTextBackground(textStyle),
     fontFamily: typeof textStyle.fontFamily === 'string' ? textStyle.fontFamily : undefined,
     fontSize: number(textStyle.fontSize, 18), fontWeight: textStyle.bold ? 700 : 400, fontStyle: textStyle.italic ? 'italic' : 'normal',
-    lineHeight: number(textStyle.lineHeightPx, 0) || number(textStyle.lineHeight, 1), letterSpacing: number(textStyle.letterSpacing, 0),
-    textAlign: alignment(content.align, 0), whiteSpace: content.wrap === false ? 'nowrap' : 'normal', padding: 0,
+    lineHeight: lineHeightPx === undefined ? number(textStyle.lineHeight, 1) : `${lineHeightPx}px`, letterSpacing: number(textStyle.letterSpacing, 0),
+    textAlign: alignment(content.align, 0), whiteSpace: content.wrap === false ? 'nowrap' : whiteSpace(content.whiteSpace), padding: 0,
+    display: 'flex', flexDirection: 'column', justifyContent: verticalAlign,
     textShadow: resolveShadow(textStyle.shadow),
   }
   return <div style={css} onClick={onClick} dangerouslySetInnerHTML={{ __html: html }} />
@@ -103,7 +106,7 @@ function ImageElement({ element, project, style, onClick }: ElementRenderProps) 
 
 function LineElement({ element, style, onClick }: ElementRenderProps) {
   const stroke = color((element.stroke as Record<string, unknown> | undefined)?.color, '#000000')
-  return <svg style={style} onClick={onClick} viewBox="0 0 100 100" preserveAspectRatio="none"><line x1="0" y1="50" x2="100" y2="50" stroke={stroke} strokeWidth={number((element.stroke as Record<string, unknown> | undefined)?.width, 1)} vectorEffect="non-scaling-stroke" /></svg>
+  return <svg style={style} onClick={onClick} viewBox="0 0 100 100" preserveAspectRatio="none"><line x1="0" y1="0" x2="100" y2="100" stroke={stroke} strokeWidth={number((element.stroke as Record<string, unknown> | undefined)?.width, 1)} vectorEffect="non-scaling-stroke" /></svg>
 }
 
 function IconElement({ element, style, onClick }: ElementRenderProps) {
@@ -124,7 +127,8 @@ function ChartElement({ element, style, onClick }: ElementRenderProps) {
   const [width, height] = element.bounds.slice(2) as [number, number]
   const spec = getPptdChartSpec(element)
   const svg = chartToSvg(spec, width, height)
-  return <div data-pptd-chart-type={spec.chartType} style={{ ...style, overflow: 'hidden' }} onClick={onClick} dangerouslySetInnerHTML={{ __html: svg }} />
+  const safeSvg = DOMPurify.sanitize(svg, { USE_PROFILES: { svg: true } })
+  return <div data-pptd-chart-type={spec.chartType} style={{ ...style, overflow: 'hidden' }} onClick={onClick} dangerouslySetInnerHTML={{ __html: safeSvg }} />
 }
 
 interface ElementRenderProps { element: PptdElement; project: PptdProject; style: CSSProperties; onClick: (event?: MouseEvent) => void }
@@ -143,7 +147,7 @@ function resolveBackground(background: Record<string, unknown> | undefined, proj
 
 function resolveFill(fill: Record<string, unknown> | undefined, project: PptdProject): string {
   if (!fill || fill.type === 'none') return 'transparent'
-  if (fill.type === 'solid') return color(fill.color, 'transparent')
+  if (fill.type === 'solid') return color(fill.color, color(project.theme.colors.bg, '#ffffff'))
   if (fill.type === 'gradient') return `linear-gradient(${number(fill.angle, 180)}deg, ${gradientStops(fill.stops)})`
   return color(project.theme.colors.bg, 'transparent')
 }
@@ -179,9 +183,22 @@ function gradientStops(value: unknown): string {
 }
 
 function alignment(value: unknown, index: number): CSSProperties['textAlign'] {
+  if (typeof value === 'string') return index === 0 ? value as CSSProperties['textAlign'] : undefined
   return Array.isArray(value) && typeof value[index] === 'string' ? value[index] as CSSProperties['textAlign'] : index === 0 ? 'left' : undefined
 }
 
+function verticalAlignment(value: unknown): CSSProperties['justifyContent'] {
+  if (value === 'middle' || value === 'mid' || value === 'center') return 'center'
+  if (value === 'bottom') return 'flex-end'
+  return 'flex-start'
+}
+
+function whiteSpace(value: unknown): CSSProperties['whiteSpace'] {
+  return value === 'normal' || value === 'nowrap' || value === 'pre' || value === 'pre-line' || value === 'break-spaces' ? value : 'pre-wrap'
+}
+
 function number(value: unknown, fallback: number): number { return typeof value === 'number' && Number.isFinite(value) ? value : fallback }
-function color(value: unknown, fallback: string): string { return typeof value === 'string' && value.trim() ? value : fallback }
-function optionalColor(value: unknown): string | undefined { return typeof value === 'string' && value.trim() ? value : undefined }
+function finiteNumber(value: unknown): number | undefined { return typeof value === 'number' && Number.isFinite(value) ? value : undefined }
+function color(value: unknown, fallback: string): string { return typeof value === 'string' && isHexColor(value) ? value.trim() : fallback }
+function optionalColor(value: unknown): string | undefined { return typeof value === 'string' && isHexColor(value) ? value.trim() : undefined }
+function isHexColor(value: string): boolean { return /^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(value.trim()) }

@@ -1,5 +1,5 @@
 import { load as parseYaml } from 'js-yaml'
-import type { PptdBounds, PptdElement, PptdFiles, PptdPage, PptdProject, PptdSize, PptdTextStyle, PptdTheme } from './types'
+import type { PptdBounds, PptdElement, PptdFiles, PptdPage, PptdProject, PptdSize, PptdTextStyle, PptdTheme, PptdUnresolvedToken } from './types'
 
 export class PptdParseError extends Error {
   public readonly sourcePath?: string
@@ -18,7 +18,8 @@ export function parsePptdProject(files: PptdFiles): PptdProject {
   if (version !== 'v2') throw new PptdParseError(`暂不支持 PPTD 版本：${version}`, manifestPath)
   const title = requiredString(manifest.title, 'title', manifestPath)
   const size = parseSize(manifest.size ?? [960, 540], manifestPath)
-  const theme = parseTheme(manifest.theme ?? {}, manifestPath)
+  const unresolvedTokens: PptdUnresolvedToken[] = []
+  const theme = parseTheme(manifest.theme ?? {}, manifestPath, collectorFor(unresolvedTokens, `${manifestPath}: theme`))
   const pagePaths = requiredArray(manifest.pages, 'pages', manifestPath).map((value, index) => {
     const path = requiredString(value, `pages[${index}]`, manifestPath)
     return safeRelativePath(path, manifestPath)
@@ -30,7 +31,7 @@ export function parsePptdProject(files: PptdFiles): PptdProject {
   const pages = pagePaths.map((pagePath) => {
     const raw = files.pages[pagePath]
     if (raw === undefined) throw new PptdParseError(`缺少页面文件：${pagePath}`, manifestPath)
-    return parsePage(raw, pagePath, theme)
+    return parsePage(raw, pagePath, theme, collectorFor(unresolvedTokens, pagePath))
   })
 
   return {
@@ -41,6 +42,7 @@ export function parsePptdProject(files: PptdFiles): PptdProject {
     pages,
     pagePaths,
     media: files.media ?? {},
+    unresolvedTokens,
     source: { manifestPath },
   }
 }
@@ -49,16 +51,26 @@ export function parsePptdPage(raw: string, path = 'page.page', theme: PptdTheme 
   return parsePage(raw, path, theme)
 }
 
-function parsePage(raw: string, path: string, theme: PptdTheme): PptdPage {
+type TokenCollector = (token: string) => void
+
+function collectorFor(sink: PptdUnresolvedToken[], path: string): TokenCollector {
+  return (token) => {
+    if (!sink.some((item) => item.path === path && item.token === token)) sink.push({ path, token })
+  }
+}
+
+function parsePage(raw: string, path: string, theme: PptdTheme, onUnresolved?: TokenCollector): PptdPage {
   const source = asRecord(parseYamlDocument(raw, path), path)
   const elements = requiredArray(source.elements ?? [], 'elements', path).map((value, index) => parseElement(value, `${path}: elements[${index}]`))
+  // Validate the shape here, but leave substitution to the single pass below:
+  // resolving twice would re-interpret a `$` that a `$$` escape just produced.
+  if (source.background !== undefined) asRecord(source.background, path)
   const page = {
     ...source,
     ...(source.pageType === undefined ? {} : { pageType: requiredString(source.pageType, 'pageType', path) }),
-    ...(source.background === undefined ? {} : { background: resolveTokens(asRecord(source.background, path), theme) }),
     elements,
   } as PptdPage
-  return resolveTokens(page, theme) as PptdPage
+  return resolveTokens(page, theme, onUnresolved) as PptdPage
 }
 
 function parseElement(value: unknown, path: string): PptdElement {
@@ -77,7 +89,7 @@ function parseElement(value: unknown, path: string): PptdElement {
   return { ...source, elementId, elementType: elementType as PptdElement['elementType'], bounds }
 }
 
-function parseTheme(value: unknown, path: string): PptdTheme {
+function parseTheme(value: unknown, path: string, onUnresolved?: TokenCollector): PptdTheme {
   const source = asRecord(value, `${path}: theme`)
   const colorsSource = asRecord(source.colors ?? {}, `${path}: theme.colors`)
   const textStylesSource = asRecord(source.textStyles ?? {}, `${path}: theme.textStyles`)
@@ -85,17 +97,36 @@ function parseTheme(value: unknown, path: string): PptdTheme {
   for (const [name, color] of Object.entries(colorsSource)) colors[name] = requiredString(color, `theme.colors.${name}`, path)
   const textStyles: Record<string, PptdTextStyle> = {}
   for (const [name, style] of Object.entries(textStylesSource)) textStyles[name] = asRecord(style, `${path}: theme.textStyles.${name}`) as PptdTextStyle
-  return resolveTokens({ ...source, colors, textStyles }, { ...emptyTheme(), ...source, colors, textStyles }) as PptdTheme
+  return resolveTokens({ ...source, colors, textStyles }, { ...emptyTheme(), ...source, colors, textStyles }, onUnresolved) as PptdTheme
 }
 
-function resolveTokens(value: unknown, theme: PptdTheme): unknown {
+/**
+ * Substitutes `$name` / `$colors.name` references against the theme. `$$` is
+ * the escape for a literal dollar, so prose like `$$USD 100` survives intact
+ * and is never mistaken for a missing token. Anything still unresolved is
+ * reported through `onUnresolved` and left verbatim.
+ */
+function resolveTokens(value: unknown, theme: PptdTheme, onUnresolved?: TokenCollector): unknown {
   if (typeof value === 'string') {
     const exact = value.match(/^\$([\w.-]+)$/)
-    if (exact) return lookupToken(exact[1], theme) ?? value
-    return value.replace(/\$([\w.-]+)/g, (_match, token: string) => String(lookupToken(token, theme) ?? `$${token}`))
+    if (exact) {
+      const resolved = lookupToken(exact[1], theme)
+      if (resolved !== undefined) return resolved
+      onUnresolved?.(exact[1])
+      return value
+    }
+    return value.replace(/\$\$|\$([\w.-]+)/g, (match, token: string | undefined) => {
+      if (token === undefined) return '$'
+      const resolved = lookupToken(token, theme)
+      if (resolved === undefined) {
+        onUnresolved?.(token)
+        return match
+      }
+      return String(resolved)
+    })
   }
-  if (Array.isArray(value)) return value.map((item) => resolveTokens(item, theme))
-  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, resolveTokens(item, theme)]))
+  if (Array.isArray(value)) return value.map((item) => resolveTokens(item, theme, onUnresolved))
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, resolveTokens(item, theme, onUnresolved)]))
   return value
 }
 

@@ -58,15 +58,27 @@ function migrateSlide(slide: SlideItem, colors: Record<string, string>, pageInde
     })
   } else if (slide.layout === 'timeline') {
     const items = slide.items ?? []
+    // Rows must stay shorter than their spacing: at ten or more items the old
+    // fixed 36px row was taller than the gap it was given, so consecutive
+    // entries overlapped and tripped the text-overlap check.
+    const spacing = Math.min(72, 330 / Math.max(1, items.length))
+    const rowHeight = Math.max(8, Math.min(36, spacing - 4))
+    const dotSize = Math.min(14, rowHeight)
     items.forEach((item, index) => {
-      const y = 120 + index * Math.min(72, 330 / Math.max(1, items.length))
-      elements.push({ elementId: `page-${pageIndex}-timeline-dot-${index}`, elementType: 'shape', bounds: [88, y + 8, 14, 14], shapeName: 'ellipse', fill: { type: 'solid', color: colors.primary } })
-      elements.push(textElement(`page-${pageIndex}-timeline-time-${index}`, item.time, [124, y, 120, 28], 14, colors.accent))
-      elements.push(textElement(`page-${pageIndex}-timeline-text-${index}`, item.text, [250, y, 630, 36], 15, colors.text))
+      const y = 120 + index * spacing
+      elements.push({ elementId: `page-${pageIndex}-timeline-dot-${index}`, elementType: 'shape', bounds: [88, y + (rowHeight - dotSize) / 2, dotSize, dotSize], shapeName: 'ellipse', fill: { type: 'solid', color: colors.primary } })
+      elements.push(textElement(`page-${pageIndex}-timeline-time-${index}`, item.time, [124, y, 120, rowHeight], 14, colors.accent))
+      elements.push(textElement(`page-${pageIndex}-timeline-text-${index}`, item.text, [250, y, 630, rowHeight], 15, colors.text))
     })
   }
   if (slide.notes) elements.push({ elementId: `page-${pageIndex}-notes`, elementType: 'text', bounds: [48, 500, 864, 18], content: { text: slide.notes, fontSize: 9, color: colors.muted, wrap: false } })
-  return { pageType: slide.layout, background: { type: 'solid', color: colors.bg }, elements }
+  // The legacy renderer uses the theme primary colour as the full-bleed
+  // background for title/section slides.  Keep that pairing with their white
+  // title text when migrating; putting white text on the normal near-white
+  // page background makes the title effectively invisible in both preview and
+  // exported PPTX files.
+  const backgroundColor = slide.layout === 'title' || slide.layout === 'section' ? colors.primary : colors.bg
+  return { pageType: slide.layout, background: { type: 'solid', color: backgroundColor }, elements }
 }
 
 function textElement(elementId: string, text: string, bounds: readonly [number, number, number, number], fontSize: number, color: string, align: string = 'left'): PptdElement {
@@ -75,7 +87,11 @@ function textElement(elementId: string, text: string, bounds: readonly [number, 
 
 function bulletText(elementId: string, value: string | string[] | undefined, bounds: readonly [number, number, number, number], color: string, fontSize: number): PptdElement {
   const lines = Array.isArray(value) ? value : value ? [value] : []
-  return textElement(elementId, lines.map((line) => `• ${line}`).join('\n'), bounds, fontSize, color)
+  const element = textElement(elementId, lines.map((line) => `• ${line}`).join('\n'), bounds, fontSize, color)
+  // Preserve the line breaks that the legacy list renderer displays.  The
+  // renderer otherwise defaults to normal white-space collapsing.
+  element.content = { ...(element.content ?? {}), whiteSpace: 'pre-wrap' }
+  return element
 }
 
 function card(elementId: string, bounds: readonly [number, number, number, number], color: string): PptdElement {

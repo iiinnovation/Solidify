@@ -1,4 +1,5 @@
 import type { PptdProject, PptdValidationResult } from './types'
+import { validatePptdProject } from './validate'
 
 export interface PptdReviewImage {
   pageIndex: number
@@ -8,7 +9,8 @@ export interface PptdReviewImage {
 export interface PptdReviewLoopOptions {
   maxRounds?: number
   visionAvailable?: boolean
-  validate: (project: PptdProject) => PptdValidationResult | Promise<PptdValidationResult>
+  /** Override for adapters/tests; production reviews use the local validator. */
+  validate?: (project: PptdProject) => PptdValidationResult | Promise<PptdValidationResult>
   capture: (project: PptdProject, pageIndexes: number[]) => Promise<PptdReviewImage[]>
   review: (images: PptdReviewImage[], project: PptdProject) => Promise<{ approved: boolean; feedback: string }>
   repair: (project: PptdProject, feedback: string, validation: PptdValidationResult) => Promise<PptdProject>
@@ -33,8 +35,9 @@ export function buildPptdReviewPrompt(pageIndex: number, pageCount: number): str
  */
 export async function runPptdReviewLoop(project: PptdProject, options: PptdReviewLoopOptions): Promise<PptdReviewResult> {
   const maxRounds = Math.max(1, options.maxRounds ?? 3)
+  const validate = options.validate ?? validatePptdProject
   let current = project
-  let validation = await options.validate(current)
+  let validation = await validate(current)
   const feedback: string[] = []
 
   if (options.visionAvailable === false) {
@@ -47,7 +50,7 @@ export async function runPptdReviewLoop(project: PptdProject, options: PptdRevie
       const message = validation.errors.map((item) => `${item.path}: ${item.message}`).join('\n')
       feedback.push(`结构/版式校验第 ${round} 轮：${message}`)
       current = await options.repair(current, message, validation)
-      validation = await options.validate(current)
+      validation = await validate(current)
       continue
     }
     const images = await options.capture(current, current.pages.map((_page, index) => index))
@@ -55,7 +58,7 @@ export async function runPptdReviewLoop(project: PptdProject, options: PptdRevie
     if (result.feedback) feedback.push(`视觉审阅第 ${round} 轮：${result.feedback}`)
     if (result.approved) return { project: current, approved: true, rounds: round, validation, feedback }
     current = await options.repair(current, result.feedback, validation)
-    validation = await options.validate(current)
+    validation = await validate(current)
   }
 
   return { project: current, approved: false, rounds: maxRounds, validation, feedback }

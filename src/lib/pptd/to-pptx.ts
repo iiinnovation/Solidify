@@ -4,17 +4,39 @@ import { pageInches, toPptxBounds } from './geometry'
 import { chartPptxData, chartToSvg, getPptdChartSpec, isImagePptdChartType, isNativePptdChartType, svgDataUri } from './chart'
 import { createPptdDegradationReport, type PptdDegradationReport } from './report'
 import { pptdMediaDataUrl } from './media'
+import { validatePptdProject } from './validate'
 
 export interface PptdExportResult { blob: Blob; degradations: string[]; report: PptdDegradationReport }
 
+const POINTS_PER_INCH = 72
+const CSS_PIXELS_PER_INCH = 96
+const CSS_PX_TO_PT = POINTS_PER_INCH / CSS_PIXELS_PER_INCH
+
+/**
+ * Only defects that leave nothing worth writing block the download. Layout
+ * diagnostics — overlap, out-of-bounds, duplicate ids — describe an imperfect
+ * deck, not an unexportable one, and every element path below already degrades
+ * gracefully. They travel in the degradation report instead, so the user still
+ * gets a file and still learns what was wrong. The model-facing review loop in
+ * `review.ts` keeps treating every error as a repair trigger.
+ */
+const EXPORT_BLOCKING_CODES = new Set(['empty-pages'])
+
 export async function exportPptdAsPptx(project: PptdProject): Promise<PptdExportResult> {
+  const validation = validatePptdProject(project)
+  const blocking = validation.errors.filter((item) => EXPORT_BLOCKING_CODES.has(item.code ?? ''))
+  if (blocking.length > 0) {
+    throw new Error(`PPTD 校验失败，已阻止导出：\n${blocking.map((item) => `${item.path}: ${item.message}`).join('\n')}`)
+  }
   const presentation = new PptxGenJS()
   const [width, height] = pageInches(project.size)
   presentation.defineLayout({ name: 'PPTD', width, height })
   presentation.layout = 'PPTD'
   presentation.title = project.title
   presentation.author = 'Solidify'
-  const degradations: string[] = []
+  const degradations: string[] = validation.errors
+    .filter((item) => !EXPORT_BLOCKING_CODES.has(item.code ?? ''))
+    .map((item) => `校验：${item.path}: ${item.message}`)
   for (const [pageIndex, page] of project.pages.entries()) {
     const slide = presentation.addSlide()
     applyBackground(slide, page.background, project, pageIndex, degradations)
@@ -31,7 +53,8 @@ export async function exportPptdAsPptx(project: PptdProject): Promise<PptdExport
 function applyBackground(slide: PptxGenJS.Slide, background: Record<string, unknown> | undefined, project: PptdProject, pageIndex: number, degradations: string[]) {
   const stops = Array.isArray(background?.stops) ? background.stops : []
   const firstStop = stops[0] && typeof stops[0] === 'object' ? (stops[0] as Record<string, unknown>).color : undefined
-  const color = normalizeColor(background?.color ?? firstStop ?? project.theme.colors.bg ?? '#ffffff')
+  const sourceColor = background?.color ?? firstStop ?? project.theme.colors.bg ?? '#ffffff'
+  const color = normalizeColor(sourceColor, '#ffffff', (value) => degradations.push(`第 ${pageIndex + 1} 页背景颜色 ${JSON.stringify(value)} 不是受支持的 hex 格式，已回退为 #FFFFFF`))
   slide.background = { color }
   if (background?.type === 'gradient') degradations.push(`第 ${pageIndex + 1} 页背景渐变已转为纯色 #${color}`)
 }
@@ -42,24 +65,27 @@ async function renderElement(slide: PptxGenJS.Slide, element: PptdElement, proje
   const degrade = (message: string) => degradations.push(`第 ${pageIndex + 1} 页 "${element.elementId}" ${message}`)
   if (element.elementType === 'text') {
     const style = resolveStyle(content, project)
-    const runs = richTextRuns(typeof content.text === 'string' ? content.text : '')
+    const runs = richTextRuns(typeof content.text === 'string' ? content.text : '', (value) => degrade(`富文本颜色 ${JSON.stringify(value)} 不是受支持的 hex 格式，已回退为 #000000`))
     const alignment = Array.isArray(content.align) ? content.align : [content.align, content.valign]
     const textFill = style.fill && typeof style.fill === 'object' ? style.fill as Record<string, unknown> : undefined
     const textStops = Array.isArray(textFill?.stops) ? textFill.stops : []
     const textFallback = textStops[0] && typeof textStops[0] === 'object' ? (textStops[0] as Record<string, unknown>).color : undefined
     const requestedFontSize = number(style.fontSize, 18)
     const lineHeight = number(style.lineHeight, 1)
-    const fontSize = fittedFontSize(requestedFontSize, w * 96, h * 96, lineHeight, runs)
-    const lineSpacing = number(style.lineHeightPx, 0) || fontSize * lineHeight
+    const fontSize = fittedFontSize(requestedFontSize, w * POINTS_PER_INCH, h * POINTS_PER_INCH, lineHeight, runs)
+    const lineHeightPx = positiveNumber(style.lineHeightPx)
+    const lineSpacing = lineHeightPx === undefined ? fontSize * lineHeight : lineHeightPx * CSS_PX_TO_PT
+    const textColorSource = textFallback ?? style.color ?? '#000000'
+    const textColor = normalizeColor(textColorSource, '#000000', (value) => degrade(`文字颜色 ${JSON.stringify(value)} 不是受支持的 hex 格式，已回退为 #000000`))
     if (fontSize < requestedFontSize - 0.5) degrade(`字号由 ${requestedFontSize}pt 自动缩至 ${fontSize.toFixed(1)}pt 以避免溢出`)
     if (textFill?.type === 'gradient') degrade(`文字渐变已转为纯色 ${String(textFallback ?? style.color ?? '#000000')}`)
     slide.addText(runs.length > 0 ? runs : [{ text: '', options: {} }], {
       x, y, w, h, fontSize, fontFace: string(style.fontFamily) ?? 'Arial',
-      color: normalizeColor(textFallback ?? style.color ?? '#000000'), bold: Boolean(style.bold), italic: Boolean(style.italic),
+      color: textColor, bold: Boolean(style.bold), italic: Boolean(style.italic),
       align: string(alignment[0]) as 'left' | 'center' | 'right' | undefined,
-      valign: string(alignment[1]) as 'top' | 'mid' | 'bottom' | undefined, margin: 0,
+      valign: pptxVAlign(alignment[1]), margin: 0,
       charSpacing: number(style.letterSpacing, 0), lineSpacing, paraSpaceBefore: 0, paraSpaceAfter: 0, fit: 'shrink',
-      shadow: pptxShadow(style.shadow),
+      shadow: pptxShadow(style.shadow, (value) => degrade(`阴影颜色 ${JSON.stringify(value)} 不是受支持的 hex 格式，已回退为 #000000`)),
     } as never)
     return
   }
@@ -76,7 +102,8 @@ async function renderElement(slide: PptxGenJS.Slide, element: PptdElement, proje
   }
   if (element.elementType === 'line') {
     const stroke = (element.stroke ?? {}) as Record<string, unknown>
-    slide.addShape(presentation.ShapeType.line, { x, y, w, h, line: { color: normalizeColor(stroke.color ?? '#000000'), width: number(stroke.width, 1) } } as never)
+    const lineColor = normalizeColor(stroke.color ?? '#000000', '#000000', (value) => degrade(`线条颜色 ${JSON.stringify(value)} 不是受支持的 hex 格式，已回退为 #000000`))
+    slide.addShape(presentation.ShapeType.line, { x, y, w, h, line: { color: lineColor, width: number(stroke.width, 1) } } as never)
     return
   }
   if (element.elementType === 'table') {
@@ -90,8 +117,8 @@ async function renderElement(slide: PptxGenJS.Slide, element: PptdElement, proje
           text: String(value.text ?? ''),
           options: {
             bold: Boolean(style.bold),
-            color: style.color ? normalizeColor(style.color) : undefined,
-            fill: style.backgroundColor ? { color: normalizeColor(style.backgroundColor) } : undefined,
+            color: style.color ? normalizeColor(style.color, '#000000', (invalid) => degrade(`表格文字颜色 ${JSON.stringify(invalid)} 不是受支持的 hex 格式，已回退为 #000000`)) : undefined,
+            fill: style.backgroundColor ? { color: normalizeColor(style.backgroundColor, '#FFFFFF', (invalid) => degrade(`表格填充颜色 ${JSON.stringify(invalid)} 不是受支持的 hex 格式，已回退为 #FFFFFF`)) } : undefined,
           },
         }
       })
@@ -125,7 +152,10 @@ async function renderElement(slide: PptxGenJS.Slide, element: PptdElement, proje
   if (fill.type === 'gradient') degrade('渐变填充已转为第一个色标的纯色')
   const firstStop = Array.isArray(fill.stops) ? (fill.stops[0] as Record<string, unknown> | undefined)?.color : undefined
   const fillValue = fill.color ?? firstStop ?? 'FFFFFF'
-  slide.addShape(shape, { x, y, w, h, fill: { color: normalizeColor(fillValue), transparency: fill.type === 'none' ? 100 : colorTransparency(fillValue) }, line: { color: normalizeColor(((element.stroke ?? {}) as Record<string, unknown>).color ?? '000000') }, shadow: pptxShadow(element.shadow) } as never)
+  const fillColor = normalizeColor(fillValue, '#FFFFFF', (value) => degrade(`填充颜色 ${JSON.stringify(value)} 不是受支持的 hex 格式，已回退为 #FFFFFF`))
+  const strokeValue = ((element.stroke ?? {}) as Record<string, unknown>).color ?? '#000000'
+  const strokeColor = normalizeColor(strokeValue, '#000000', (value) => degrade(`边框颜色 ${JSON.stringify(value)} 不是受支持的 hex 格式，已回退为 #000000`))
+  slide.addShape(shape, { x, y, w, h, fill: { color: fillColor, transparency: fill.type === 'none' ? 100 : colorTransparency(fillValue) }, line: { color: strokeColor }, shadow: pptxShadow(element.shadow, (value) => degrade(`阴影颜色 ${JSON.stringify(value)} 不是受支持的 hex 格式，已回退为 #000000`)) } as never)
 }
 
 function resolveStyle(content: Record<string, unknown>, project: PptdProject): Record<string, unknown> {
@@ -133,8 +163,11 @@ function resolveStyle(content: Record<string, unknown>, project: PptdProject): R
   return { ...(named ?? {}), ...content }
 }
 
-function richTextRuns(value: string): Array<{ text: string; options: Record<string, unknown> }> {
-  if (typeof DOMParser === 'undefined' || !/[<][a-z]/i.test(value)) return value ? [{ text: value, options: {} }] : []
+function richTextRuns(value: string, onInvalidColor?: (value: unknown) => void): Array<{ text: string; options: Record<string, unknown> }> {
+  if (typeof DOMParser === 'undefined' || !/[<][a-z]/i.test(value)) {
+    const lines = value.split(/\r?\n/)
+    return value ? lines.map((text, index) => ({ text, options: index < lines.length - 1 ? { breakLine: true } : {} })) : []
+  }
   const document = new DOMParser().parseFromString(`<div>${value}</div>`, 'text/html')
   const runs: Array<{ text: string; options: Record<string, unknown> }> = []
   const breakLine = () => {
@@ -157,7 +190,7 @@ function richTextRuns(value: string): Array<{ text: string; options: Record<stri
     if (tag === 'em' || tag === 'i') next.italic = true
     if (tag === 'u') next.underline = { style: 'sng' }
     if (tag === 's') next.strike = true
-    if (tag === 'span') Object.assign(next, parseInlineStyle(node.getAttribute('style')))
+    if (tag === 'span') Object.assign(next, parseInlineStyle(node.getAttribute('style'), onInvalidColor))
     node.childNodes.forEach((child) => visit(child, next))
   }
   document.body.firstElementChild?.childNodes.forEach((node) => visit(node, {}))
@@ -196,14 +229,14 @@ async function preCropDataUrl(source: string, crop: CropRect): Promise<string> {
   })
 }
 
-function parseInlineStyle(value: string | null): Record<string, unknown> {
+function parseInlineStyle(value: string | null, onInvalidColor?: (value: unknown) => void): Record<string, unknown> {
   if (!value) return {}
   const result: Record<string, unknown> = {}
   for (const declaration of value.split(';')) {
     const [property, raw] = declaration.split(':', 2)
     const normalized = raw?.trim()
     if (!normalized) continue
-    if (property.trim() === 'color') result.color = normalizeColor(normalized)
+    if (property.trim() === 'color') result.color = normalizeColor(normalized, '#000000', onInvalidColor)
     if (property.trim() === 'font-weight' && normalized === 'bold') result.bold = true
     if (property.trim() === 'font-style' && normalized === 'italic') result.italic = true
   }
@@ -215,10 +248,10 @@ function cellRecord(value: unknown): { text?: unknown; style?: Record<string, un
   return { text: value }
 }
 
-function pptxShadow(value: unknown): Record<string, unknown> | undefined {
+function pptxShadow(value: unknown, onInvalidColor?: (value: unknown) => void): Record<string, unknown> | undefined {
   if (!value || typeof value !== 'object') return undefined
   const shadow = value as Record<string, unknown>
-  return { type: 'outer', color: normalizeColor(shadow.color ?? '#000000'), opacity: number(shadow.opacity, 0.25), blur: number(shadow.blur, 4), angle: number(shadow.angle, 45), distance: number(shadow.distance, 2) }
+  return { type: 'outer', color: normalizeColor(shadow.color ?? '#000000', '#000000', onInvalidColor), opacity: number(shadow.opacity, 0.25), blur: number(shadow.blur, 4), angle: number(shadow.angle, 45), distance: number(shadow.distance, 2) }
 }
 
 function fittedFontSize(requested: number, width: number, height: number, lineHeight: number, runs: Array<{ text: string; options: Record<string, unknown> }>): number {
@@ -230,16 +263,31 @@ function fittedFontSize(requested: number, width: number, height: number, lineHe
   return Math.max(6, Math.min(requested, safeMaximum))
 }
 
-function normalizeColor(value: unknown): string {
-  let hex = String(value ?? '#000000').replace(/^#/, '').slice(0, 8)
+function normalizeColor(value: unknown, fallback = '#000000', onInvalid?: (value: unknown) => void): string {
+  const normalized = parseHexColor(value)
+  if (normalized) return normalized.slice(0, 6)
+  onInvalid?.(value)
+  return parseHexColor(fallback)?.slice(0, 6) ?? '000000'
+}
+
+function parseHexColor(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  let hex = value.trim().replace(/^#/, '')
+  if (!/^(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(hex)) return undefined
   if (hex.length === 3 || hex.length === 4) hex = hex.split('').map((char) => `${char}${char}`).join('')
-  return hex.slice(0, 6).padEnd(6, '0').toUpperCase()
+  return hex.toUpperCase()
 }
 function colorTransparency(value: unknown): number {
-  let hex = String(value ?? '').replace(/^#/, '')
-  if (hex.length === 4) hex = hex.split('').map((char) => `${char}${char}`).join('')
-  if (hex.length !== 8) return 0
+  const hex = parseHexColor(value)
+  if (!hex || hex.length !== 8) return 0
   return Math.max(0, Math.min(100, Math.round((1 - Number.parseInt(hex.slice(6, 8), 16) / 255) * 100)))
 }
 function number(value: unknown, fallback: number): number { return typeof value === 'number' && Number.isFinite(value) ? value : fallback }
+function positiveNumber(value: unknown): number | undefined { return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined }
 function string(value: unknown): string | undefined { return typeof value === 'string' ? value : undefined }
+function pptxVAlign(value: unknown): 'top' | 'mid' | 'bottom' | undefined {
+  if (value === 'top') return 'top'
+  if (value === 'bottom') return 'bottom'
+  if (value === 'mid' || value === 'middle' || value === 'center') return 'mid'
+  return undefined
+}

@@ -53,4 +53,47 @@ describe('PptdRenderer', () => {
       else Reflect.deleteProperty(HTMLElement.prototype, 'clientWidth')
     }
   })
+
+  it('sanitizes chart SVG before injecting it into the preview DOM', () => {
+    const malicious: PptdProject = {
+      ...project,
+      pages: [{ elements: [{
+        elementId: 'chart', elementType: 'chart', bounds: [20, 20, 320, 180], chartType: 'bar',
+        data: [{ name: 'A', value: 1 }],
+        series: [{ key: 'value', color: '#fff"/><img src=x onerror="globalThis.__PWNED__=true"><rect fill="' }],
+      }] }],
+    }
+    render(<PptdRenderer project={malicious} />)
+    expect(document.querySelector('[data-pptd-chart-type="bar"] img')).toBeNull()
+    expect(document.querySelector('[data-pptd-chart-type="bar"] svg')).toBeTruthy()
+  })
+
+  it('matches export-facing text and line attributes', () => {
+    const parityProject: PptdProject = {
+      ...project,
+      pages: [{ elements: [
+        { elementId: 'text', elementType: 'text', bounds: [20, 20, 300, 100], content: { text: 'a\nb', align: 'center', valign: 'bottom', lineHeightPx: 24 } },
+        { elementId: 'line', elementType: 'line', bounds: [100, 100, 2, 200], stroke: { color: '#111111', width: 2 } },
+      ] }],
+    }
+    render(<PptdRenderer project={parityProject} />)
+    const text = document.querySelector('[data-artifact-content] > div') as HTMLElement
+    expect(text.style.textAlign).toBe('center')
+    expect(text.style.lineHeight).toBe('24px')
+    expect(text.style.whiteSpace).toBe('pre-wrap')
+    expect(text.style.justifyContent).toBe('flex-end')
+    const line = document.querySelector('[data-artifact-content] svg line')
+    expect(line?.getAttribute('x1')).toBe('0')
+    expect(line?.getAttribute('y2')).toBe('100')
+  })
+
+  it('falls back from non-hex CSS colours in the preview as well', () => {
+    const invalidColorProject: PptdProject = {
+      ...project,
+      pages: [{ elements: [{ elementId: 'shape', elementType: 'shape', bounds: [20, 20, 80, 40], fill: { type: 'solid', color: 'red' } }] }],
+    }
+    render(<PptdRenderer project={invalidColorProject} />)
+    const shape = document.querySelector('[data-artifact-content] > div') as HTMLElement
+    expect(shape.style.background).toBe('rgb(255, 255, 255)')
+  })
 })

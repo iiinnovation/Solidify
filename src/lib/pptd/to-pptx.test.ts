@@ -74,6 +74,50 @@ describe('PPTD export', () => {
     expect(result.report.summary).toContain('动画已丢弃')
     expect(result.report.count).toBe(2)
   })
+
+  it('falls back from non-hex colours and records each degradation', async () => {
+    const result = await exportPptdAsPptx({
+      ...project,
+      pages: [{ elements: [
+        { elementId: 'bad-fill', elementType: 'shape', bounds: [20, 20, 120, 60], fill: { type: 'solid', color: 'red' } },
+        { elementId: 'bad-text', elementType: 'text', bounds: [20, 90, 200, 40], content: { text: 'Fallback', color: 'rgb(37,99,235)' } },
+      ] }],
+    })
+    expect(result.report.summary).toContain('颜色')
+    expect(result.degradations.some((message) => message.includes('RRREED'))).toBe(false)
+  })
+
+  it('converts lineHeightPx from CSS pixels to PowerPoint points', async () => {
+    const result = await exportPptdAsPptx({
+      ...project,
+      pages: [{ elements: [{ elementId: 'lh', elementType: 'text', bounds: [20, 20, 300, 100], content: { text: 'one\ntwo', lineHeightPx: 24 } }] }],
+    })
+    const zip = await JSZip.loadAsync(await result.blob.arrayBuffer())
+    const slide = await zip.file('ppt/slides/slide1.xml')?.async('string') ?? ''
+    expect(slide).toContain('spcPts')
+    expect(slide).toContain('val="1800"')
+  })
+
+  it('blocks the export only when there is nothing worth writing', async () => {
+    await expect(exportPptdAsPptx({ ...project, pages: [], pagePaths: [] }))
+      .rejects.toThrow('PPTD 校验失败')
+  })
+
+  it('still exports an imperfect layout and reports the diagnostics instead', async () => {
+    const result = await exportPptdAsPptx({
+      ...project,
+      pages: [{ elements: [
+        { elementId: 'out', elementType: 'shape', bounds: [950, 530, 30, 30], fill: { type: 'solid', color: '#ffffff' } },
+        { elementId: 'a', elementType: 'text', bounds: [40, 40, 300, 60], content: { text: 'A' } },
+        { elementId: 'b', elementType: 'text', bounds: [60, 60, 300, 60], content: { text: 'B' } },
+      ] }],
+    })
+
+    expect(result.blob.size).toBeGreaterThan(0)
+    expect(result.degradations.some((message) => message.includes('超出画布边界'))).toBe(true)
+    expect(result.degradations.some((message) => message.includes('文本元素重叠'))).toBe(true)
+    expect(result.report.count).toBeGreaterThan(0)
+  })
 })
 
 function chartProject(chartType: string): PptdProject {

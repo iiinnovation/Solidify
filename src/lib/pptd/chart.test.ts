@@ -21,4 +21,14 @@ describe('PPTD chart support', () => {
     expect(svg).toContain('<path')
     expect(chartPptxData(getPptdChartSpec(chart('bar')))[0]?.values).toEqual([2, 5])
   })
+
+  it('rejects non-hex series colours before they reach SVG attributes', () => {
+    const element: PptdElement = {
+      ...chart('bar'),
+      series: [{ key: 'value', color: '#fff"/><img src=x onerror="globalThis.__PWNED__=true"><rect fill="' }],
+    }
+    const spec = getPptdChartSpec(element)
+    expect(spec.series[0]?.color).toBe('#2563eb')
+    expect(chartToSvg(spec, 320, 180)).not.toContain('<img')
+  })
 })
