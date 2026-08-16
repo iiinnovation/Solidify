@@ -25,6 +25,26 @@ const completedRun: RunState = {
 }
 
 describe('agent run UI', () => {
+  it('shows parallel child runs and the shared budget', () => {
+    render(<RunTimeline run={{
+      ...completedRun,
+      subAgents: [{
+        agentId: 'research',
+        runId: 'run-1:research',
+        parentRunId: 'run-1',
+        role: 'researcher',
+        task: 'Read source material',
+        status: 'completed',
+        usage: { inputTokens: 4, outputTokens: 2, totalTokens: 6, turns: 1, toolCalls: 0 },
+      }],
+      taskBudget: { limit: 100, used: 6, remaining: 94, exhausted: false, byRun: { 'run-1:research': 6 } },
+    }} />)
+    expect(screen.getByLabelText('并行执行线')).not.toBeNull()
+    expect(screen.getByText('researcher')).not.toBeNull()
+    expect(screen.getByLabelText('任务树')).not.toBeNull()
+    expect(screen.getByLabelText('任务树 token 预算')).not.toBeNull()
+  })
+
   it('shows usage and expands tool details', async () => {
     render(<RunTimeline run={completedRun} />)
     expect(screen.getByText('15 tokens')).not.toBeNull()

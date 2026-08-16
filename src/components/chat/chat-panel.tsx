@@ -22,7 +22,7 @@ import { RunControls } from '@/components/agent/run-controls'
 import { useWorkspaceStore } from '@/stores/workspace-store'
 import { isEnabled } from '@/lib/harness/flags'
 import { ConfirmDialog } from '@/components/agent/confirm-dialog'
-import { answerApproval, subscribeApproval } from '@/lib/harness/approval-channel'
+import { answerApproval, subscribeApprovals } from '@/lib/harness/approval-channel'
 import type { ApprovalRequest } from '@/lib/harness/approval'
 
 const typeIcons: Record<ArtifactType, typeof FileText> = {
@@ -251,7 +251,7 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
   const [attachments, setAttachments] = useState<File[]>([])
   const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null)
   const [templateFormOpen, setTemplateFormOpen] = useState(false)
-  const [approvalRequest, setApprovalRequest] = useState<ApprovalRequest | null>(null)
+  const [approvalRequests, setApprovalRequests] = useState<ApprovalRequest[]>([])
   const { messages, isStreaming, error, sendMessage, stopStreaming, regenerate, retry } = useChat(conversationId)
   const activeRun = [...messages].reverse()
     .find((message) => message.agentRun?.status === 'running')?.agentRun ?? null
@@ -261,7 +261,7 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
   const isNearBottomRef = useRef(true)
   const incrementUsageMutation = useIncrementTemplateUsage()
 
-  useEffect(() => subscribeApproval(setApprovalRequest), [])
+  useEffect(() => subscribeApprovals(setApprovalRequests), [])
 
   const { enabled: knowledgeEnabled, setEnabled: setKnowledgeEnabled } = useKnowledgeEnhancementStore()
   const setPendingInput = useUIStore((s) => s.setPendingInput)
@@ -458,7 +458,7 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
 
   return (
     <div className="h-full flex flex-col bg-background">
-      <ConfirmDialog request={approvalRequest} onAnswer={answerApproval} />
+      <ConfirmDialog request={approvalRequests} onAnswer={answerApproval} />
       {/* 消息列表 */}
       <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto">
         <div className="max-w-2xl mx-auto px-6 py-6 space-y-6">

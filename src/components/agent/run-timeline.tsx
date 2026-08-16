@@ -4,6 +4,9 @@ import { cn } from '@/lib/utils'
 import type { RunState } from '@/lib/engine/run-state'
 import { ToolCallCard } from './tool-call-card'
 import { LedgerPanel } from './ledger-panel'
+import { ParallelTimeline } from './parallel-timeline'
+import { TaskTree } from './task-tree'
+import { BudgetMeter } from './budget-meter'
 
 function ElapsedTime({ startedAt, completedAt }: { startedAt: number; completedAt?: number }) {
   const [now, setNow] = useState(() => Date.now())
@@ -46,6 +49,15 @@ export function RunTimeline({ run, onStop }: { run: RunState | null; onStop?: ()
           </button>
         )}
       </div>
+      {(run.subAgents?.length ?? 0) > 0 && (
+        <div className="border-t border-border-light py-3">
+          <div className="flex flex-col gap-4 lg:flex-row">
+            <ParallelTimeline agents={run.subAgents ?? []} />
+            <TaskTree rootRunId={run.runId} agents={run.subAgents ?? []} />
+          </div>
+          <BudgetMeter budget={run.taskBudget} />
+        </div>
+      )}
       {(run.tools.length > 0 || run.error) && (
         <div className="pb-3 space-y-2">
           {run.tools.map((item) => <ToolCallCard key={item.call.id} item={item} />)}

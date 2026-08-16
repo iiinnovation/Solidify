@@ -48,6 +48,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
   try {
     harness?.ledger.append('run.started', {
       conversationId: ctx.conversationId,
+      parentRunId: ctx.parentRunId ?? null,
       model: {
         provider: ctx.model.provider,
         model: ctx.model.model,
@@ -148,12 +149,23 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
         usage.inputTokens += response.usage.inputTokens
         usage.outputTokens += response.usage.outputTokens
         usage.totalTokens += response.usage.totalTokens
+        if (runCtx.taskTree && !runCtx.taskTree.budget.consume(runCtx.runId, response.usage.totalTokens)) {
+          harness?.ledger.append('run.exhausted', {
+            reason: 'max_tokens',
+            scope: 'task_tree',
+            usage,
+            budget: runCtx.taskTree.budget.snapshot(),
+          })
+          yield { type: 'run.exhausted', reason: 'max_tokens', usage: { ...usage } }
+          logger.log('run.exhausted', { reason: 'task_tree_max_tokens', usage })
+          return
+        }
       }
 
       // Handle stop reason (M1-10)
       if (response.stopReason === 'max_tokens') {
         harness?.ledger.append('run.exhausted', { reason: 'max_tokens', usage })
-        yield { type: 'run.exhausted', reason: 'max_tokens' }
+        yield { type: 'run.exhausted', reason: 'max_tokens', usage: { ...usage } }
         logger.log('run.exhausted', { reason: 'stop_reason_max_tokens', usage })
         return
       }
@@ -161,7 +173,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       // Check token budget
       if (usage.totalTokens > ctx.limits.maxTokens) {
         harness?.ledger.append('run.exhausted', { reason: 'max_tokens', usage })
-        yield { type: 'run.exhausted', reason: 'max_tokens' }
+        yield { type: 'run.exhausted', reason: 'max_tokens', usage: { ...usage } }
         logger.log('run.exhausted', { reason: 'max_tokens', usage })
         return
       }
@@ -182,7 +194,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       usage.toolCalls = totalToolCalls
       if (totalToolCalls > ctx.limits.maxToolCalls) {
         harness?.ledger.append('run.exhausted', { reason: 'max_tool_calls', usage })
-        yield { type: 'run.exhausted', reason: 'max_tool_calls' }
+        yield { type: 'run.exhausted', reason: 'max_tool_calls', usage: { ...usage } }
         logger.log('run.exhausted', { reason: 'max_tool_calls', totalToolCalls })
         return
       }
@@ -246,7 +258,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
     // on_run_completed hook and snapshot cleanup.
     if (!completed && turn >= ctx.limits.maxTurns) {
       harness?.ledger.append('run.exhausted', { reason: 'max_turns', usage })
-      yield { type: 'run.exhausted', reason: 'max_turns' }
+      yield { type: 'run.exhausted', reason: 'max_turns', usage: { ...usage } }
       logger.log('run.exhausted', { reason: 'max_turns', turns: turn })
       return
     }
@@ -262,11 +274,21 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
 
   } catch (error) {
     await harness?.hooks.observe('on_error', { type: 'on_error', runId: ctx.runId, error, onHookError: (id, hookError) => logger.warn('hook.failed', { id, error: String(hookError) }) })
-    if (ctx.signal.aborted) {
+    if (ctx.taskTree?.budget.abortReason === 'budget_exhausted') {
+      appendTerminalFact(harness, logger, 'run.exhausted', {
+        reason: 'max_tokens',
+        scope: 'task_tree',
+        usage,
+        budget: ctx.taskTree.budget.snapshot(),
+      })
+      yield { type: 'run.exhausted', reason: 'max_tokens', usage: { ...usage } }
+      logger.log('run.exhausted', { reason: 'task_tree_max_tokens', usage })
+    } else if (ctx.signal.aborted) {
       appendTerminalFact(harness, logger, 'run.failed', { kind: 'aborted', message: 'Run was aborted by user', usage })
       yield {
         type: 'run.failed',
         error: { kind: 'aborted', message: 'Run was aborted by user' },
+        usage: { ...usage },
       }
       logger.log('run.aborted')
     } else {
@@ -276,6 +298,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       yield {
         type: 'run.failed',
         error: { kind, message },
+        usage: { ...usage },
       }
       logger.error('run.failed', error)
     }
@@ -529,12 +552,14 @@ async function* executeTools(
     })
   }
 
-  const makeOpts = (call: ToolCall) => ({
+  const makeOpts = (call: ToolCall, relay?: (progress: ToolProgress) => void) => ({
     ctx: toolCtx,
     signal: ctx.signal,
     defaultTimeoutMs: ctx.limits.toolTimeoutMs,
-    onProgress: (p: ToolProgress) =>
-      logger.log('tool.progress', { callId: call.id, ...p }),
+    onProgress: (p: ToolProgress) => {
+      logger.log('tool.progress', { callId: call.id, ...p })
+      relay?.(p)
+    },
   })
 
   // M1-15: Parallel only when EVERY tool is readOnly && concurrencySafe.
@@ -692,9 +717,9 @@ async function* executeTools(
     // tool_result, which the APIs reject outright. Tools tombstone instead.
     let executed: ToolResult
     try {
-      executed = harness
-        ? await harness.hooks.around('execute_tool', { type: 'execute_tool', runId: ctx.runId, callId: call.id, call, signal: ctx.signal }, () => executeCall(tool, call, makeOpts(call)))
-        : await executeCall(tool, call, makeOpts(call))
+      executed = yield* relayExecutionProgress(call.id, (onProgress) => harness
+        ? harness.hooks.around('execute_tool', { type: 'execute_tool', runId: ctx.runId, callId: call.id, call, signal: ctx.signal }, () => executeCall(tool, call, makeOpts(call, onProgress)))
+        : executeCall(tool, call, makeOpts(call, onProgress)))
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       logger.warn('tool.threw', { callId: call.id, name: call.name, error: message })
@@ -724,6 +749,50 @@ async function* executeTools(
   return results
 }
 
+/** Relay progress emitted during a pending tool promise without buffering it until completion. */
+async function* relayExecutionProgress(
+  callId: string,
+  execute: (onProgress: (progress: ToolProgress) => void) => Promise<ToolResult>,
+): AsyncGenerator<QueryEvent, ToolResult> {
+  const queue: ToolProgress[] = []
+  let wake: (() => void) | undefined
+  let settled = false
+  let result: ToolResult | undefined
+  let failure: unknown
+
+  const notify = () => {
+    const current = wake
+    wake = undefined
+    current?.()
+  }
+  const promise = Promise.resolve()
+    .then(() => execute((progress) => {
+      queue.push(progress)
+      notify()
+    }))
+    .then(
+      (value) => { result = value },
+      (error) => { failure = error },
+    )
+    .finally(() => {
+      settled = true
+      notify()
+    })
+
+  while (!settled || queue.length > 0) {
+    if (queue.length === 0) {
+      await new Promise<void>((resolve) => { wake = resolve })
+    }
+    while (queue.length > 0) {
+      yield { type: 'tool.progress', callId, progress: queue.shift()! }
+    }
+  }
+  await promise
+  if (failure) throw failure
+  if (!result) throw new Error('Tool execution completed without a result')
+  return result
+}
+
 function isMessageEnvelope(value: unknown): value is { messages: Message[] } {
   if (!value || typeof value !== 'object') return false
   const messages = (value as { messages?: unknown }).messages
@@ -733,7 +802,7 @@ function isMessageEnvelope(value: unknown): value is { messages: Message[] } {
 function appendTerminalFact(
   harness: HarnessRuntime | undefined,
   logger: SimpleRunLogger,
-  type: 'run.failed',
+  type: 'run.failed' | 'run.exhausted',
   payload: unknown,
 ): void {
   try { harness?.ledger.append(type, payload) }

@@ -101,6 +101,11 @@ export function getFlags(): FeatureFlags {
       cache.toolCalling = true
       cache.harness = true
     }
+    if (cache.subAgents) {
+      cache.agentLoop = true
+      cache.toolCalling = true
+      cache.harness = true
+    }
   }
   return cache
 }

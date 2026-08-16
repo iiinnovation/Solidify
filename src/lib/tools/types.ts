@@ -30,6 +30,8 @@ export interface ToolProgress {
   current: number
   total?: number
   message?: string
+  /** Optional structured UI payload. Must remain serializable. */
+  detail?: unknown
 }
 
 export interface Tool<I = unknown, O = unknown> {

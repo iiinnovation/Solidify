@@ -12,6 +12,13 @@ const LEDGER_EVENT_TYPES = new Set<LedgerEventType>([
 
 export interface LedgerEvent { seq: number; runId: string; ts: string; type: LedgerEventType; payload: JsonValue }
 
+export interface RunTreeNode {
+  runId: string
+  parentRunId?: string
+  events: LedgerEvent[]
+  children: RunTreeNode[]
+}
+
 export function parseLedgerEvents(input: unknown, expectedRunId?: string): LedgerEvent[] {
   if (!Array.isArray(input)) throw new Error('Ledger snapshot must be an array')
   let runId = expectedRunId
@@ -96,6 +103,45 @@ export class RunLedger {
     try { this.events_ = parseLedgerEvents(JSON.parse(localStorage.getItem(this.storageKey) ?? '[]'), this.runId) }
     catch { this.events_ = [] }
   }
+}
+
+/** Build a parent → child ledger tree from already loaded run ledgers. */
+export function buildRunTree(ledgers: readonly RunLedger[], rootRunId: string): RunTreeNode | null {
+  const nodes = new Map<string, RunTreeNode>()
+  for (const ledger of ledgers) {
+    const events = ledger.events()
+    const started = events.find((event) => event.type === 'run.started')
+    const parent = started && isRecord(started.payload) && typeof started.payload.parentRunId === 'string'
+      ? started.payload.parentRunId
+      : undefined
+    nodes.set(ledger.runId, { runId: ledger.runId, ...(parent ? { parentRunId: parent } : {}), events, children: [] })
+  }
+  const root = nodes.get(rootRunId)
+  if (!root) return null
+  for (const node of nodes.values()) {
+    if (!node.parentRunId) continue
+    const parent = nodes.get(node.parentRunId)
+    if (parent && parent !== node && !parent.children.includes(node)) parent.children.push(node)
+  }
+  return root
+}
+
+/** Load all localStorage ledgers and return the requested task tree. */
+export function loadRunTree(rootRunId: string): RunTreeNode | null {
+  if (typeof localStorage === 'undefined') return null
+  const ledgers: RunLedger[] = []
+  for (let index = 0; index < localStorage.length; index++) {
+    const key = localStorage.key(index)
+    if (!key?.startsWith('solidify-ledger:')) continue
+    const runId = key.slice('solidify-ledger:'.length)
+    if (!runId) continue
+    ledgers.push(new RunLedger(runId, key))
+  }
+  return buildRunTree(ledgers, rootRunId)
+}
+
+function isRecord(value: JsonValue): value is { [key: string]: JsonValue } {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
 
 let workspaceLedgerRoot: string | null = null

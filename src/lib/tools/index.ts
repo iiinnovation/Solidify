@@ -25,6 +25,7 @@ export { writeFileTool } from './builtin/write-file'
 export { searchFilesTool } from './builtin/search-files'
 export { capturePreviewTool } from './builtin/capture-preview'
 export { readHandleTool } from './builtin/read-handle'
+export { createDispatchAgentTool, type DispatchAgentInput, type DispatchAgentOutput } from './builtin/dispatch-agent'
 
 export {
   validateInput,

@@ -299,6 +299,7 @@ export function SettingsPage() {
   const [localWorkspaceEnabled, setLocalWorkspaceEnabled] = useState(() => getFlags().localWorkspace)
   const [workbenchV2Enabled, setWorkbenchV2Enabled] = useState(() => getFlags().workbenchV2)
   const [skillV2Enabled, setSkillV2Enabled] = useState(() => getFlags().skillV2)
+  const [subAgentsEnabled, setSubAgentsEnabled] = useState(() => getFlags().subAgents)
 
   const editingProvider = editingId ? providers.find((p) => p.id === editingId) : null
   const editingSkill = editingSkillId ? customSkills.find((s) => s.id === editingSkillId) : null
@@ -581,6 +582,31 @@ export function SettingsPage() {
                       void migrateStoredCustomSkills().catch((error) => {
                         console.warn('[skills] Legacy Skill migration failed:', error)
                       })
+                    }
+                  }}
+                  className="h-4 w-4 shrink-0 rounded border-border text-accent focus:ring-accent focus:ring-offset-0"
+                />
+              </label>
+              <label className="flex items-center justify-between gap-4 rounded-md border border-border bg-surface px-4 py-3">
+                <span>
+                  <span className="block text-sm font-medium text-text-primary">多 Agent 协作</span>
+                  <span className="block text-xs text-text-tertiary mt-0.5">允许主 Agent 将独立任务并行派发给最多 5 个受限子 Agent，共享 token 预算。</span>
+                </span>
+                <input
+                  type="checkbox"
+                  aria-label="多 Agent 协作"
+                  checked={subAgentsEnabled}
+                  onChange={(event) => {
+                    const value = event.target.checked
+                    setSubAgentsEnabled(value)
+                    setFlagOverride('subAgents', value)
+                    if (value) {
+                      setAgentLoopEnabled(true)
+                      setToolCallingEnabled(true)
+                      setHarnessEnabled(true)
+                      setFlagOverride('agentLoop', true)
+                      setFlagOverride('toolCalling', true)
+                      setFlagOverride('harness', true)
                     }
                   }}
                   className="h-4 w-4 shrink-0 rounded border-border text-accent focus:ring-accent focus:ring-offset-0"

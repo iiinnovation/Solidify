@@ -8,6 +8,7 @@ import type { Tool } from '../tools/types'
 import { PluginManager } from './plugin'
 import { sessionGrantKey } from './builtin-hooks'
 import { ToolRegistry } from '../tools/registry'
+import type { PermissionMap } from './types'
 
 const writeTool: Tool<{ path: string; content: string }> = {
   name: 'write_file', description: 'write', inputSchema: { type: 'object' }, readOnly: false, concurrencySafe: false, destructive: true, requiresConfirmation: true,
@@ -142,6 +143,29 @@ describe('M2 harness acceptance', () => {
     const readTool = { ...writeTool, readOnly: true, destructive: false, requiresConfirmation: false }
     expect(new PolicyEngine({ project: { write_file: 'ask' } }).evaluate(readTool, { id: 'a', name: readTool.name, input: { path: 'x' } }, context).kind).toBe('ask')
     expect(new PolicyEngine({ project: { write_file: 'allow' }, user: { write_file: 'ask' } }).evaluate(readTool, { id: 'b', name: readTool.name, input: { path: 'x' } }, context).kind).toBe('ask')
+  })
+
+  it('dispatch_agent 默认放行但不能绕过项目或用户策略', () => {
+    const dispatchTool = {
+      ...writeTool,
+      name: 'dispatch_agent',
+      availability: 'always' as const,
+      permissions: [],
+      destructive: false,
+      requiresConfirmation: false,
+    }
+    const call = { id: 'dispatch', name: dispatchTool.name, input: { tasks: [] } }
+
+    expect(new PolicyEngine().evaluate(dispatchTool, call, context).kind).toBe('allow')
+    expect(new PolicyEngine({ project: { dispatch_agent: 'deny' } }).evaluate(dispatchTool, call, context).kind).toBe('deny')
+    expect(new PolicyEngine({ user: { dispatch_agent: 'deny' } }).evaluate(dispatchTool, call, context).kind).toBe('deny')
+    expect(new PolicyEngine({ user: { dispatch_agent: 'ask' } }).evaluate(dispatchTool, call, context).kind).toBe('ask')
+  })
+
+  it('prompt 权限会进入审批路径', () => {
+    const readTool = { ...writeTool, readOnly: true, destructive: false, requiresConfirmation: false }
+    const permissions: PermissionMap = new Map([['fs:write', { scope: 'fs:write', status: 'prompt' }]])
+    expect(new PolicyEngine().evaluate(readTool, { id: 'prompt', name: readTool.name, input: { path: 'x' } }, { ...context, permissions }).kind).toBe('ask')
   })
 
   it('插件 onLoad 失败时回滚已注册 hook 和工具', async () => {

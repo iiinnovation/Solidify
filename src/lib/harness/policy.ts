@@ -61,6 +61,7 @@ export class PolicyEngine {
     }
     const permission = tool.permissions.find((scope) => ctx.permissions.get(scope)?.status === 'denied')
     if (permission) return { kind: 'deny', reason: `权限 ${permission} 已被拒绝。`, source: 'user' }
+    const permissionPrompt = tool.permissions.some((scope) => ctx.permissions.get(scope)?.status === 'prompt')
     if (tool.permissions.includes('process:spawn')) {
       return { kind: 'deny', reason: '默认策略禁止启动外部进程；请改用受约束的内置工具。', source: 'default' }
     }
@@ -85,8 +86,11 @@ export class PolicyEngine {
     } catch {
       return { kind: 'deny', reason: `工具 ${tool.name} 的确认策略执行失败，操作已拒绝。`, source: 'guard' }
     }
-    if (projectEffect === 'ask' || userEffect === 'ask' || requiresConfirmation || tool.permissions.includes('net:http')) {
+    if (projectEffect === 'ask' || userEffect === 'ask' || requiresConfirmation || permissionPrompt || tool.permissions.includes('net:http')) {
       return askForConfirmation(tool, call)
+    }
+    if (tool.name === 'dispatch_agent') {
+      return { kind: 'allow', reason: '子 Agent 调度由任务树预算与深度 guard 约束。', source: 'default' }
     }
     if (
       tool.name === 'materialize_document'

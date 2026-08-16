@@ -61,6 +61,20 @@ describe('feature flags', () => {
     })
   })
 
+  it('多 Agent 始终带上 Agent、工具调用和安全控制平面', () => {
+    setFlagOverride('agentLoop', false)
+    setFlagOverride('toolCalling', false)
+    setFlagOverride('harness', false)
+    setFlagOverride('subAgents', true)
+
+    expect(getFlags()).toMatchObject({
+      subAgents: true,
+      agentLoop: true,
+      toolCalling: true,
+      harness: true,
+    })
+  })
+
   it('传 null 清除覆盖，回落到默认值', () => {
     setFlagOverride('agentLoop', true)
     expect(isEnabled('agentLoop')).toBe(true)

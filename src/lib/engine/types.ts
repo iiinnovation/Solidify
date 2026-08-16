@@ -12,6 +12,7 @@ import type { WorkspaceHandle } from '../workspace/types'
 import type { Settings, PermissionMap, Platform } from '../harness/types'
 import type { ConfirmationPrompt } from '../harness/policy'
 import type { ApprovalOutcome } from '../harness/approval'
+import type { TaskTreeBudget } from './sub-agent/types'
 
 // ============================================================================
 // Query Context
@@ -60,6 +61,8 @@ export type MessageContent =
  */
 export interface QueryContext {
   readonly runId: string
+  /** M6: Parent run for a one-level sub-agent. Root runs omit this field. */
+  readonly parentRunId?: string
   readonly conversationId: string
   readonly cwd: string                      // Working directory = project root
   readonly messages: readonly Message[]
@@ -92,6 +95,12 @@ export interface QueryContext {
    * contain text authored by anyone who can drop a file in the workspace.
    */
   readonly retrievedContext?: string
+  /** M6: Shared cancellation and token accounting for the whole task tree. */
+  readonly taskTree?: {
+    readonly rootRunId: string
+    readonly depth: 0 | 1
+    readonly budget: TaskTreeBudget
+  }
 }
 
 // ============================================================================
@@ -167,8 +176,8 @@ export type QueryEvent =
   | { type: 'artifact.created'; artifact: ArtifactRef }
   | { type: 'tombstone'; reason: string; detail?: unknown }
   | { type: 'run.completed'; usage: UsageStats }
-  | { type: 'run.failed'; error: RunError }
-  | { type: 'run.exhausted'; reason: 'max_turns' | 'max_tokens' | 'max_tool_calls' }
+  | { type: 'run.failed'; error: RunError; usage?: UsageStats }
+  | { type: 'run.exhausted'; reason: 'max_turns' | 'max_tokens' | 'max_tool_calls'; usage?: UsageStats }
 
 // ============================================================================
 // Model Gateway

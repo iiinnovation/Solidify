@@ -16,6 +16,7 @@ import { getSystemPrompt } from '@/lib/chat-api'
 import { InMemoryState, WorkspaceMemory } from '@/lib/memory'
 import { configureLedgerWorkspace } from '@/lib/harness/ledger'
 import type { WorkspaceHandle } from '@/lib/workspace'
+import { enableSubAgents } from './sub-agent/context'
 
 const DEFAULT_LIMITS: RunLimits = {
   maxTurns: 25,
@@ -66,7 +67,7 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
       })
     : []
 
-  return {
+  const context: QueryContext = {
     runId: options.runId,
     conversationId: options.conversationId,
     cwd,
@@ -102,6 +103,7 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
     platform,
     workspace: workspaceRoot ? createWorkspaceHandle(workspaceRoot) : undefined,
   }
+  return isEnabled('subAgents') ? enableSubAgents(context) : context
 }
 
 export interface ChatSkillRuntime {

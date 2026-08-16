@@ -221,7 +221,7 @@ describe('M1-27 agent loop acceptance', () => {
     })
 
     const events = await collect(runQuery(context))
-    expect(events.at(-1)).toEqual({ type: 'run.exhausted', reason: 'max_turns' })
+    expect(events.at(-1)).toMatchObject({ type: 'run.exhausted', reason: 'max_turns' })
   })
 
   it('5. falls back to text-only for a provider without tools', async () => {
