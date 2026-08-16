@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import { PptdRenderer } from './renderer'
 import type { PptdProject } from './types'
 
@@ -23,7 +23,7 @@ describe('PptdRenderer', () => {
     expect(title.style.width).toBe('400px')
     expect(title.style.height).toBe('60px')
     expect(title.style.fontSize).toBe('32px')
-    expect(page.querySelector('[data-artifact-content]')).toBeTruthy()
+    expect(page.matches('[data-artifact-content]')).toBe(true)
   })
 
   it('reports selected elements without rebuilding the project', () => {
@@ -32,5 +32,25 @@ describe('PptdRenderer', () => {
     const shape = document.querySelector('[data-artifact-content] > div:nth-child(2)') as HTMLElement
     shape.click()
     expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ elementId: 'box' }))
+  })
+
+  it('scales the fixed canvas to the available panel width without clipping', async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth')
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => 480 })
+    vi.stubGlobal('ResizeObserver', class {
+      private callback: ResizeObserverCallback
+      constructor(callback: ResizeObserverCallback) { this.callback = callback }
+      observe() { this.callback([], this as unknown as ResizeObserver) }
+      disconnect() {}
+      unobserve() {}
+    })
+    try {
+      render(<PptdRenderer project={project} />)
+      await waitFor(() => expect((document.querySelector('[data-pptd-page="0"]') as HTMLElement).style.transform).toBe('scale(0.5)'))
+    } finally {
+      vi.unstubAllGlobals()
+      if (descriptor) Object.defineProperty(HTMLElement.prototype, 'clientWidth', descriptor)
+      else Reflect.deleteProperty(HTMLElement.prototype, 'clientWidth')
+    }
   })
 })

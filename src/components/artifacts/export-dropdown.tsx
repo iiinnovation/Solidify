@@ -116,13 +116,19 @@ export function ExportDropdown({ content, type, title, contentRef, svgString, ch
           }
           break
         case 'pptx': {
-          const { parseSlidesDeck } = await import('@/lib/slide-types')
-          const { loadTheme } = await import('@/lib/slide-themes')
-          const { exportAsPptx } = await import('@/lib/slide-export')
-          const deck = parseSlidesDeck(content)
-          if (!deck) throw new Error('幻灯片数据解析失败')
-          const theme = await loadTheme(deck.theme)
-          blob = await exportAsPptx(deck, theme, title)
+          const { parsePptdArtifactContent } = await import('@/lib/pptd/artifact')
+          const { exportPptdAsPptx } = await import('@/lib/pptd/to-pptx')
+          let project = parsePptdArtifactContent(content)
+          if (!project) {
+            const { parseSlidesDeck } = await import('@/lib/slide-types')
+            const { legacyToPptd } = await import('@/lib/pptd/migrate-legacy')
+            const deck = parseSlidesDeck(content)
+            if (!deck) throw new Error('幻灯片数据解析失败')
+            project = legacyToPptd(deck, title)
+          }
+          const result = await exportPptdAsPptx(project)
+          blob = result.blob
+          if (result.report.count > 0) toast.info(result.report.summary)
           break
         }
         default:

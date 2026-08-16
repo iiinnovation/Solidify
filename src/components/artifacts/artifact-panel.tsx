@@ -4,7 +4,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { MarkdownRenderer } from '@/components/artifacts/markdown-renderer'
 import { MermaidRenderer } from '@/components/artifacts/mermaid-renderer'
 import { ChartRenderer } from '@/components/artifacts/chart-renderer'
-import { SlidesRenderer } from '@/components/artifacts/slides-renderer'
+import { PresentationArtifactRenderer } from '@/components/artifacts/pptd-renderer'
 import { DrawioRenderer } from '@/components/artifacts/drawio-renderer'
 import { ExportDropdown } from '@/components/artifacts/export-dropdown'
 import { ErrorBoundary } from '@/components/shared/error-boundary'
@@ -243,7 +243,7 @@ export function ArtifactPanel({ conversationId }: { conversationId?: string }) {
           ) : activeArtifact.type === 'chart' ? (
             <ChartRenderer content={activeArtifact.content} streaming={activeArtifact.streaming} chartRef={chartContainerRef} />
           ) : activeArtifact.type === 'slides' ? (
-            <SlidesRenderer content={activeArtifact.content} streaming={activeArtifact.streaming} />
+            <PresentationArtifactRenderer content={activeArtifact.content} streaming={activeArtifact.streaming} />
           ) : activeArtifact.type === 'drawio' ? (
             <DrawioRenderer content={activeArtifact.content} streaming={activeArtifact.streaming} />
           ) : (

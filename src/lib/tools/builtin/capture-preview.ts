@@ -6,10 +6,8 @@ interface CapturePreviewInput { artifact_id?: string; page_index?: number; forma
 export function selectPreviewElement(root: HTMLElement | null, pageIndex?: number): HTMLElement | null {
   if (!root) return null
   if (pageIndex === undefined) return root
-  const pages = root.matches('[data-pptd-page]')
-    ? [root]
-    : Array.from(root.querySelectorAll<HTMLElement>('[data-pptd-page]'))
-  return pages[pageIndex] ?? null
+  if (root.matches(`[data-pptd-page="${pageIndex}"]`)) return root
+  return root.querySelector<HTMLElement>(`[data-pptd-page="${pageIndex}"]`)
 }
 
 export const capturePreviewTool: Tool<CapturePreviewInput> = {

@@ -1,6 +1,8 @@
 import DOMPurify from 'dompurify'
 import { useLayoutEffect, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
 import type { PptdElement, PptdProject, PptdTextStyle } from './types'
+import { chartToSvg, getPptdChartSpec } from './chart'
+import { pptdMediaDataUrl } from './media'
 
 export interface PptdRendererProps {
   project: PptdProject
@@ -26,11 +28,11 @@ export function PptdRenderer({ project, pageIndex = 0, className, showDiagnostic
   const page = project.pages[Math.max(0, Math.min(pageIndex, project.pages.length - 1))]
   if (!page) return null
   const pageStyle: CSSProperties = {
-    position: 'relative', width, height, overflow: 'hidden', background: resolveBackground(page.background, project),
+    position: 'absolute', left: 0, top: 0, width, height, overflow: 'hidden', background: resolveBackground(page.background, project),
     transform: `scale(${scale})`, transformOrigin: 'top left',
   }
   return (
-    <div ref={frameRef} className={className} data-pptd-project={project.title} data-pptd-page={pageIndex} style={{ width: '100%', aspectRatio: `${width} / ${height}`, overflow: 'hidden' }}>
+    <div ref={frameRef} className={className} data-pptd-project={project.title} style={{ position: 'relative', width: '100%', maxWidth: '100%', minWidth: 0, aspectRatio: `${width} / ${height}`, overflow: 'hidden' }}>
       <div style={pageStyle} data-artifact-content data-pptd-page={pageIndex}>
         {page.elements.map((element) => (
           <PptdElementView
@@ -90,7 +92,9 @@ function ShapeElement({ element, project, style, onClick }: ElementRenderProps) 
 }
 
 function ImageElement({ element, project, style, onClick }: ElementRenderProps) {
-  const src = typeof element.src === 'string' ? project.media[element.src] ?? element.src : undefined
+  const sourcePath = typeof element.src === 'string' ? element.src : undefined
+  const media = sourcePath ? project.media[sourcePath] : undefined
+  const src = pptdMediaDataUrl(media, sourcePath) ?? sourcePath
   if (typeof src !== 'string') return <div style={{ ...style, background: '#e5e7eb' }} onClick={onClick} />
   const fit = element.fit && typeof element.fit.mode === 'string' ? element.fit.mode : 'contain'
   const crop = element.fit as Record<string, unknown> | undefined
@@ -117,7 +121,10 @@ function TableElement({ element, style, onClick }: ElementRenderProps) {
 }
 
 function ChartElement({ element, style, onClick }: ElementRenderProps) {
-  return <div style={{ ...style, display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px dashed #999', color: '#666', fontSize: 12 }} onClick={onClick}>{typeof element.chartType === 'string' ? `${element.chartType} chart` : 'chart'}</div>
+  const [width, height] = element.bounds.slice(2) as [number, number]
+  const spec = getPptdChartSpec(element)
+  const svg = chartToSvg(spec, width, height)
+  return <div data-pptd-chart-type={spec.chartType} style={{ ...style, overflow: 'hidden' }} onClick={onClick} dangerouslySetInnerHTML={{ __html: svg }} />
 }
 
 interface ElementRenderProps { element: PptdElement; project: PptdProject; style: CSSProperties; onClick: (event?: MouseEvent) => void }

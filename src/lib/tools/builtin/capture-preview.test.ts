@@ -7,5 +7,6 @@ describe('selectPreviewElement', () => {
     const root = document.querySelector('#root') as HTMLElement
     expect(selectPreviewElement(root, 1)?.getAttribute('data-pptd-page')).toBe('1')
     expect(selectPreviewElement(root, 2)).toBeNull()
+    expect(selectPreviewElement(root.querySelector('[data-pptd-page="1"]') as HTMLElement, 1)?.getAttribute('data-pptd-page')).toBe('1')
   })
 })

@@ -1,4 +1,5 @@
 import type { PptdDiagnostic, PptdElement, PptdProject, PptdValidationResult } from './types'
+import { getPptdChartSpec, isImagePptdChartType, isNativePptdChartType } from './chart'
 
 export function validatePptdProject(project: PptdProject): PptdValidationResult {
   const errors: PptdDiagnostic[] = []
@@ -62,6 +63,11 @@ function checkElement(element: PptdElement, project: PptdProject, path: string, 
   }
   if (element.elementType === 'table' && element.rows !== undefined && !Array.isArray(element.rows)) errors.push(diagnostic(path, 'table.rows 必须是二维数组', 'invalid-field'))
   if (element.elementType === 'line' && element.stroke !== undefined && (typeof element.stroke !== 'object' || Array.isArray(element.stroke))) errors.push(diagnostic(path, 'line.stroke 必须是对象', 'invalid-field'))
+  if (element.elementType === 'chart') {
+    const chart = getPptdChartSpec(element)
+    if (!isNativePptdChartType(chart.chartType) && !isImagePptdChartType(chart.chartType)) errors.push(diagnostic(path, `不支持的 chartType：${chart.chartType}`, 'invalid-field'))
+    if (chart.data.length === 0) errors.push(diagnostic(path, 'chart.data 必须包含至少一条数据', 'invalid-field'))
+  }
 }
 
 function checkUnresolvedTokens(project: PptdProject, errors: PptdDiagnostic[]) {
