@@ -44,6 +44,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
   let currentMessages = [...ctx.messages]
   let harnessContext = [...(ctx.harnessContext ?? [])]
   let retrievedContext = ctx.retrievedContext
+  let isFirstTurn = true
 
   try {
     harness?.ledger.append('run.started', {
@@ -90,6 +91,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
           throw new Error('The recoverable Agent snapshot belongs to a different run')
         } else {
           turn = snapshot.turn
+          isFirstTurn = turn === 0
           currentMessages = [...snapshot.messages]
           Object.assign(usage, snapshot.usage)
           totalToolCalls = snapshot.usage.toolCalls
@@ -132,7 +134,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
           ...runCtx,
           messages: currentMessages,
           harnessContext,
-          retrievedContext,
+          retrievedContext: isFirstTurn ? retrievedContext : undefined,
         }, logger, {
           onModelPrepared: harness ? (request) => { harness.ledger.append('model.called', { turn, request }) } : undefined,
           onToolRequested: harness ? (call) => recordToolRequested(harness, call) : undefined,
@@ -141,6 +143,9 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
         harness?.ledger.append('model.failed', { turn, message: error instanceof Error ? error.message : String(error) })
         throw error
       }
+      // Retrieved workspace memory is useful for grounding the initial request;
+      // subsequent turns should rely on the conversation and tool results.
+      isFirstTurn = false
       harness?.ledger.append('model.completed', { turn, text: response.text, toolCalls: response.toolCalls, usage: response.usage, stopReason: response.stopReason })
       await harness?.hooks.observe('after_model_call', { type: 'after_model_call', runId: ctx.runId, response, onHookError: (id, error) => logger.warn('hook.failed', { id, error: String(error) }) })
 
