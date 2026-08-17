@@ -1,7 +1,8 @@
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
+import { createJSONStorage, persist } from 'zustand/middleware'
 import type { QueryEvent } from '@/lib/engine/types'
 import type { RunState } from '@/lib/engine/run-state'
+import { createQuotaResilientStateStorage } from '@/lib/storage-quota'
 
 /* ── 共享类型 ── */
 
@@ -209,6 +210,7 @@ export const useChatStore = create<ChatState>()(
     }),
     {
       name: 'solidify-chat',
+      storage: createJSONStorage(() => createQuotaResilientStateStorage(localStorage)),
       partialize: (state) => ({
         conversations: state.conversations,
         activeConversationId: state.activeConversationId,

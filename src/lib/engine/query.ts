@@ -761,7 +761,7 @@ async function* executeTools(
       if (policy.kind === 'ask' && !harness.approvals.hasSessionGrant(grantKey)) {
         const prompt = await enrichConfirmationPrompt(policy.prompt, tool, call, ctx)
         const requestId = `approval_${ctx.runId}_${call.id}`
-        harness.ledger.append('approval.asked', { requestId, callId: call.id, toolName: tool.name, reason: policy.reason, prompt })
+        harness.ledger.append('approval.asked', { requestId, callId: call.id, toolName: tool.name, reason: policy.reason, prompt }, { requirePersistence: true })
         yield { type: 'permission.required', requestId, callId: call.id, prompt }
         const approval = await harness.approvals.request({ requestId, askedAlready: true, runId: ctx.runId, callId: call.id, toolName: tool.name, grantKey, reason: policy.reason, prompt, signal: ctx.signal })
         yield { type: 'permission.resolved', requestId, callId: call.id, outcome: approval.outcome }

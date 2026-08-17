@@ -18,6 +18,8 @@ import { InMemoryState } from '../../memory'
 import type { QueryContext, QueryEvent } from '../types'
 import type { ClaudeMessage } from '../messages'
 import type { CompletionChunk, CompletionRequest, ModelProvider } from '../../model'
+import { readHandleTool } from '../../tools/builtin/read-handle'
+import type { Tool } from '../../tools/types'
 
 function provider(script: CompletionChunk[][]): ModelProvider {
   let turn = 0
@@ -154,6 +156,51 @@ describe('oversized results degrade instead of throwing', () => {
     const content = `${'a'.repeat(499)}😀${'b'.repeat(20_000)}`
     const { content: summary } = await handleizeLargeResult(content)
     expect(summary).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/)
+  })
+})
+
+describe('read_handle model visibility', () => {
+  it('hides the tool until a real stored-result marker is in the run', async () => {
+    const requests: CompletionRequest[] = []
+    const recordingProvider: ModelProvider = {
+      ...provider([doneTurn]),
+      async *stream(request) {
+        requests.push(request)
+        yield* doneTurn
+      },
+    }
+
+    await collect(runQuery(makeCtx(recordingProvider, { tools: [readHandleTool as Tool] })))
+    expect(requests[0].tools).toBeUndefined()
+  })
+
+  it('exposes the tool after an oversized tool result supplies its exact handle', async () => {
+    const requests: CompletionRequest[] = []
+    const recordingProvider: ModelProvider = {
+      ...provider([doneTurn]),
+      async *stream(request) {
+        requests.push(request)
+        yield* doneTurn
+      },
+    }
+    const messages: QueryContext['messages'] = [
+      { role: 'user', content: 'continue' },
+      {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 'large-result', name: 'source_tool', input: {} }],
+      },
+      {
+        role: 'user',
+        content: [{
+          type: 'tool_result',
+          tool_use_id: 'large-result',
+          content: '[Result stored as handle-1: 12000 bytes, 12000 characters total. Use read_handle to retrieve it.]',
+        }],
+      },
+    ]
+
+    await collect(runQuery(makeCtx(recordingProvider, { tools: [readHandleTool as Tool], messages })))
+    expect(requests[0].tools?.map((tool) => tool.name)).toEqual(['read_handle'])
   })
 })
 

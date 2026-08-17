@@ -15,6 +15,7 @@ import {
   clearWorkspaceSnapshot,
   readWorkspaceSnapshot,
 } from '../tauri'
+import { setStorageItemWithQuotaRecovery } from '../storage-quota'
 
 // ============================================================================
 // Serialization (pure, testable)
@@ -102,8 +103,9 @@ export class FileSnapshotStore implements SnapshotStore {
 
 const STORAGE_KEY_PREFIX = 'solidify:snapshots:'
 
-/** Cap per conversation so localStorage quota isn't exhausted */
-const MAX_SNAPSHOTS_PER_CONVERSATION = 20
+// localStorage writes are atomic, and restore only consumes the tail. Keeping
+// every cumulative turn duplicates large attachment/tool context many times.
+const MAX_SNAPSHOTS_PER_CONVERSATION = 1
 
 export class LocalStorageSnapshotStore implements SnapshotStore {
   private key(conversationId: string): string {
@@ -117,7 +119,7 @@ export class LocalStorageSnapshotStore implements SnapshotStore {
     lines.push(serializeSnapshot(snapshot))
     // Restore only needs the tail; trim to respect quota
     const trimmed = lines.slice(-MAX_SNAPSHOTS_PER_CONVERSATION)
-    localStorage.setItem(key, trimmed.join('\n') + '\n')
+    setStorageItemWithQuotaRecovery(localStorage, key, trimmed.join('\n') + '\n')
   }
 
   async loadLatest(conversationId: string): Promise<TurnSnapshot | null> {

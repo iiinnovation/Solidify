@@ -1,4 +1,5 @@
 import { appendWorkspaceRecord, isTauri } from '@/lib/tauri'
+import { isStorageQuotaError, setStorageItemWithQuotaRecovery } from '@/lib/storage-quota'
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue }
 export type LedgerEventType = 'run.started' | 'model.called' | 'model.completed' | 'model.failed' | 'tool.requested' | 'approval.asked' | 'approval.decided' | 'permission.grant_added' | 'tool.completed' | 'artifact.created' | 'artifact.parse_failed' | 'run.completed' | 'run.failed' | 'run.exhausted'
@@ -82,10 +83,18 @@ export class RunLedger {
   private readonly storageKey: string
   constructor(runId: string, storageKey = `solidify-ledger:${runId}`) { this.runId = runId; this.storageKey = storageKey; this.restore() }
 
-  append(type: LedgerEventType, payload: unknown): LedgerEvent {
+  append(type: LedgerEventType, payload: unknown, options: { requirePersistence?: boolean } = {}): LedgerEvent {
     const event: LedgerEvent = Object.freeze({ seq: this.events_.length + 1, runId: this.runId, ts: new Date().toISOString(), type, payload: snapshotJson(payload) })
     this.events_.push(event)
-    try { this.persist() } catch (error) { this.events_.pop(); throw error }
+    try {
+      this.persist()
+    } catch (error) {
+      if (!isStorageQuotaError(error) || options.requirePersistence) {
+        this.events_.pop()
+        throw error
+      }
+      console.warn('[ledger] Browser storage is full; keeping this run event in memory only')
+    }
     if (workspaceLedgerRoot && isTauri) {
       const root = workspaceLedgerRoot
       workspaceLedgerQueue = workspaceLedgerQueue
@@ -97,7 +106,11 @@ export class RunLedger {
   events(): LedgerEvent[] { return this.events_.map((event) => ({ ...event, payload: snapshotJson(event.payload) })) }
   find(type: LedgerEventType): LedgerEvent[] { return this.events_.filter((event) => event.type === type) }
   clear(): void { this.events_ = []; if (typeof localStorage !== 'undefined') localStorage.removeItem(this.storageKey) }
-  private persist(): void { if (typeof localStorage !== 'undefined') localStorage.setItem(this.storageKey, JSON.stringify(this.events_)) }
+  private persist(): void {
+    if (typeof localStorage !== 'undefined') {
+      setStorageItemWithQuotaRecovery(localStorage, this.storageKey, JSON.stringify(this.events_))
+    }
+  }
   private restore(): void {
     if (typeof localStorage === 'undefined') return
     try { this.events_ = parseLedgerEvents(JSON.parse(localStorage.getItem(this.storageKey) ?? '[]'), this.runId) }

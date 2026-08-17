@@ -31,12 +31,12 @@ export function createHarnessRuntime(ctx: QueryContext, options: HarnessRuntimeO
     respond: options.approvalResponder ?? approvalResponder,
     onEvent: async (event) => {
       const request = event.request
-      if (event.type === 'approval.asked') ledger.append('approval.asked', { requestId: request.requestId, callId: request.callId, toolName: request.toolName, reason: request.reason, prompt: request.prompt })
-      else ledger.append('approval.decided', { requestId: request.requestId, callId: request.callId, outcome: event.outcome ?? 'unavailable' })
+      if (event.type === 'approval.asked') ledger.append('approval.asked', { requestId: request.requestId, callId: request.callId, toolName: request.toolName, reason: request.reason, prompt: request.prompt }, { requirePersistence: true })
+      else ledger.append('approval.decided', { requestId: request.requestId, callId: request.callId, outcome: event.outcome ?? 'unavailable' }, { requirePersistence: true })
       await options.onApprovalEvent?.({ type: event.type, requestId: request.requestId, callId: request.callId, outcome: event.outcome })
     },
     onSessionGrant: (request) => {
-      ledger.append('permission.grant_added', { requestId: request.requestId, toolName: request.toolName, grantKey: request.grantKey, scope: 'run' })
+      ledger.append('permission.grant_added', { requestId: request.requestId, toolName: request.toolName, grantKey: request.grantKey, scope: 'run' }, { requirePersistence: true })
     },
   })
   const hooks = new HookManager()

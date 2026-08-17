@@ -13,6 +13,8 @@ import type {
 } from '../model'
 import { buildMessages } from './messages'
 
+const STORED_HANDLE_PATTERN = /\[Result stored as (?:mem|handle)-[^:\s]+:[^\]]*Use read_handle to retrieve it\.\]/i
+
 /**
  * Stream model completion using the provider from context
  */
@@ -60,7 +62,10 @@ export async function* streamModel(
   }))
 
   // Convert tools to unified format
-  const tools: ToolDefinition[] = (provider.metadata.supportsTools ? ctx.tools : []).map((tool) => ({
+  const visibleTools = provider.metadata.supportsTools
+    ? ctx.tools.filter((tool) => tool.name !== 'read_handle' || hasReadableHandle(ctx.messages))
+    : []
+  const tools: ToolDefinition[] = visibleTools.map((tool) => ({
     name: tool.name,
     description: tool.description,
     inputSchema: tool.inputSchema,
@@ -92,4 +97,14 @@ export async function* streamModel(
 
   // Stream from provider
   yield* provider.stream(request)
+}
+
+/** Do not invite fabricated mem-0/mem-1 calls before a real result exists. */
+function hasReadableHandle(messages: QueryContext['messages']): boolean {
+  return messages.some((message) => {
+    if (typeof message.content === 'string') return false
+    return message.content.some((part) =>
+      part.type === 'tool_result' && STORED_HANDLE_PATTERN.test(part.content),
+    )
+  })
 }

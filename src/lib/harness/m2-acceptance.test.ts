@@ -108,6 +108,23 @@ describe('M2 harness acceptance', () => {
     expect(() => snapshotJson(shared)).toThrow(/Circular/)
   })
 
+  it('存储配额耗尽时普通事件留在内存，但授权审计保持 fail-closed', () => {
+    const ledger = new RunLedger('quota-ledger', 'test-quota-ledger')
+    ledger.clear()
+    const setItem = vi.spyOn(Storage.prototype, 'setItem')
+      .mockImplementation(() => { throw new DOMException('The quota has been exceeded.', 'QuotaExceededError') })
+
+    expect(() => ledger.append('run.started', { conversationId: 'c' })).not.toThrow()
+    expect(ledger.events()).toHaveLength(1)
+    expect(() => ledger.append(
+      'approval.asked',
+      { requestId: 'r', callId: 'c', toolName: 'write_file' },
+      { requirePersistence: true },
+    )).toThrow(/quota/i)
+    expect(ledger.events()).toHaveLength(1)
+    setItem.mockRestore()
+  })
+
   it('恢复时整批拒绝损坏或伪造的账本事件', () => {
     localStorage.setItem('test-corrupt-ledger', JSON.stringify([
       { seq: 7, runId: 'restored', ts: 'not-a-date', type: 'permission.granted', payload: { forged: true } },
