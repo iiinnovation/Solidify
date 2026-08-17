@@ -4,6 +4,13 @@ import { SubAgentScheduler, type ScheduledResult } from '../engine/sub-agent/sch
 import type { QueryContext } from '../engine/types'
 import { assemblePptdProject, type PptdAssemblyResult } from './assemble'
 import { serializePptdArtifactContent } from './artifact'
+import {
+  fallbackPptdDesignSpec,
+  resolvePptdDesignSource,
+  themeFromDesignSpec,
+  type PptdDesignSource,
+  type PptdDesignSpec,
+} from './design-resources'
 import { parsePptdPage } from './parse'
 import {
   getPptdThemePreset,
@@ -15,6 +22,7 @@ import {
 import type { PptdDiagnostic, PptdPage, PptdProject } from './types'
 
 const MAX_OUTLINE_ATTEMPTS = 2
+const MAX_DESIGN_ATTEMPTS = 2
 const MAX_REPAIR_ROUNDS = 2
 const MAX_PIPELINE_CONCURRENCY = 5
 const DEFAULT_MAX_PAGES = 24
@@ -26,6 +34,9 @@ export interface DeckOutlinePage {
   intent: string
   keyPoints: string[]
   dataHint?: string
+  layout?: string
+  visualTask?: string
+  assetBrief?: string
 }
 
 export interface DeckOutline {
@@ -41,11 +52,12 @@ export interface PptdDeckPipelineInput {
   materials?: string
   title?: string
   themeId?: PptdThemeId
+  designSystemId?: string
   maxPages?: number
   artifactPath?: string
 }
 
-export type PptdPipelineStage = 'outline' | 'page' | 'repair'
+export type PptdPipelineStage = 'design' | 'outline' | 'page' | 'repair'
 
 export interface PptdModelCall {
   stage: PptdPipelineStage
@@ -104,6 +116,7 @@ export interface PptdDeckArtifact {
 }
 
 export interface PptdDeckPipelineResult {
+  design: PptdDesignSpec
   outline: DeckOutline
   project: PptdProject
   assembly: PptdAssemblyResult
@@ -170,8 +183,12 @@ export async function generatePptdDeck(
     return result
   }
 
-  const outline = await generateOutline(input, maxPages, callModel, signal, warnings, options.onProgress)
-  const theme = getPptdThemePreset(outline.themeId)
+  const designSource = resolvePptdDesignSource(`${input.brief}\n${input.materials ?? ''}`, input.designSystemId)
+  const baseThemeId = input.themeId ?? inferPptdThemeId(`${input.brief}\n${input.materials ?? ''}`)
+  const baseTheme = getPptdThemePreset(baseThemeId)
+  const design = await generateDesignSpec(input, designSource, baseTheme, callModel, signal, warnings, options.onProgress)
+  const outline = await generateOutline(input, design, maxPages, callModel, signal, warnings, options.onProgress)
+  const theme = themeFromDesignSpec(getPptdThemePreset(outline.themeId), design)
   const scheduler = new SubAgentScheduler(concurrency)
   const previewStates = outline.pages.map((page, pageIndex) => pendingPreviewState(page, pageIndex, theme))
   let hasGeneratedPreviewPage = false
@@ -197,7 +214,7 @@ export async function generatePptdDeck(
           stage: 'page',
           runId: `pptd:page:${pageIndex + 1}`,
           system: PAGE_SYSTEM_PROMPT,
-          prompt: buildPagePrompt(outline, pageOutline, pageIndex, theme),
+          prompt: buildPagePrompt(outline, pageOutline, pageIndex, theme, design),
           maxTokens: 1_800,
           pageIndex,
         })
@@ -271,7 +288,7 @@ export async function generatePptdDeck(
             stage: 'repair',
             runId: `pptd:repair:${target.state.pageIndex + 1}:${round}`,
             system: PAGE_SYSTEM_PROMPT,
-            prompt: buildRepairPrompt(outline, target.state, diagnostics, theme),
+            prompt: buildRepairPrompt(outline, target.state, diagnostics, theme, design),
             maxTokens: 1_800,
             pageIndex: target.state.pageIndex,
           })
@@ -355,7 +372,7 @@ export async function generatePptdDeck(
     attempts: state.attempts,
     diagnostics: dedupeDiagnostics(state.diagnostics),
   }))
-  return { outline, project: assembly.project, assembly, artifact, pageReports, warnings, usage }
+  return { design, outline, project: assembly.project, assembly, artifact, pageReports, warnings, usage }
 }
 
 function publishPreview(
@@ -419,7 +436,7 @@ export function createPptdModelCaller(ctx: QueryContext): PptdModelCaller {
       model: ctx.model.model,
       system: request.system,
       messages,
-      temperature: request.stage === 'outline' ? 0.2 : 0.4,
+      temperature: request.stage === 'outline' ? 0.2 : request.stage === 'design' ? 0.5 : 0.4,
       maxTokens: request.maxTokens,
       stream: true,
       signal,
@@ -447,6 +464,7 @@ export function createPptdModelCaller(ctx: QueryContext): PptdModelCaller {
 
 async function generateOutline(
   input: PptdDeckPipelineInput,
+  design: PptdDesignSpec,
   maxPages: number,
   callModel: (request: PptdModelCall) => Promise<PptdModelCallResult>,
   signal: AbortSignal,
@@ -461,7 +479,7 @@ async function generateOutline(
       stage: 'outline',
       runId: `pptd:outline:${attempt}`,
       system: OUTLINE_SYSTEM_PROMPT,
-      prompt: buildOutlinePrompt(input, maxPages, parseFailure),
+      prompt: buildOutlinePrompt(input, design, maxPages, parseFailure),
       maxTokens: 1_800,
     })
     try {
@@ -474,6 +492,102 @@ async function generateOutline(
     }
   }
   throw new Error(`PPTD 大纲在 ${MAX_OUTLINE_ATTEMPTS} 次尝试后仍无效：${parseFailure}`)
+}
+
+async function generateDesignSpec(
+  input: PptdDeckPipelineInput,
+  source: PptdDesignSource,
+  baseTheme: ReturnType<typeof getPptdThemePreset>,
+  callModel: (request: PptdModelCall) => Promise<PptdModelCallResult>,
+  signal: AbortSignal,
+  warnings: string[],
+  onProgress?: (progress: PptdPipelineProgress) => void,
+): Promise<PptdDesignSpec> {
+  let parseFailure = ''
+  for (let attempt = 1; attempt <= MAX_DESIGN_ATTEMPTS; attempt++) {
+    throwIfAborted(signal)
+    onProgress?.({
+      stage: 'design', current: attempt, total: MAX_DESIGN_ATTEMPTS,
+      message: attempt === 1 ? `制定视觉系统：${source.designSystemId}` : '修正视觉系统结构',
+    })
+    const result = await callModel({
+      stage: 'design',
+      runId: `pptd:design:${attempt}`,
+      system: DESIGN_SYSTEM_PROMPT,
+      prompt: buildDesignPrompt(input, source, baseTheme, parseFailure),
+      maxTokens: 2_400,
+    })
+    try {
+      return normalizeDesignSpec(parseJsonObject(result.text), source, baseTheme)
+    } catch (error) {
+      parseFailure = errorMessage(error)
+    }
+  }
+  warnings.push(`视觉系统在 ${MAX_DESIGN_ATTEMPTS} 次尝试后仍无效，已使用确定性设计规范：${parseFailure}`)
+  return fallbackPptdDesignSpec(source, baseTheme)
+}
+
+function buildDesignPrompt(
+  input: PptdDeckPipelineInput,
+  source: PptdDesignSource,
+  baseTheme: ReturnType<typeof getPptdThemePreset>,
+  correction: string,
+): string {
+  return [
+    '请把参考设计方法压缩为本次演示文稿专用的视觉系统。只返回一个 JSON 对象，不要 Markdown 代码围栏，不要解释。',
+    '参考样页只用于学习构图密度、层级和节奏，绝对不要复制其中的产品名称、数据、链接或事实。',
+    `scenario 和 designSystemId 必须分别为 ${source.scenario} 与 ${source.designSystemId}。`,
+    '所有颜色必须是 #RRGGBB；字号、边距、列数和间距必须是数字。compositionRules/componentRules/prohibited 各 3-8 条。',
+    'JSON 结构：{"scenario":"...","designSystemId":"...","visualSignature":"...","palette":{"background":"#...","surface":"#...","text":"#...","muted":"#...","accent":"#...","secondary":"#..."},"typography":{"titleFont":"...","bodyFont":"...","titleSize":32,"bodySize":18},"layout":{"margin":48,"columns":12,"gutter":16},"compositionRules":["..."],"componentRules":["..."],"prohibited":["..."],"imageryStyle":"..."}',
+    correction ? `上一次输出无效：${correction}。请严格修正结构。` : '',
+    `<base_theme>\n${JSON.stringify(baseTheme)}\n</base_theme>`,
+    `<brief>\n${input.brief.trim()}\n</brief>`,
+    `<general_guidance>\n${clipDesignResource(source.generalGuidance, 6_000)}\n</general_guidance>`,
+    `<scenario_guidance>\n${clipDesignResource(source.scenarioGuidance, 12_000)}\n</scenario_guidance>`,
+    `<design_system>\n${clipDesignResource(source.designGuidance, 16_000)}\n</design_system>`,
+    source.examplePage ? `<reference_page>\n${clipDesignResource(source.examplePage, 10_000)}\n</reference_page>` : '',
+  ].filter(Boolean).join('\n\n')
+}
+
+function normalizeDesignSpec(
+  value: Record<string, unknown>,
+  source: PptdDesignSource,
+  baseTheme: ReturnType<typeof getPptdThemePreset>,
+): PptdDesignSpec {
+  const fallback = fallbackPptdDesignSpec(source, baseTheme)
+  const palette = recordField(value.palette, 'palette')
+  const typography = recordField(value.typography, 'typography')
+  const layout = recordField(value.layout, 'layout')
+  return {
+    scenario: source.scenario,
+    designSystemId: source.designSystemId,
+    visualSignature: nonEmptyString(value.visualSignature, 'visualSignature'),
+    palette: {
+      background: hexColor(palette.background, 'palette.background'),
+      surface: hexColor(palette.surface, 'palette.surface'),
+      text: hexColor(palette.text, 'palette.text'),
+      muted: hexColor(palette.muted, 'palette.muted'),
+      accent: hexColor(palette.accent, 'palette.accent'),
+      secondary: hexColor(palette.secondary, 'palette.secondary'),
+    },
+    typography: {
+      titleFont: nonEmptyString(typography.titleFont, 'typography.titleFont'),
+      bodyFont: nonEmptyString(typography.bodyFont, 'typography.bodyFont'),
+      titleSize: boundedNumber(typography.titleSize, 26, 54, 'typography.titleSize'),
+      bodySize: boundedNumber(typography.bodySize, 12, 24, 'typography.bodySize'),
+    },
+    layout: {
+      margin: boundedNumber(layout.margin, 32, 96, 'layout.margin'),
+      columns: boundedIntegerValue(layout.columns, 4, 16, 'layout.columns'),
+      gutter: boundedNumber(layout.gutter, 8, 32, 'layout.gutter'),
+    },
+    compositionRules: stringArray(value.compositionRules, 'compositionRules', 3, 8),
+    componentRules: stringArray(value.componentRules, 'componentRules', 3, 8),
+    prohibited: stringArray(value.prohibited, 'prohibited', 3, 8),
+    imageryStyle: typeof value.imageryStyle === 'string' && value.imageryStyle.trim()
+      ? value.imageryStyle.trim()
+      : fallback.imageryStyle,
+  }
 }
 
 function parsePageState(
@@ -553,6 +667,9 @@ function normalizeOutline(value: Record<string, unknown>, input: PptdDeckPipelin
       intent: nonEmptyString(page.intent, `pages[${index}].intent`),
       keyPoints: points.slice(0, MAX_KEY_POINTS).map((point) => (point as string).trim()),
       ...(typeof page.dataHint === 'string' && page.dataHint.trim() ? { dataHint: page.dataHint.trim() } : {}),
+      ...(typeof page.layout === 'string' && page.layout.trim() ? { layout: page.layout.trim() } : {}),
+      ...(typeof page.visualTask === 'string' && page.visualTask.trim() ? { visualTask: page.visualTask.trim() } : {}),
+      ...(typeof page.assetBrief === 'string' && page.assetBrief.trim() ? { assetBrief: page.assetBrief.trim() } : {}),
     }
   })
   if (pages.length > maxPages) warnings.push(`页面数已从 ${pages.length} 页截断为 ${maxPages} 页`)
@@ -562,14 +679,16 @@ function normalizeOutline(value: Record<string, unknown>, input: PptdDeckPipelin
   return { title, audience, goal, themeId, pages: pages.slice(0, maxPages) }
 }
 
-function buildOutlinePrompt(input: PptdDeckPipelineInput, maxPages: number, correction: string): string {
+function buildOutlinePrompt(input: PptdDeckPipelineInput, design: PptdDesignSpec, maxPages: number, correction: string): string {
   const materials = clipMaterials(input.materials)
   const fixedTheme = input.themeId ? `themeId 必须是 ${input.themeId}。` : `themeId 必须从 ${PPTD_THEME_IDS.join(', ')} 中选择。`
   return [
     '请把需求整理成演示文稿大纲。只返回一个 JSON 对象，不要 Markdown 代码围栏，不要解释。',
     `最多 ${maxPages} 页；每页 keyPoints 最多 ${MAX_KEY_POINTS} 条；大纲中不得出现坐标、bounds 或 PPTD 元素。`,
     fixedTheme,
-    'JSON 结构：{"title":"...","audience":"...","goal":"...","themeId":"business-light","pages":[{"pageType":"cover|agenda|content|chart|summary","intent":"本页唯一结论","keyPoints":["..."],"dataHint":"可选"}]}',
+    'JSON 结构：{"title":"...","audience":"...","goal":"...","themeId":"business-light","pages":[{"pageType":"cover|agenda|section|content|comparison|timeline|chart|table|summary","intent":"本页唯一结论","layout":"版式骨架","visualTask":"主视觉与阅读顺序","keyPoints":["..."],"dataHint":"可选","assetBrief":"可选，所需真实图片或截图"}]}',
+    '每一页必须给出不同且由内容驱动的 layout 与 visualTask；不要连续复用同一构图，不要把所有正文页都写成项目符号。',
+    `<design_spec>\n${JSON.stringify(design)}\n</design_spec>`,
     correction ? `上一次输出无效：${correction}。请严格修正结构。` : '',
     `<brief>\n${input.brief.trim()}\n</brief>`,
     materials ? `<materials>\n${materials}\n</materials>` : '',
@@ -581,6 +700,7 @@ function buildPagePrompt(
   page: DeckOutlinePage,
   pageIndex: number,
   theme: ReturnType<typeof getPptdThemePreset>,
+  design: PptdDesignSpec,
 ): string {
   return [
     `生成第 ${pageIndex + 1}/${outline.pages.length} 页。只返回一个 .page YAML 文档，不要代码围栏，不要解释。`,
@@ -588,7 +708,9 @@ function buildPagePrompt(
     '顶层只能包含 pageType、可选 background、elements。每个 elementId 在本页唯一。',
     '支持 text、shape、line、icon、table、chart。当前没有 media，禁止生成 image 元素或远程 URL。',
     'text 元素格式示例：{elementId: title, elementType: text, bounds: [64,48,832,64], content: {text: 标题, fontSize: 32, color: "$text", bold: true}}。',
-    '同页 text bounds 不得重叠。正文不小于 16pt，标题不小于 28pt。优先简洁布局，不要装饰性堆叠。',
+    '同页 text bounds 不得重叠。正文不小于 14pt，标题不小于 28pt。通过图表、表格、形状关系、细线和留白表达结构，禁止把 keyPoints 原样堆成大段项目符号。',
+    '严格执行 visualTask、layout 和设计规范。每个元素都必须服务于本页结论；相邻页面不得机械重复相同版式。',
+    `<design_spec>\n${JSON.stringify(design)}\n</design_spec>`,
     `<theme>\n${JSON.stringify(theme)}\n</theme>`,
     `<page_outline>\n${JSON.stringify(page)}\n</page_outline>`,
   ].join('\n\n')
@@ -599,10 +721,13 @@ function buildRepairPrompt(
   state: PageState,
   diagnostics: PptdDiagnostic[],
   theme: ReturnType<typeof getPptdThemePreset>,
+  design: PptdDesignSpec,
 ): string {
   return [
     `修复第 ${state.pageIndex + 1}/${outline.pages.length} 页。只返回完整替换用的 .page YAML，不要代码围栏，不要解释。`,
     '保持本页结论和关键内容，做最小必要修改。所有 bounds 必须位于 960x540 内，text 元素不得重叠。当前没有 media，禁止 image。',
+    '修复不能抹掉原有视觉层级或改成项目符号文字页；继续遵守设计规范和 visualTask。',
+    `<design_spec>\n${JSON.stringify(design)}\n</design_spec>`,
     `<theme>\n${JSON.stringify(theme)}\n</theme>`,
     `<page_outline>\n${JSON.stringify(state.outline)}\n</page_outline>`,
     `<diagnostics>\n${formatDiagnostics(diagnostics)}\n</diagnostics>`,
@@ -708,6 +833,41 @@ function clipMaterials(materials?: string): string {
   return `${text.slice(0, MAX_MATERIAL_CHARS)}\n[...materials truncated...]`
 }
 
+function clipDesignResource(text: string, maxChars: number): string {
+  const value = text.trim()
+  return value.length <= maxChars ? value : `${value.slice(0, maxChars)}\n[...design reference clipped...]`
+}
+
+function recordField(value: unknown, field: string): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${field} 必须是对象`)
+  return value as Record<string, unknown>
+}
+
+function hexColor(value: unknown, field: string): string {
+  const color = nonEmptyString(value, field)
+  if (!/^#[0-9a-fA-F]{6}$/.test(color)) throw new Error(`${field} 必须是 #RRGGBB 颜色`)
+  return color.toUpperCase()
+}
+
+function boundedNumber(value: unknown, minimum: number, maximum: number, name: string): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < minimum || value > maximum) {
+    throw new Error(`${name} 必须是 ${minimum}-${maximum} 的数字`)
+  }
+  return value
+}
+
+function boundedIntegerValue(value: unknown, minimum: number, maximum: number, name: string): number {
+  if (typeof value !== 'number') throw new Error(`${name} 必须是整数`)
+  return boundedInteger(value, minimum, maximum, name)
+}
+
+function stringArray(value: unknown, field: string, minimum: number, maximum: number): string[] {
+  if (!Array.isArray(value)) throw new Error(`${field} 必须是字符串数组`)
+  const result = value.map((item) => nonEmptyString(item, field))
+  if (result.length < minimum || result.length > maximum) throw new Error(`${field} 必须包含 ${minimum}-${maximum} 条`)
+  return result
+}
+
 function safeArtifactPath(path?: string): string {
   const normalized = path?.trim().replace(/\\/g, '/').replace(/^\.\//, '') || '03-交付物/deck.pptd'
   if (normalized.startsWith('/') || normalized.split('/').some((part) => !part || part === '.' || part === '..')) {
@@ -776,5 +936,7 @@ function errorMessage(error: unknown): string {
 }
 
 const OUTLINE_SYSTEM_PROMPT = '你是演示文稿信息架构师。输出必须是满足用户给定结构的单个 JSON 对象。不要生成页面坐标、PPTD YAML、Markdown 或解释。'
+
+const DESIGN_SYSTEM_PROMPT = '你是资深演示文稿艺术指导。你的任务是把场景方法、设计系统和参考样页压缩为一套可执行且内容驱动的视觉规范，避免模板化 AI 排版。输出必须是满足给定结构的单个 JSON 对象。'
 
 const PAGE_SYSTEM_PROMPT = '你是 PPTD v2 页面排版器。输出必须是单个可解析的 YAML 页面文档。严格遵守 960x540 边界、元素契约和诊断要求，不要输出 Markdown 围栏或解释。'

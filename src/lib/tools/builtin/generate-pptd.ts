@@ -1,4 +1,5 @@
 import type { QueryContext } from '../../engine/types'
+import { PPTD_DESIGN_SYSTEM_IDS } from '../../pptd/design-resources'
 import { runPptdDeckPipeline, type PptdDeckPipelineResult } from '../../pptd/pipeline'
 import { PPTD_THEME_IDS, type PptdThemeId } from '../../pptd/theme-presets'
 import type { Tool } from '../types'
@@ -8,6 +9,7 @@ export interface GeneratePptdInput {
   materials?: string
   title?: string
   themeId?: PptdThemeId
+  designSystemId?: string
   maxPages?: number
   artifactPath?: string
 }
@@ -31,6 +33,7 @@ export function createGeneratePptdTool(getParent: () => QueryContext): Tool<Gene
       'Generate one complete PPTD deck from a prepared brief and source materials.',
       'Use this exactly once after reading all relevant workspace files and references.',
       'The tool performs outline generation, bounded parallel page generation, validation, targeted repair, and emits the final slides artifact directly.',
+      'It includes an art-direction stage backed by the bundled open-kimi-ppt scenario guides, design systems, and reference pages.',
       'Do not generate page YAML yourself before or after calling it.',
     ].join(' '),
     inputSchema: {
@@ -42,6 +45,7 @@ export function createGeneratePptdTool(getParent: () => QueryContext): Tool<Gene
         materials: { type: 'string', maxLength: 80_000 },
         title: { type: 'string', minLength: 1, maxLength: 160 },
         themeId: { type: 'string', enum: [...PPTD_THEME_IDS] },
+        designSystemId: { type: 'string', enum: [...PPTD_DESIGN_SYSTEM_IDS] },
         maxPages: { type: 'integer', minimum: 1, maximum: 24 },
         artifactPath: { type: 'string', minLength: 1, maxLength: 240 },
       },

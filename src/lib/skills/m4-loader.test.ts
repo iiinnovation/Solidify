@@ -63,13 +63,16 @@ describe('SkillLoader', () => {
     expect(result.skills.some((skill) => skill.metadata.name === 'presentation')).toBe(false)
     for (const skill of result.skills.filter((item) => item.source === 'builtin')) {
       if (skill.metadata.name === 'pptd-deck') {
-        expect(skill.metadata.version).toBe('1.0.1')
+        expect(skill.metadata.version).toBe('1.1.0')
         expect(skill.metadata.allowedTools).toContain('generate_pptd')
         expect(skill.metadata.allowedTools).not.toContain('capture_preview')
         expect(skill.content).toContain('PPTD v2')
         expect(skill.content).toContain('整份 deck 只能交付为一个 `<solidify-artifact type="slides">`')
         expect(skill.content).toContain('不得使用 `type="document"` 交付页面 YAML')
         expect(skill.resourceFiles?.['reference/pptd.md']).toContain('960, 540')
+        expect(skill.resourceFiles?.['reference/slide-categories/management-report.md']).toContain('Management Reporting')
+        expect(skill.resourceFiles?.['reference/design-system/consulting/apricot-white-brief/design.md']).toContain('Apricot White Brief')
+        expect(skill.resourceFiles?.['examples/kimi/product-overview.page']).toContain('elementType: text')
       } else {
         expect(skill.metadata.version, skill.metadata.name).toBe('2.1.0')
         expect(skill.content, skill.metadata.name).toContain('reference/legacy-guidance.md')

@@ -16,6 +16,22 @@ const OUTLINE = JSON.stringify({
   ],
 })
 
+const DESIGN = JSON.stringify({
+  scenario: 'management-report',
+  designSystemId: 'work/warm-jade-annual-report',
+  visualSignature: '高密度经营汇报，以结论标题、细线网格和琥珀色重点形成审计感。',
+  palette: {
+    background: '#FBF9EE', surface: '#FFFFFF', text: '#181716',
+    muted: '#6B625D', accent: '#FDC356', secondary: '#A09B93',
+  },
+  typography: { titleFont: 'Arial', bodyFont: 'Georgia', titleSize: 36, bodySize: 16 },
+  layout: { margin: 48, columns: 12, gutter: 16 },
+  compositionRules: ['标题先给结论', '证据按阅读顺序组织', '页面之间保持节奏变化'],
+  componentRules: ['图表直接标注', '细线分组替代卡片', '来源固定在页脚'],
+  prohibited: ['禁止卡片阵列', '禁止无依据装饰', '禁止虚构数据'],
+  imageryStyle: '只使用与结论直接相关的真实图片。',
+})
+
 function validPage(title: string): string {
   return `pageType: content
 elements:
@@ -50,6 +66,7 @@ describe('PPTD layered generation pipeline', () => {
     }, {
       callModel: async (call) => {
         calls.push(call)
+        if (call.stage === 'design') return { text: DESIGN }
         if (call.stage === 'outline') return { text: ++outlineCalls === 1 ? 'not json' : OUTLINE }
         if (call.stage === 'page') return { text: call.pageIndex === 0 ? validPage('经营复盘与下一步') : INVALID_PAGE }
         return { text: validPage('增长由核心客户驱动') }
@@ -63,7 +80,8 @@ describe('PPTD layered generation pipeline', () => {
     expect(result.project.pages).toHaveLength(2)
     expect(result.assembly.validation.valid).toBe(true)
     expect(result.pageReports.map((page) => page.status)).toEqual(['generated', 'repaired'])
-    expect(result.usage.calls).toBe(5)
+    expect(result.usage.calls).toBe(6)
+    expect(result.design.designSystemId).toBe('work/warm-jade-annual-report')
     expect(result.artifact.type).toBe('slides')
     expect(result.artifact.envelope.match(/<solidify-artifact/g)).toHaveLength(1)
     expect(parsePptdArtifactContent(result.artifact.content)?.pages).toHaveLength(2)
@@ -86,6 +104,7 @@ describe('PPTD layered generation pipeline', () => {
     const result = await generatePptdDeck({ brief: '生成一页方案' }, {
       maxRepairRounds: 2,
       callModel: async (call) => {
+        if (call.stage === 'design') return { text: DESIGN }
         if (call.stage === 'outline') {
           return { text: JSON.stringify({
             title: '方案', audience: '客户', goal: '确认方案', themeId: 'business-light',
@@ -115,6 +134,7 @@ elements:
     const result = await generatePptdDeck({ brief: '生成一页深色封面' }, {
       callModel: async (call) => {
         calls.push(call)
+        if (call.stage === 'design') return { text: DESIGN }
         return call.stage === 'outline'
           ? { text: JSON.stringify({
               title: '经营复盘', audience: '管理层', goal: '复盘', themeId: 'business-light',
@@ -147,6 +167,7 @@ elements:
     }
     const result = await generatePptdDeck({ brief: '生成方案' }, {
       callModel: async (call) => {
+        if (call.stage === 'design') return { text: DESIGN }
         if (call.stage === 'outline') {
           return { text: JSON.stringify(++outlineCalls === 1 ? invalidFirstAttempt : validSecondAttempt) }
         }
@@ -162,9 +183,12 @@ elements:
       pageType: 'content', intent: `结论 ${index + 1}`, keyPoints: ['1', '2', '3', '4', '5', '6', '7'],
     }))
     const result = await generatePptdDeck({ brief: '数据汇报', maxPages: 2 }, {
-      callModel: async (call) => call.stage === 'outline'
-        ? { text: JSON.stringify({ title: '数据汇报', audience: '管理层', goal: '决策', themeId: 'unknown', pages }) }
-        : { text: validPage('结论') },
+      callModel: async (call) => {
+        if (call.stage === 'design') return { text: DESIGN }
+        return call.stage === 'outline'
+          ? { text: JSON.stringify({ title: '数据汇报', audience: '管理层', goal: '决策', themeId: 'unknown', pages }) }
+          : { text: validPage('结论') }
+      },
     })
 
     expect(result.outline.themeId).toBe('data')
@@ -184,6 +208,7 @@ elements:
         if (event.stage === 'page') progress.push(event)
       },
       callModel: async (call) => {
+        if (call.stage === 'design') return { text: DESIGN }
         if (call.stage === 'outline') return { text: OUTLINE }
         if (call.stage === 'page' && call.pageIndex === 0) await firstPageGate
         if (call.stage === 'page' && call.pageIndex === 1) releaseFirstPage?.()
