@@ -127,29 +127,33 @@ describe.skipIf(!LIVE)('M1-29 live three-model workspace Demo', () => {
 
 function liveModels(): LiveModel[] {
   if (!LIVE) return []
-
-  const anthropicKey = requireEnv('ANTHROPIC_API_KEY')
-  const openaiKey = requireEnv('OPENAI_API_KEY')
-  const deepseekKey = requireEnv('DEEPSEEK_API_KEY')
-
-  return [
-    {
+  const requested = new Set((process.env.M1_LIVE_MODELS ?? 'Claude,GPT,DeepSeek').split(',').map((name) => name.trim().toLowerCase()).filter(Boolean))
+  const models: LiveModel[] = []
+  if (requested.has('claude')) {
+    const anthropicKey = requireEnv('ANTHROPIC_API_KEY')
+    models.push({
       name: 'Claude',
       model: process.env.M1_CLAUDE_MODEL ?? 'claude-sonnet-4-20250514',
       provider: () => new AnthropicProvider({
         apiKey: anthropicKey,
         baseURL: providerBaseURL(process.env.M1_ANTHROPIC_BASE_URL ?? '', 'anthropic'),
       }),
-    },
-    {
+    })
+  }
+  if (requested.has('gpt')) {
+    const openaiKey = requireEnv('OPENAI_API_KEY')
+    models.push({
       name: 'GPT',
       model: process.env.M1_GPT_MODEL ?? 'gpt-4o',
       provider: () => new OpenAIProvider({
         apiKey: openaiKey,
         baseURL: providerBaseURL(process.env.M1_OPENAI_BASE_URL ?? '', 'openai'),
       }),
-    },
-    {
+    })
+  }
+  if (requested.has('deepseek')) {
+    const deepseekKey = requireEnv('DEEPSEEK_API_KEY')
+    models.push({
       name: 'DeepSeek',
       model: process.env.M1_DEEPSEEK_MODEL ?? 'deepseek-chat',
       provider: () => new OpenAIProvider({
@@ -159,8 +163,10 @@ function liveModels(): LiveModel[] {
           'openai',
         ),
       }),
-    },
-  ]
+    })
+  }
+  if (models.length === 0) throw new Error('M1_LIVE_MODELS must select at least one of Claude, GPT, DeepSeek')
+  return models
 }
 
 function requireEnv(name: string): string {
