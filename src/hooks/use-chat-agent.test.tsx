@@ -220,6 +220,64 @@ describe('useChat agent loop switch', () => {
       .toMatchObject({ status: 'aborted', error: '已切换到其他对话' })
   })
 
+  it('removes an empty aborted assistant before starting the next request', async () => {
+    useChatStore.setState({
+      conversations: [{ id: 'conv-stop', title: 'Stop', createdAt: 1, messages: [] }],
+      artifacts: [],
+      activeArtifactId: null,
+    })
+    let callCount = 0
+    let releaseSecondRun: (() => void) | undefined
+    const secondRunGate = new Promise<void>((resolve) => { releaseSecondRun = resolve })
+    mocks.runQuery.mockImplementation(async function* (context: { signal: AbortSignal }) {
+      callCount++
+      yield { type: 'run.started', runId: `run-${callCount}` }
+      if (callCount === 1) {
+        await new Promise<void>((resolve) => {
+          if (context.signal.aborted) resolve()
+          else context.signal.addEventListener('abort', () => resolve(), { once: true })
+        })
+        yield { type: 'run.failed', error: { kind: 'aborted', message: 'Run was aborted by user' } }
+        return
+      }
+      await secondRunGate
+      yield { type: 'message.delta', text: 'second reply' }
+      yield { type: 'message.completed', content: 'second reply' }
+      yield {
+        type: 'run.completed',
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, turns: 1, toolCalls: 0 },
+      }
+    })
+
+    const { result } = renderHook(() => useChat('conv-stop'), { wrapper })
+    let firstRequest: Promise<void> | undefined
+    await act(async () => {
+      firstRequest = result.current.sendMessage('first prompt')
+      await Promise.resolve()
+    })
+    await waitFor(() => expect(result.current.isStreaming).toBe(true))
+    act(() => result.current.stopStreaming())
+    await act(async () => { await firstRequest })
+    await waitFor(() => expect(result.current.isStreaming).toBe(false))
+
+    expect(result.current.messages.map((message) => message.role)).toEqual(['user'])
+    expect(useChatStore.getState().conversations[0].messages.map((message) => message.role)).toEqual(['user'])
+
+    let secondRequest: Promise<void> | undefined
+    await act(async () => {
+      secondRequest = result.current.sendMessage('second prompt')
+      await Promise.resolve()
+    })
+    await waitFor(() => expect(result.current.isStreaming).toBe(true))
+    expect(result.current.messages.map((message) => message.role)).toEqual(['user', 'user', 'assistant'])
+    expect(result.current.messages.filter((message) => message.role === 'assistant' && !message.content)).toHaveLength(1)
+
+    releaseSecondRun?.()
+    await act(async () => { await secondRequest })
+    await waitFor(() => expect(result.current.isStreaming).toBe(false))
+    expect(result.current.messages.at(-1)).toMatchObject({ role: 'assistant', content: 'second reply' })
+  })
+
   it('keeps using the legacy stream when the switch is off', async () => {
     mocks.agentLoop = false
     mocks.fetchChatStream.mockResolvedValue(new Response('data: [DONE]\n\n', { status: 200 }))
@@ -230,6 +288,31 @@ describe('useChat agent loop switch', () => {
     await waitFor(() => expect(result.current.isStreaming).toBe(false))
     expect(mocks.fetchChatStream).toHaveBeenCalledOnce()
     expect(mocks.runQuery).not.toHaveBeenCalled()
+  })
+
+  it('removes an empty legacy assistant when stopped before the response arrives', async () => {
+    mocks.agentLoop = false
+    useChatStore.setState({
+      conversations: [{ id: 'conv-legacy-stop', title: 'Legacy stop', createdAt: 1, messages: [] }],
+      artifacts: [],
+      activeArtifactId: null,
+    })
+    let resolveResponse: ((response: Response) => void) | undefined
+    mocks.fetchChatStream.mockReturnValue(new Promise<Response>((resolve) => { resolveResponse = resolve }))
+    const { result } = renderHook(() => useChat('conv-legacy-stop'), { wrapper })
+
+    let request: Promise<void> | undefined
+    await act(async () => {
+      request = result.current.sendMessage('legacy prompt')
+      await Promise.resolve()
+    })
+    await waitFor(() => expect(result.current.isStreaming).toBe(true))
+    act(() => result.current.stopStreaming())
+    resolveResponse?.(new Response(''))
+    await act(async () => { await request })
+
+    expect(result.current.messages.map((message) => message.role)).toEqual(['user'])
+    expect(useChatStore.getState().conversations[0].messages.map((message) => message.role)).toEqual(['user'])
   })
 
   it('resumes one persisted running Agent without duplicating messages', async () => {

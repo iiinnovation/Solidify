@@ -524,7 +524,10 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
                     {msg.content ? (
                       <MarkdownRenderer content={msg.content} />
                     ) : (
-                      isStreaming && <StreamingIndicator />
+                      isStreaming
+                        && index === messages.length - 1
+                        && !msg.agentRun
+                        && <StreamingIndicator />
                     )}
                     <ArtifactRefCard messageId={msg.id} />
                     {msg.knowledgeSources && msg.knowledgeSources.length > 0 && (

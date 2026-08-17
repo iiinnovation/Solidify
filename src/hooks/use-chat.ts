@@ -140,6 +140,17 @@ function decodeArtifactAttribute(value: string): string {
   return value.replace(/&(amp|quot|apos|lt|gt);/g, (_match, name: string) => entities[name])
 }
 
+export function isDiscardableEmptyAssistant(message: Message, hasArtifact = false): boolean {
+  return message.role === 'assistant'
+    && message.agentRun?.status === 'aborted'
+    && !message.content.trim()
+    && message.agentRun.text.trim().length === 0
+    && message.agentRun.tools.length === 0
+    && (message.documents?.length ?? 0) === 0
+    && (message.knowledgeSources?.length ?? 0) === 0
+    && !hasArtifact
+}
+
 /* ── Hook ── */
 
 export function useChat(conversationId?: string) {
@@ -160,7 +171,9 @@ export function useChat(conversationId?: string) {
   const createConversation = useChatStore((s) => s.createConversation)
   const addMessageToConversation = useChatStore((s) => s.addMessageToConversation)
   const patchMessageInConversation = useChatStore((s) => s.patchMessageInConversation)
+  const removeMessageFromConversation = useChatStore((s) => s.removeMessageFromConversation)
   const removeLastMessageFromConversation = useChatStore((s) => s.removeLastMessageFromConversation)
+  const artifacts = useChatStore((s) => s.artifacts)
   const getActiveProvider = useModelStore((s) => s.getActiveProvider)
 
   // 从 store 加载已有对话
@@ -193,9 +206,19 @@ export function useChat(conversationId?: string) {
     }
     messagesOwnerRef.current = conversationId
     if (conversationId) {
-      const conv = useChatStore.getState().conversations.find((c) => c.id === conversationId)
+      const store = useChatStore.getState()
+      const conv = store.conversations.find((c) => c.id === conversationId)
       if (conv) {
-        setMessages(conv.messages)
+        const cleanedMessages = conv.messages.filter((message) => !isDiscardableEmptyAssistant(
+          message,
+          store.artifacts.some((artifact) => artifact.messageId === message.id),
+        ))
+        setMessages(cleanedMessages)
+        if (cleanedMessages.length !== conv.messages.length) {
+          for (const message of conv.messages) {
+            if (!cleanedMessages.includes(message)) store.removeMessageFromConversation(conversationId, message.id)
+          }
+        }
       } else {
         setMessages([])
       }
@@ -403,9 +426,28 @@ ${result.content}
       const materializeRunId = assistantMsg.agentRun?.runId ?? newId('run')
       const workspaceRoot = useWorkspaceStore.getState().workspaceRoot
       const useFileDocuments = isEnabled('workbenchV2') && isEnabled('localWorkspace') && isTauri && Boolean(workspaceRoot)
+      let observedAssistantOutput = false
       let completedArtifactCount = resume
         ? processStreamingContent(assistantMsg.agentRun?.text ?? '').completeArtifacts.length
         : 0
+
+      const discardAssistantPlaceholder = () => {
+        if (resume || observedAssistantOutput) return false
+        const store = useChatStore.getState()
+        const persisted = store.conversations
+          .find((conversation) => conversation.id === currentConvId)
+          ?.messages.find((message) => message.id === assistantMsg.id)
+        const hasPersistedOutput = Boolean(
+          persisted?.content.trim()
+          || persisted?.documents?.length
+          || persisted?.knowledgeSources?.length
+          || store.artifacts.some((artifact) => artifact.messageId === assistantMsg.id),
+        )
+        if (hasPersistedOutput) return false
+        setMessages((previous) => previous.filter((message) => message.id !== assistantMsg.id))
+        removeMessageFromConversation(currentConvId, assistantMsg.id)
+        return true
+      }
 
       /**
        * `persist: false` updates only the local view. The conversation store is
@@ -423,6 +465,7 @@ ${result.content}
 
       const consumeArtifactContent = (fullContent: string, final = false, persist = true) => {
         if (!isCurrentRequest()) return ''
+        if (fullContent.trim()) observedAssistantOutput = true
         const { cleanText, completeArtifacts, streamingArtifact } =
           processStreamingContent(fullContent)
 
@@ -550,11 +593,16 @@ ${result.content}
         const resumedAssistantIndex = resume
           ? resumeMessages.findIndex((message) => message.id === resume.assistantMessage.id)
           : -1
-        const baseMessages = resume
+        const unfilteredBaseMessages = resume
           ? resumedAssistantIndex >= 0
             ? resumeMessages.slice(0, resumedAssistantIndex)
             : resumeMessages.filter((message) => message.id !== resume.assistantMessage.id)
           : historyOverride ?? messages
+        const currentArtifacts = useChatStore.getState().artifacts
+        const baseMessages = unfilteredBaseMessages.filter((message) => !isDiscardableEmptyAssistant(
+          message,
+          currentArtifacts.some((artifact) => artifact.messageId === message.id),
+        ))
         const allMessages = (resume ? baseMessages : [...baseMessages, userMsg]).map((m) => ({
           role: m.role,
           content: m.content,
@@ -703,11 +751,18 @@ ${result.content}
           const finalText = consumeArtifactContent(run.text, true)
           if (!isCurrentRequest()) return
           await flushMaterializations()
-          patchAssistantMessage({
+          const finalPatch: Partial<Message> = {
             ...(finalText !== undefined ? { content: finalText } : {}),
             agentRun: run,
             runEvents: [...runEvents],
-          })
+          }
+          const settledAssistant = { ...assistantMsg, ...finalPatch }
+          const hasArtifact = useChatStore.getState().artifacts.some((artifact) => artifact.messageId === assistantMsg.id)
+          if (isDiscardableEmptyAssistant(settledAssistant, hasArtifact)) {
+            discardAssistantPlaceholder()
+            return
+          }
+          patchAssistantMessage(finalPatch)
           return
         }
 
@@ -776,8 +831,12 @@ ${result.content}
 
         consumeArtifactContent(fullContent, true)
         await flushMaterializations()
+        if (abortController.signal.aborted) discardAssistantPlaceholder()
       } catch (err) {
-        if (abortController.signal.aborted || !isCurrentRequest()) return
+        if (abortController.signal.aborted || !isCurrentRequest()) {
+          if (isCurrentRequest()) discardAssistantPlaceholder()
+          return
+        }
         const error = err instanceof Error ? err : new Error('未知错误')
         setError(error)
         // New requests discard an empty placeholder. A resumed run retains
@@ -810,7 +869,7 @@ ${result.content}
         }
       }
     },
-    [messages, addArtifact, updateArtifactContent, createConversation, addMessageToConversation, patchMessageInConversation, removeLastMessageFromConversation, navigate, getActiveProvider],
+    [messages, addArtifact, updateArtifactContent, createConversation, addMessageToConversation, patchMessageInConversation, removeMessageFromConversation, removeLastMessageFromConversation, navigate, getActiveProvider],
   )
 
   useEffect(() => {
@@ -905,7 +964,12 @@ ${result.content}
   // During a route transition React can render once before the conversation
   // loading effect runs. Hide the previous conversation's local state in that
   // frame, and never expose its stream status to the new composer.
-  const visibleMessages = messagesOwnerRef.current === conversationId ? messages : []
+  const visibleMessages = messagesOwnerRef.current === conversationId
+    ? messages.filter((message) => !isDiscardableEmptyAssistant(
+        message,
+        artifacts.some((artifact) => artifact.messageId === message.id),
+      ))
+    : []
   const visibleStreaming = streamConversationRef.current === conversationId ? isStreaming : false
   return { messages: visibleMessages, isStreaming: visibleStreaming, error, sendMessage, stopStreaming, regenerate, retry }
 }

@@ -68,6 +68,7 @@ interface ChatState {
   addMessageToConversation: (convId: string, message: Message) => void
   updateMessageInConversation: (convId: string, messageId: string, content: string) => void
   patchMessageInConversation: (convId: string, messageId: string, patch: Partial<Message>) => void
+  removeMessageFromConversation: (convId: string, messageId: string) => void
   removeLastMessageFromConversation: (convId: string) => void
 }
 
@@ -182,6 +183,18 @@ export const useChatStore = create<ChatState>()(
                   ),
                 }
               : c,
+          ),
+        })),
+
+      removeMessageFromConversation: (convId, messageId) =>
+        set((state) => ({
+          conversations: state.conversations.map((conversation) =>
+            conversation.id === convId
+              ? {
+                  ...conversation,
+                  messages: conversation.messages.filter((message) => message.id !== messageId),
+                }
+              : conversation,
           ),
         })),
 
