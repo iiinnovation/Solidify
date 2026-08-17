@@ -41,6 +41,8 @@ Solidify 的目标形态：**本地优先的 AI 交付工作台** —— 由文�
 | [M5](phases/M5-pptd-engine.md) | PPTD 演示文稿引擎 | 5–7 周 |
 | [M6](phases/M6-multi-agent.md) | 多 Agent 协作 | 4–5 周 |
 
+M6 后的候选方向与触发条件见 [05-post-m6-evaluation.md](05-post-m6-evaluation.md)，不属于当前正式里程碑排期。
+
 ## 参考资料
 
 [reference/](reference/) 下是一套生产级 Agent Runtime 框架的脱敏架构提取，是本项目 L1–L5 分层设计的直接来源：

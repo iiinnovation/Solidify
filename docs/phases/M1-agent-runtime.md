@@ -200,9 +200,9 @@ M1-26 的做法：`use-chat.ts` 保持现有单轮路径不动，新增一条走
 
 **M1-28 证据**：Rust 共 15 项测试通过，其中 `sandbox.rs` 的 8 项覆盖规格要求的 7 个安全场景并额外覆盖安全创建嵌套路径；其余覆盖文件工具、快照 IO/隔离和工作区授权持久化。测试临时目录使用原子序号隔离，并行运行稳定。
 
-**M1-29 状态（2026-08-13）**：三组真实凭据与中转配置均已就绪。DeepSeek `deepseek-v4-flash` 已完整执行 `list_dir`、`read_file` 和最终总结，终态为 `run.completed`，最近一次证据为 4216 input / 382 output / 4598 total tokens、3 turns、2 tool calls，并正确返回未知 marker。GPT `gpt-5.6-sol` 随后也完整通过相同流程，证据为 16111 input / 164 output / 16275 total tokens、3 turns、2 tool calls。Claude `claude-fable-5` 的标准 Anthropic Messages 请求仍不稳定：一次连接中转后收到 `403 Your request was blocked`，最近一次则在 HTTP 响应前连接失败，均未进入工具调用。因此不得将 Claude 记为通过，也不得以 mock 或其他兼容模型替代。
+**M1-29 状态（2026-08-17）**：DeepSeek `deepseek-v4-flash` 再次完整执行 `list_dir`、`read_file` 和最终总结，最近证据为 4389 input / 345 output / 4734 total tokens、3 turns、2 tool calls。GPT `gpt-5.6-sol` 已有 2026-08-13 的完整通过证据（16111 input / 164 output / 16275 total tokens、3 turns、2 tool calls）；2026-08-17 重跑时，原中转余额不足，临时中转则连纯 curl 都返回 `channel:client_restricted`，属于外部渠道策略，不覆盖已归档的通过证据。Claude `claude-fable-5` 的标准 Anthropic Messages 请求仍未通过，不得以 mock 或其他兼容模型替代。
 
-真实验收入口为 `npm run test:m1-live`。该命令自动读取存在的 `.env.m1-live.local`，并强制校验 `ANTHROPIC_API_KEY`、`OPENAI_API_KEY`、`DEEPSEEK_API_KEY`，任一缺失即失败；也可由 shell 环境提供变量。`M1_CLAUDE_MODEL`、`M1_GPT_MODEL`、`M1_DEEPSEEK_MODEL` 和对应 `M1_*_BASE_URL` 可覆盖默认模型与 endpoint。每个模型都会在独立真实临时目录执行 `list_dir(".") → read_file("largest.md") → 总结文件内未知 marker`，校验工具顺序、参数、成功结果、终态及 token usage，并输出不含凭据的结构化证据。普通 `npm run test:run` 明确跳过该联网 suite。
+真实验收入口为 `npm run test:m1-live`。该命令自动读取存在的 `.env.m1-live.local`，并按 `M1_LIVE_MODELS`（默认 `Claude,GPT,DeepSeek`）只校验被选模型的凭据；也可由 shell 环境提供变量。`npm run test:m1-live-non-claude` 专门重跑 GPT 与 DeepSeek，保留 Claude 的外部中转阻塞不影响其余验收。`M1_CLAUDE_MODEL`、`M1_GPT_MODEL`、`M1_DEEPSEEK_MODEL` 和对应 `M1_*_BASE_URL` 可覆盖默认模型与 endpoint。每个模型都会在独立真实临时目录执行 `list_dir(".") → read_file("largest.md") → 总结文件内未知 marker`，校验工具顺序、参数、成功结果、终态及 token usage，并输出不含凭据的结构化证据。普通 `npm run test:run` 明确跳过该联网 suite。
 
 **当前质量门禁（2026-08-13）**：前端 22 个测试文件、170 项测试全部通过，M1-29 live suite 在普通门禁中明确跳过；ESLint、TypeScript + Vite 生产构建、Rust fmt、Rust 应用构建、Rust 15 项测试与 `git diff --check` 通过。`target/debug/solidify` Mach-O 应用进程完成启动烟测并已正常清理。生产构建仍有既有 Tailwind 选择器与 Anthropic SDK browser externalization 警告，不影响退出状态。
 
@@ -229,7 +229,9 @@ M1-26 的做法：`use-chat.ts` 保持现有单轮路径不动，新增一条走
 
 ## 完成定义
 
-- [ ] Demo 能当着人跑通，且在 Claude / GPT / DeepSeek 三个模型上都验证过
+- [x] GPT 实机 Demo 通过
+- [x] DeepSeek 实机 Demo 通过
+- [ ] Claude 实机 Demo 通过
 - [x] `flags.agentLoop = false` 时，应用行为与改造前完全一致
 - [x] [agent-loop.md §7](../specs/agent-loop.md) 的 7 个用例全部通过
 - [x] 沙箱 7 个强制用例全部通过
