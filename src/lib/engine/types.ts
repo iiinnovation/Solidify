@@ -70,6 +70,8 @@ export interface QueryContext {
   readonly skill?: LoadedSkill
   readonly skillResources?: SkillResourceResolver
   readonly skillRegistry?: SkillRegistryApi
+  /** Trusted image attachments available to the PPTD generator for this run. */
+  readonly pptdMedia?: Readonly<Record<string, string | Uint8Array>>
   readonly memory: MemoryState
   readonly model: ModelConfig
   readonly limits: RunLimits

@@ -11,6 +11,7 @@ import {
   type PptdDesignSource,
   type PptdDesignSpec,
 } from './design-resources'
+import { pptdMediaDataUrl } from './media'
 import { parsePptdPage } from './parse'
 import {
   getPptdThemePreset,
@@ -29,6 +30,8 @@ const DEFAULT_MAX_PAGES = 24
 const MAX_KEY_POINTS = 6
 const MAX_MATERIAL_CHARS = 48_000
 const PROGRESS_HEARTBEAT_MS = 10_000
+const MAX_MEDIA_FILE_BYTES = 15 * 1024 * 1024
+const MAX_MEDIA_TOTAL_BYTES = 40 * 1024 * 1024
 export interface DeckOutlinePage {
   pageType: string
   intent: string
@@ -53,6 +56,7 @@ export interface PptdDeckPipelineInput {
   title?: string
   themeId?: PptdThemeId
   designSystemId?: string
+  media?: Readonly<Record<string, string | Uint8Array>>
   maxPages?: number
   artifactPath?: string
 }
@@ -66,6 +70,12 @@ export interface PptdModelCall {
   prompt: string
   maxTokens: number
   pageIndex?: number
+  images?: readonly PptdModelImage[]
+}
+
+export interface PptdModelImage {
+  path: string
+  dataUrl: string
 }
 
 export interface PptdModelCallResult {
@@ -171,6 +181,8 @@ export async function generatePptdDeck(
   const maxPages = boundedInteger(input.maxPages ?? DEFAULT_MAX_PAGES, 1, DEFAULT_MAX_PAGES, 'maxPages')
   const usage: PptdDeckPipelineUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0, calls: 0 }
   const warnings: string[] = []
+  const media = preparePptdMedia(input.media)
+  const mediaPrompt = buildMediaPrompt(media.images)
 
   const callModel = async (request: PptdModelCall): Promise<PptdModelCallResult> => {
     throwIfAborted(signal)
@@ -186,8 +198,8 @@ export async function generatePptdDeck(
   const designSource = resolvePptdDesignSource(`${input.brief}\n${input.materials ?? ''}`, input.designSystemId)
   const baseThemeId = input.themeId ?? inferPptdThemeId(`${input.brief}\n${input.materials ?? ''}`)
   const baseTheme = getPptdThemePreset(baseThemeId)
-  const design = await generateDesignSpec(input, designSource, baseTheme, callModel, signal, warnings, options.onProgress)
-  const outline = await generateOutline(input, design, maxPages, callModel, signal, warnings, options.onProgress)
+  const design = await generateDesignSpec(input, designSource, baseTheme, mediaPrompt, media.images, callModel, signal, warnings, options.onProgress)
+  const outline = await generateOutline(input, design, maxPages, mediaPrompt, media.images, callModel, signal, warnings, options.onProgress)
   const theme = themeFromDesignSpec(getPptdThemePreset(outline.themeId), design)
   const scheduler = new SubAgentScheduler(concurrency)
   const previewStates = outline.pages.map((page, pageIndex) => pendingPreviewState(page, pageIndex, theme))
@@ -214,9 +226,10 @@ export async function generatePptdDeck(
           stage: 'page',
           runId: `pptd:page:${pageIndex + 1}`,
           system: PAGE_SYSTEM_PROMPT,
-          prompt: buildPagePrompt(outline, pageOutline, pageIndex, theme, design),
+          prompt: buildPagePrompt(outline, pageOutline, pageIndex, theme, design, mediaPrompt),
           maxTokens: 1_800,
           pageIndex,
+          images: media.images,
         })
         const state = parsePageState(result.text, pageOutline, pageIndex, pagePath, theme)
         previewStates[pageIndex] = state
@@ -229,7 +242,7 @@ export async function generatePptdDeck(
           message: `已完成 ${completedPages}/${outline.pages.length} 页`,
         }
         if (hasGeneratedPreviewPage) {
-          const previewAssembly = assembleStates(outline.title, theme, previewStates)
+          const previewAssembly = assembleStates(outline.title, theme, previewStates, media.values)
           publishPreview(options.onProgress, input, outline, previewAssembly.project, progress)
         } else {
           options.onProgress?.(progress)
@@ -259,7 +272,7 @@ export async function generatePptdDeck(
     }
   })
 
-  let assembly = assembleStates(outline.title, theme, states)
+  let assembly = assembleStates(outline.title, theme, states, media.values)
   assertNoProjectErrors(assembly)
   publishPreview(options.onProgress, input, outline, assembly.project, {
     stage: 'assemble', current: 1, total: 1, message: '已装配 PPTD 工程，正在校验和修复',
@@ -288,9 +301,10 @@ export async function generatePptdDeck(
             stage: 'repair',
             runId: `pptd:repair:${target.state.pageIndex + 1}:${round}`,
             system: PAGE_SYSTEM_PROMPT,
-            prompt: buildRepairPrompt(outline, target.state, diagnostics, theme, design),
+            prompt: buildRepairPrompt(outline, target.state, diagnostics, theme, design, mediaPrompt),
             maxTokens: 1_800,
             pageIndex: target.state.pageIndex,
+            images: media.images,
           })
           return parsePageState(
             result.text,
@@ -318,7 +332,7 @@ export async function generatePptdDeck(
         target.state.diagnostics.push(pageDiagnostic(target.state.pagePath, `页面修复调用失败：${errorMessage(entry.reason)}`, 'repair-failed'))
       }
     })
-    assembly = assembleStates(outline.title, theme, states)
+    assembly = assembleStates(outline.title, theme, states, media.values)
     assertNoProjectErrors(assembly)
     publishPreview(options.onProgress, input, outline, assembly.project, {
       stage: 'repair',
@@ -338,7 +352,7 @@ export async function generatePptdDeck(
   }
   if (requiredFallbacks.length > 0) {
     warnings.push(`${requiredFallbacks.length} 页在 ${maxRepairRounds} 轮修复后仍未通过，已降级为纯文本页`)
-    assembly = assembleStates(outline.title, theme, states)
+    assembly = assembleStates(outline.title, theme, states, media.values)
     assertNoProjectErrors(assembly)
     publishPreview(options.onProgress, input, outline, assembly.project, {
       stage: 'repair',
@@ -431,7 +445,13 @@ export function runPptdDeckPipeline(
 export function createPptdModelCaller(ctx: QueryContext): PptdModelCaller {
   const provider = ctx.providerRegistry.get(ctx.model.provider)
   return async (request, signal) => {
-    const messages: UnifiedMessage[] = [{ role: 'user', content: request.prompt }]
+    const content = provider.metadata.supportsVision && request.images?.length
+      ? [
+          { type: 'text' as const, text: request.prompt },
+          ...request.images.map((image) => ({ type: 'image' as const, url: image.dataUrl, detail: 'high' as const })),
+        ]
+      : request.prompt
+    const messages: UnifiedMessage[] = [{ role: 'user', content }]
     const completion: CompletionRequest = {
       model: ctx.model.model,
       system: request.system,
@@ -466,6 +486,8 @@ async function generateOutline(
   input: PptdDeckPipelineInput,
   design: PptdDesignSpec,
   maxPages: number,
+  mediaPrompt: string,
+  images: readonly PptdModelImage[],
   callModel: (request: PptdModelCall) => Promise<PptdModelCallResult>,
   signal: AbortSignal,
   warnings: string[],
@@ -479,8 +501,9 @@ async function generateOutline(
       stage: 'outline',
       runId: `pptd:outline:${attempt}`,
       system: OUTLINE_SYSTEM_PROMPT,
-      prompt: buildOutlinePrompt(input, design, maxPages, parseFailure),
+      prompt: buildOutlinePrompt(input, design, maxPages, parseFailure, mediaPrompt),
       maxTokens: 1_800,
+      images,
     })
     try {
       const attemptWarnings: string[] = []
@@ -498,6 +521,8 @@ async function generateDesignSpec(
   input: PptdDeckPipelineInput,
   source: PptdDesignSource,
   baseTheme: ReturnType<typeof getPptdThemePreset>,
+  mediaPrompt: string,
+  images: readonly PptdModelImage[],
   callModel: (request: PptdModelCall) => Promise<PptdModelCallResult>,
   signal: AbortSignal,
   warnings: string[],
@@ -514,8 +539,9 @@ async function generateDesignSpec(
       stage: 'design',
       runId: `pptd:design:${attempt}`,
       system: DESIGN_SYSTEM_PROMPT,
-      prompt: buildDesignPrompt(input, source, baseTheme, parseFailure),
+      prompt: buildDesignPrompt(input, source, baseTheme, parseFailure, mediaPrompt),
       maxTokens: 2_400,
+      images,
     })
     try {
       return normalizeDesignSpec(parseJsonObject(result.text), source, baseTheme)
@@ -532,6 +558,7 @@ function buildDesignPrompt(
   source: PptdDesignSource,
   baseTheme: ReturnType<typeof getPptdThemePreset>,
   correction: string,
+  mediaPrompt: string,
 ): string {
   return [
     '请把参考设计方法压缩为本次演示文稿专用的视觉系统。只返回一个 JSON 对象，不要 Markdown 代码围栏，不要解释。',
@@ -542,6 +569,7 @@ function buildDesignPrompt(
     correction ? `上一次输出无效：${correction}。请严格修正结构。` : '',
     `<base_theme>\n${JSON.stringify(baseTheme)}\n</base_theme>`,
     `<brief>\n${input.brief.trim()}\n</brief>`,
+    mediaPrompt,
     `<general_guidance>\n${clipDesignResource(source.generalGuidance, 6_000)}\n</general_guidance>`,
     `<scenario_guidance>\n${clipDesignResource(source.scenarioGuidance, 12_000)}\n</scenario_guidance>`,
     `<design_system>\n${clipDesignResource(source.designGuidance, 16_000)}\n</design_system>`,
@@ -619,12 +647,18 @@ function parsePageState(
   }
 }
 
-function assembleStates(title: string, theme: ReturnType<typeof getPptdThemePreset>, states: readonly PageState[]): PptdAssemblyResult {
+function assembleStates(
+  title: string,
+  theme: ReturnType<typeof getPptdThemePreset>,
+  states: readonly PageState[],
+  media: Readonly<Record<string, string | Uint8Array>>,
+): PptdAssemblyResult {
   return assemblePptdProject({
     title,
     theme,
     pages: states.map((state) => state.page),
     pagePaths: states.map((state) => state.pagePath),
+    media,
   })
 }
 
@@ -679,7 +713,13 @@ function normalizeOutline(value: Record<string, unknown>, input: PptdDeckPipelin
   return { title, audience, goal, themeId, pages: pages.slice(0, maxPages) }
 }
 
-function buildOutlinePrompt(input: PptdDeckPipelineInput, design: PptdDesignSpec, maxPages: number, correction: string): string {
+function buildOutlinePrompt(
+  input: PptdDeckPipelineInput,
+  design: PptdDesignSpec,
+  maxPages: number,
+  correction: string,
+  mediaPrompt: string,
+): string {
   const materials = clipMaterials(input.materials)
   const fixedTheme = input.themeId ? `themeId 必须是 ${input.themeId}。` : `themeId 必须从 ${PPTD_THEME_IDS.join(', ')} 中选择。`
   return [
@@ -692,6 +732,7 @@ function buildOutlinePrompt(input: PptdDeckPipelineInput, design: PptdDesignSpec
     correction ? `上一次输出无效：${correction}。请严格修正结构。` : '',
     `<brief>\n${input.brief.trim()}\n</brief>`,
     materials ? `<materials>\n${materials}\n</materials>` : '',
+    mediaPrompt,
   ].filter(Boolean).join('\n\n')
 }
 
@@ -701,19 +742,23 @@ function buildPagePrompt(
   pageIndex: number,
   theme: ReturnType<typeof getPptdThemePreset>,
   design: PptdDesignSpec,
+  mediaPrompt: string,
 ): string {
   return [
     `生成第 ${pageIndex + 1}/${outline.pages.length} 页。只返回一个 .page YAML 文档，不要代码围栏，不要解释。`,
     '页面尺寸固定为 960x540。安全边距至少 48。所有 bounds 必须是 [x,y,width,height] 且位于画布内。',
     '顶层只能包含 pageType、可选 background、elements。每个 elementId 在本页唯一。',
-    '支持 text、shape、line、icon、table、chart。当前没有 media，禁止生成 image 元素或远程 URL。',
+    mediaPrompt
+      ? '支持 text、shape、line、icon、table、chart、image。image 的 src 只能逐字使用 media_catalog 中列出的本地 media/... 路径，禁止远程 URL。'
+      : '支持 text、shape、line、icon、table、chart。当前没有可用图片，禁止生成 image 元素或远程 URL。',
     'text 元素格式示例：{elementId: title, elementType: text, bounds: [64,48,832,64], content: {text: 标题, fontSize: 32, color: "$text", bold: true}}。',
     '同页 text bounds 不得重叠。正文不小于 14pt，标题不小于 28pt。通过图表、表格、形状关系、细线和留白表达结构，禁止把 keyPoints 原样堆成大段项目符号。',
     '严格执行 visualTask、layout 和设计规范。每个元素都必须服务于本页结论；相邻页面不得机械重复相同版式。',
     `<design_spec>\n${JSON.stringify(design)}\n</design_spec>`,
     `<theme>\n${JSON.stringify(theme)}\n</theme>`,
     `<page_outline>\n${JSON.stringify(page)}\n</page_outline>`,
-  ].join('\n\n')
+    mediaPrompt,
+  ].filter(Boolean).join('\n\n')
 }
 
 function buildRepairPrompt(
@@ -722,17 +767,73 @@ function buildRepairPrompt(
   diagnostics: PptdDiagnostic[],
   theme: ReturnType<typeof getPptdThemePreset>,
   design: PptdDesignSpec,
+  mediaPrompt: string,
 ): string {
   return [
     `修复第 ${state.pageIndex + 1}/${outline.pages.length} 页。只返回完整替换用的 .page YAML，不要代码围栏，不要解释。`,
-    '保持本页结论和关键内容，做最小必要修改。所有 bounds 必须位于 960x540 内，text 元素不得重叠。当前没有 media，禁止 image。',
+    mediaPrompt
+      ? '保持本页结论和关键内容，做最小必要修改。所有 bounds 必须位于 960x540 内，text 元素不得重叠。image 只能引用 media_catalog 中列出的本地路径。'
+      : '保持本页结论和关键内容，做最小必要修改。所有 bounds 必须位于 960x540 内，text 元素不得重叠。当前没有可用图片，禁止 image。',
     '修复不能抹掉原有视觉层级或改成项目符号文字页；继续遵守设计规范和 visualTask。',
     `<design_spec>\n${JSON.stringify(design)}\n</design_spec>`,
     `<theme>\n${JSON.stringify(theme)}\n</theme>`,
     `<page_outline>\n${JSON.stringify(state.outline)}\n</page_outline>`,
     `<diagnostics>\n${formatDiagnostics(diagnostics)}\n</diagnostics>`,
     `<current_page>\n${state.raw || '(empty)'}\n</current_page>`,
-  ].join('\n\n')
+    mediaPrompt,
+  ].filter(Boolean).join('\n\n')
+}
+
+function preparePptdMedia(input: PptdDeckPipelineInput['media']): {
+  values: Record<string, string | Uint8Array>
+  images: PptdModelImage[]
+} {
+  const values: Record<string, string | Uint8Array> = {}
+  const images: PptdModelImage[] = []
+  let totalBytes = 0
+  for (const [path, value] of Object.entries(input ?? {})) {
+    if (!isSafeMediaPath(path)) throw new Error(`PPTD media 路径无效：${path}`)
+    const dataUrl = pptdMediaDataUrl(value, path)
+    if (!dataUrl) throw new Error(`PPTD 不支持该图片格式：${path}`)
+    const bytes = mediaByteLength(value, dataUrl)
+    if (bytes > MAX_MEDIA_FILE_BYTES) throw new Error(`PPTD 图片超过 15MB：${path}`)
+    totalBytes += bytes
+    if (totalBytes > MAX_MEDIA_TOTAL_BYTES) throw new Error('PPTD 图片总大小超过 40MB')
+    values[path] = value
+    images.push({ path, dataUrl })
+  }
+  return { values, images }
+}
+
+function buildMediaPrompt(images: readonly PptdModelImage[]): string {
+  if (images.length === 0) return ''
+  return [
+    '<media_catalog>',
+    ...images.map((image, index) => `${index + 1}. ${image.path}`),
+    '</media_catalog>',
+    '这些图片已随请求提供。按内容相关性选择，不要为了装饰强行使用；引用时 src 必须与目录路径完全一致。',
+  ].join('\n')
+}
+
+function isSafeMediaPath(path: string): boolean {
+  const normalized = path.replace(/\\/g, '/')
+  return normalized.startsWith('media/')
+    && normalized.split('/').every((part) => Boolean(part) && part !== '.' && part !== '..')
+}
+
+function mediaByteLength(value: string | Uint8Array, dataUrl: string): number {
+  if (value instanceof Uint8Array) return value.byteLength
+  const comma = dataUrl.indexOf(',')
+  const payload = comma >= 0 ? dataUrl.slice(comma + 1) : ''
+  if (/;base64,/i.test(dataUrl.slice(0, comma + 1))) {
+    const padding = payload.endsWith('==') ? 2 : payload.endsWith('=') ? 1 : 0
+    return Math.max(0, Math.floor(payload.length * 3 / 4) - padding)
+  }
+  try {
+    return new TextEncoder().encode(decodeURIComponent(payload)).byteLength
+  } catch {
+    return payload.length
+  }
 }
 
 function fallbackPage(page: DeckOutlinePage, theme: ReturnType<typeof getPptdThemePreset>, reason: string): PptdPage {

@@ -38,6 +38,7 @@ export interface ChatQueryContextOptions {
   loadedSkill?: LoadedSkill
   skillResources?: SkillResourceResolver
   skillRegistry?: SkillRegistryApi
+  pptdMedia?: Readonly<Record<string, string | Uint8Array>>
   workspaceRoot?: string | null
   restoreSnapshot?: boolean
 }
@@ -79,6 +80,7 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
     skill,
     skillResources: options.skillResources,
     skillRegistry: options.skillRegistry,
+    pptdMedia: options.pptdMedia,
     memory: localWorkspaceEnabled && workspaceRoot ? new WorkspaceMemory(workspaceRoot) : new InMemoryState(),
     model: {
       provider: providerName,

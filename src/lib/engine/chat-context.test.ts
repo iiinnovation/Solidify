@@ -87,4 +87,18 @@ describe('chat Agent workspace context', () => {
     expect(context.providerRegistry.get('openai').metadata.supportsTools).toBe(false)
     expect(context.tools.length).toBeGreaterThan(0)
   })
+
+  it('passes uploaded PPTD media through the per-run QueryContext', () => {
+    const media = { 'media/attachment-01-chart.png': 'data:image/png;base64,iVBORw0KGgo=' }
+    const context = createChatQueryContext({
+      runId: 'run-media',
+      conversationId: 'conversation-media',
+      messages: [{ role: 'user', content: 'make a deck' }],
+      provider,
+      signal: new AbortController().signal,
+      pptdMedia: media,
+    })
+
+    expect(context.pptdMedia).toBe(media)
+  })
 })

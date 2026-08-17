@@ -1,0 +1,96 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { ProviderRegistry } from '../../model'
+import { InMemoryState } from '../../memory'
+import type { QueryContext } from '../../engine/types'
+import type { ToolUseContext } from '../types'
+
+const mocks = vi.hoisted(() => ({
+  readWorkspaceBytes: vi.fn(),
+  runPptdDeckPipeline: vi.fn(),
+}))
+
+vi.mock('@/lib/tauri', () => ({ readWorkspaceBytes: mocks.readWorkspaceBytes }))
+vi.mock('../../pptd/pipeline', () => ({ runPptdDeckPipeline: mocks.runPptdDeckPipeline }))
+
+import { createGeneratePptdTool } from './generate-pptd'
+
+function workspace() {
+  return {
+    root: '/workspace',
+    name: 'workspace',
+    resolve(path: string) {
+      if (path.startsWith('/') || path.startsWith('../')) throw new Error('outside workspace')
+      return `/workspace/${path}`
+    },
+    contains: () => true,
+  }
+}
+
+function parent(overrides: Partial<QueryContext> = {}): QueryContext {
+  return {
+    runId: 'run', conversationId: 'conversation', cwd: '/workspace', messages: [], tools: [],
+    memory: new InMemoryState(), model: { provider: 'mock', model: 'mock' },
+    limits: { maxTurns: 5, maxTokens: 10_000, maxOutputTokens: 2_000, maxToolCalls: 5, toolTimeoutMs: 1_000 },
+    signal: new AbortController().signal, providerRegistry: new ProviderRegistry(), workspace: workspace(),
+    ...overrides,
+  }
+}
+
+function toolContext(context: QueryContext): ToolUseContext {
+  return {
+    runId: context.runId, cwd: context.cwd, workspace: context.workspace ?? workspace(),
+    memory: context.memory, settings: {} as ToolUseContext['settings'], permissions: new Map(), platform: 'tauri',
+    logger: { log() {}, info() {}, warn() {}, error() {}, async flush() {}, entries: () => [] },
+  }
+}
+
+describe('generate_pptd workspace media', () => {
+  beforeEach(() => {
+    mocks.readWorkspaceBytes.mockReset()
+    mocks.runPptdDeckPipeline.mockReset()
+    mocks.runPptdDeckPipeline.mockResolvedValue({
+      artifact: { title: 'Deck', type: 'slides', path: '03-交付物/deck.pptd', content: '{}', envelope: '<artifact />' },
+      project: { pages: [{}] }, pageReports: [], warnings: [],
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, calls: 1 },
+    })
+  })
+
+  it('loads validated workspace images and preserves colliding attachment media', async () => {
+    const context = parent({
+      pptdMedia: { 'media/chart.png': 'data:image/png;base64,iVBORw0KGgo=' },
+    })
+    mocks.readWorkspaceBytes.mockResolvedValue([137, 80, 78, 71, 13, 10, 26, 10])
+
+    await createGeneratePptdTool(() => context).execute(
+      { brief: 'deck', mediaPaths: ['reports/chart.png'] },
+      toolContext(context), new AbortController().signal,
+    )
+
+    expect(mocks.readWorkspaceBytes).toHaveBeenCalledWith('reports/chart.png', '/workspace')
+    expect(mocks.runPptdDeckPipeline.mock.calls[0][1].media).toEqual({
+      'media/chart.png': 'data:image/png;base64,iVBORw0KGgo=',
+      'media/chart-2.png': Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    })
+  })
+
+  it('rejects unsupported workspace media before model generation', async () => {
+    const context = parent()
+    mocks.readWorkspaceBytes.mockResolvedValue([0x69, 0x63, 0x6e, 0x73, 0, 0, 0, 0])
+
+    await expect(createGeneratePptdTool(() => context).execute(
+      { brief: 'deck', mediaPaths: ['bad.icns'] },
+      toolContext(context), new AbortController().signal,
+    )).rejects.toThrow('不支持该图片格式')
+    expect(mocks.runPptdDeckPipeline).not.toHaveBeenCalled()
+  })
+
+  it('requires an explicitly selected workspace for mediaPaths', async () => {
+    const context = parent({ workspace: undefined })
+
+    await expect(createGeneratePptdTool(() => context).execute(
+      { brief: 'deck', mediaPaths: ['chart.png'] },
+      toolContext(context), new AbortController().signal,
+    )).rejects.toThrow('已选择工作区')
+    expect(mocks.readWorkspaceBytes).not.toHaveBeenCalled()
+  })
+})

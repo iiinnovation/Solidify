@@ -322,12 +322,15 @@ export function useChat(conversationId?: string) {
 
       // 处理文件附件
       let enrichedContent = content
+      let pptdMedia: Record<string, string> | undefined
       if (files && files.length > 0) {
         try {
           const { extractText } = await import('@/lib/file-extractor')
-          const fileContents = await Promise.all(
-            files.map(file => extractText(file))
-          )
+          const [fileContents, attachmentMedia] = await Promise.all([
+            Promise.all(files.map(file => extractText(file))),
+            collectPptdAttachmentMedia(files),
+          ])
+          pptdMedia = Object.keys(attachmentMedia).length > 0 ? attachmentMedia : undefined
           enrichedContent = `${content}\n\n## 附件内容\n\n${fileContents.map((text, i) =>
             `### ${files[i].name}\n\n${text}`
           ).join('\n\n')}`
@@ -669,6 +672,7 @@ ${result.content}
             loadedSkill: skillRuntime?.skill,
             skillResources: skillRuntime?.resources,
             skillRegistry: skillRuntime?.registry,
+            pptdMedia,
             workspaceRoot: agentContext.workspaceRoot,
             restoreSnapshot: Boolean(resume),
           })
@@ -1032,6 +1036,30 @@ interface PptdProgressPreview {
   path: string
   content: string
   pageCount: number
+}
+
+async function collectPptdAttachmentMedia(files: readonly File[]): Promise<Record<string, string>> {
+  const supported = files.filter((file) =>
+    file.type === 'image/png'
+    || file.type === 'image/jpeg'
+    || file.type === 'image/gif'
+    || file.type === 'image/webp'
+    || file.type === 'image/svg+xml',
+  )
+  const entries = await Promise.all(supported.map(async (file, index) => {
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || `image-${index + 1}`
+    return [`media/attachment-${String(index + 1).padStart(2, '0')}-${safeName}`, await fileDataUrl(file)] as const
+  }))
+  return Object.fromEntries(entries)
+}
+
+function fileDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error(`无法读取图片 ${file.name}`))
+    reader.onerror = () => reject(reader.error ?? new Error(`无法读取图片 ${file.name}`))
+    reader.readAsDataURL(file)
+  })
 }
 
 function getPptdProgressPreview(event: QueryEvent): PptdProgressPreview | undefined {

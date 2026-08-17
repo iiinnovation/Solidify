@@ -19,9 +19,9 @@ skip-confirmation: true
 
 ## 工作流
 
-1. 先读取用户指定的工作区文件和必要素材，整理成自包含的 brief 与 materials；不要自行生成页面 YAML。
+1. 先读取用户指定的工作区文件和必要素材，整理成自包含的 brief 与 materials；不要自行生成页面 YAML。工作区内需要使用的 PNG/JPEG/GIF/WebP/SVG 图片路径通过 `mediaPaths` 传给工具；用户随消息上传的图片会自动进入媒体目录。
 2. 根据任务判断演示场景。场景方法位于 `reference/slide-categories/`，可选设计系统位于 `reference/design-system/`；用户点名设计系统时把相对标识（例如 `consulting/apricot-white-brief`）传给 `designSystemId`。
-3. 调用一次 `generate_pptd`。该工具内置 Art Director、大纲、逐页生成、装配校验、定向修复和最终单一 `slides` artifact。
+3. 调用一次 `generate_pptd`。该工具内置 Art Director、大纲、逐页生成、装配校验、定向修复和最终单一 `slides` artifact。不要把远程图片 URL 写入 brief 或页面，图片只引用工具提供的本地 `media/...` 路径。
 4. 工具成功后不要复述、拆分或重新包装 deck；其 artifact 会直接进入聊天交付流。
 5. 工具内置的渲染校验与定向修复是本轮视觉复核依据；不得在 artifact 进入聊天交付流前调用截图工具，也不得用逐页 document 替代 deck。
 

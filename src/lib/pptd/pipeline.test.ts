@@ -55,6 +55,38 @@ elements:
 `
 
 describe('PPTD layered generation pipeline', () => {
+  it('carries trusted media into visual calls, page prompts, previews, and the final bundle', async () => {
+    const calls: PptdModelCall[] = []
+    const previews: string[] = []
+    const media = { 'media/quarterly-chart.png': 'data:image/png;base64,iVBORw0KGgo=' }
+    const result = await generatePptdDeck({ brief: '使用上传图表生成汇报', media }, {
+      callModel: async (call) => {
+        calls.push(call)
+        if (call.stage === 'design') return { text: DESIGN }
+        if (call.stage === 'outline') {
+          return { text: JSON.stringify({
+            title: '图表汇报', audience: '管理层', goal: '解释趋势', themeId: 'data',
+            pages: [{
+              pageType: 'content', intent: '季度趋势正在改善', keyPoints: ['趋势改善'],
+              layout: '左图右结论', visualTask: '上传图表作为主视觉', assetBrief: '季度图表',
+            }],
+          }) }
+        }
+        return { text: validPage('季度趋势正在改善') }
+      },
+      onProgress(progress) {
+        if (progress.preview) previews.push(progress.preview.content)
+      },
+    })
+
+    expect(calls.every((call) => call.images?.[0]?.path === 'media/quarterly-chart.png')).toBe(true)
+    expect(calls.find((call) => call.stage === 'page')?.prompt).toContain('media/quarterly-chart.png')
+    expect(calls.find((call) => call.stage === 'page')?.prompt).not.toContain('当前没有可用图片')
+    expect(result.project.media).toEqual(media)
+    expect(parsePptdArtifactContent(result.artifact.content)?.media).toEqual(media)
+    expect(parsePptdArtifactContent(previews[0])?.media).toEqual(media)
+  })
+
   it('retries invalid outline JSON, isolates page prompts, repairs only the failed page, and emits one slides bundle', async () => {
     const calls: PptdModelCall[] = []
     const progressEvents: Parameters<NonNullable<Parameters<typeof generatePptdDeck>[1]['onProgress']>>[0][] = []
@@ -248,11 +280,44 @@ describe('PPTD QueryContext model adapter', () => {
 
     const response = await createPptdModelCaller(ctx)({
       stage: 'outline', runId: 'pptd:outline:1', system: 'system', prompt: 'prompt', maxTokens: 100,
+      images: [{ path: 'media/chart.png', dataUrl: 'data:image/png;base64,iVBORw0KGgo=' }],
     }, new AbortController().signal)
 
     expect(response.text).toBe('{"ok":true}')
     expect(requests[0]).toMatchObject({ model: 'mock-model', system: 'system', stream: true })
+    expect(requests[0].messages[0].content).toBe('prompt')
     expect(requests[0].tools).toBeUndefined()
     expect(budget.snapshot()).toMatchObject({ used: 0, byRun: {} })
+  })
+
+  it('sends data URL image blocks only to a vision-capable provider', async () => {
+    const requests: CompletionRequest[] = []
+    const provider: ModelProvider = {
+      name: 'vision',
+      metadata: {
+        name: 'vision', displayName: 'Vision', supportsVision: true, supportsTools: true,
+        supportsStreaming: true, defaultMaxTokens: 4096, models: ['vision-model'],
+      },
+      async *stream(request) {
+        requests.push(request)
+        yield { type: 'content_delta', delta: 'ok' }
+        yield { type: 'message_end', stopReason: 'end_turn' }
+      },
+    }
+    const registry = new ProviderRegistry()
+    registry.register('vision', provider)
+    const ctx = {
+      runId: 'root', model: { provider: 'vision', model: 'vision-model' }, providerRegistry: registry,
+    } as unknown as QueryContext
+
+    await createPptdModelCaller(ctx)({
+      stage: 'page', runId: 'pptd:page:1', system: 'system', prompt: 'compose', maxTokens: 100,
+      images: [{ path: 'media/chart.png', dataUrl: 'data:image/png;base64,iVBORw0KGgo=' }],
+    }, new AbortController().signal)
+
+    expect(requests[0].messages[0].content).toEqual([
+      { type: 'text', text: 'compose' },
+      { type: 'image', url: 'data:image/png;base64,iVBORw0KGgo=', detail: 'high' },
+    ])
   })
 })
