@@ -101,6 +101,15 @@ describe('bundled Skill resource runtime', () => {
     expect(built.system).not.toContain('# Active Skill:')
   })
 
+  it('migrates the legacy presentation identifier to the canonical pptd-deck Skill', async () => {
+    const runtime = await loadChatSkillRuntime({ skillName: 'presentation' })
+
+    expect(runtime.skill?.metadata.name).toBe('pptd-deck')
+    expect(runtime.skill?.metadata.allowedTools).toContain('generate_pptd')
+    expect(runtime.skill?.metadata.allowedTools).not.toContain('capture_preview')
+    expect((await runtime.registry.list()).some((skill) => skill.name === 'presentation')).toBe(false)
+  })
+
   it('never applies the read-only Skill resource exemption to a write tool', async () => {
     const runtime = await loadChatSkillRuntime({ skillName: 'requirement-analysis' })
     const context = createChatQueryContext({

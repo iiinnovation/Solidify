@@ -128,8 +128,11 @@ export async function loadChatSkillRuntime(options: {
   })
   const registry = new SkillRegistry(loader)
   await registry.reload()
-  const skill = options.skillName && isSkillEnabled(options.skillName)
-    ? await registry.resolve(options.skillName)
+  // Persisted conversations created before PPTD used `presentation`. Keep the
+  // identifier as an input-only migration alias while exposing one PPT Skill.
+  const skillName = options.skillName === 'presentation' ? 'pptd-deck' : options.skillName
+  const skill = skillName && isSkillEnabled(skillName)
+    ? await registry.resolve(skillName)
     : undefined
   return {
     registry,

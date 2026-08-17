@@ -1,9 +1,9 @@
 ---
 name: pptd-deck
-version: 1.0.0
+version: 1.0.1
 description: 使用本地 PPTD v2 引擎生成、校验、预览和导出演示文稿
 displayName: PPTD 演示文稿
-allowed-tools: [read_file, list_dir, search_files, generate_pptd, capture_preview]
+allowed-tools: [read_file, list_dir, search_files, generate_pptd]
 skip-confirmation: true
 ---
 
@@ -22,7 +22,7 @@ skip-confirmation: true
 1. 先读取用户指定的工作区文件和必要素材，整理成自包含的 brief 与 materials；不要自行生成页面 YAML。
 2. 调用一次 `generate_pptd`。该工具负责大纲、逐页生成、装配校验、定向修复和最终单一 `slides` artifact。
 3. 工具成功后不要复述、拆分或重新包装 deck；其 artifact 会直接进入聊天交付流。
-4. 后续视觉复核只针对已生成 artifact 使用 `capture_preview`，不得用逐页 document 替代 deck。
+4. 工具内置的渲染校验与定向修复是本轮视觉复核依据；不得在 artifact 进入聊天交付流前调用截图工具，也不得用逐页 document 替代 deck。
 
 ## 提交前自检
 
@@ -30,5 +30,5 @@ skip-confirmation: true
 - 所有 `elementId` 唯一，bounds 位于 960×540 画布内。
 - 文本使用主题样式或明确的字号/颜色，避免低对比度和文本互相覆盖。
 - 图片只引用工程内 `media/` 文件；没有远程 URL 依赖。
-- 每一页都能被 `capture_preview` 选择并复核。
+- 每一页都通过工具内置的渲染校验并能在右侧 Artifacts 中切换预览。
 - 导出结果逐页的几何坐标与 PPTD 保持一致；任何 icon/chart/gradient 降级都写入报告。

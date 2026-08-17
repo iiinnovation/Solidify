@@ -42,7 +42,7 @@ function context(skillName = 'pptd-deck', allowedTools: string[] | undefined = [
 }
 
 describe('PPTD pipeline context', () => {
-  it('attaches one dynamic generator and a shared budget to the pptd-deck Skill', () => {
+  it('attaches one dynamic generator to the pptd-deck Skill', () => {
     const enabled = enablePptdPipeline(context())
     expect(enabled.tools.map((tool) => tool.name)).toEqual(['generate_pptd'])
     expect(enabled.taskTree).toBeUndefined()
@@ -55,10 +55,11 @@ describe('PPTD pipeline context', () => {
   })
 
   it('upgrades the legacy presentation Skill to the validated PPTD pipeline', () => {
-    const enabled = enablePptdPipeline(context('presentation', ['read_file', 'write_file']))
+    const enabled = enablePptdPipeline(context('presentation', ['read_file', 'write_file', 'capture_preview']))
 
     expect(enabled.tools.map((tool) => tool.name)).toEqual(['generate_pptd'])
     expect(enabled.skill?.metadata.allowedTools).toContain('generate_pptd')
+    expect(enabled.skill?.metadata.allowedTools).not.toContain('capture_preview')
     expect(enabled.skill?.content).toContain('Solidify PPTD compatibility override')
     expect(enabled.skill?.content).toContain('call generate_pptd exactly once')
   })
@@ -71,7 +72,24 @@ describe('PPTD pipeline context', () => {
 
     const enabled = enablePptdPipeline(original)
 
-    expect(enabled.tools.map((tool) => tool.name)).toEqual(['capture_preview', 'generate_pptd'])
+    expect(enabled.tools.map((tool) => tool.name)).toEqual(['generate_pptd'])
+    expect(enabled.skill?.metadata.allowedTools).not.toContain('capture_preview')
+  })
+
+  it('hides capture_preview during initial generation even with a workspace or pre-attached generator', () => {
+    const generator = toolNamed('generate_pptd')
+    const original: QueryContext = {
+      ...context('pptd-deck', ['capture_preview', 'generate_pptd']),
+      workspace: { root: '/workspace', name: 'workspace', resolve: (path) => path, contains: () => true },
+      tools: [toolNamed('capture_preview'), generator],
+    }
+
+    const enabled = enablePptdPipeline(original)
+
+    expect(enabled).not.toBe(original)
+    expect(enabled.tools).toEqual([generator])
+    expect(enabled.skill?.metadata.allowedTools).toEqual(['generate_pptd'])
+    expect(enablePptdPipeline(enabled)).toBe(enabled)
   })
 
   it('does not inject generate_pptd when the Skill omits it from allowed-tools', () => {
