@@ -193,6 +193,7 @@ export function ArtifactPanel({ conversationId }: { conversationId?: string }) {
   }
 
   const activeArtifact = filteredArtifacts.find((a) => a.id === activeArtifactId) ?? filteredArtifacts[filteredArtifacts.length - 1]
+  const sourceRunId = conv?.messages.find((message) => message.id === activeArtifact.messageId)?.agentRun?.runId
   const handleMermaidSvgReady = (svg: string) => {
     setMermaidExport({ artifactId: activeArtifact.id, svg })
   }
@@ -243,7 +244,7 @@ export function ArtifactPanel({ conversationId }: { conversationId?: string }) {
           ) : activeArtifact.type === 'chart' ? (
             <ChartRenderer content={activeArtifact.content} streaming={activeArtifact.streaming} chartRef={chartContainerRef} />
           ) : activeArtifact.type === 'slides' ? (
-            <PresentationArtifactRenderer content={activeArtifact.content} streaming={activeArtifact.streaming} />
+            <PresentationArtifactRenderer content={activeArtifact.content} streaming={activeArtifact.streaming} artifactId={activeArtifact.id} runId={sourceRunId} />
           ) : activeArtifact.type === 'drawio' ? (
             <DrawioRenderer content={activeArtifact.content} streaming={activeArtifact.streaming} />
           ) : (

@@ -1,30 +1,77 @@
-import type { SlidesDeck, SlideItem } from '@/lib/slide-types'
-import { defaultTheme } from '@/lib/slide-themes'
 import type { PptdElement, PptdPage, PptdProject, PptdTextStyle } from './types'
 
 const SIZE = [960, 540] as const
+const LEGACY_LAYOUTS = new Set([
+  'title', 'content', 'two-column', 'image-text',
+  'comparison', 'stats', 'timeline', 'section',
+])
 
-export function legacyToPptd(deck: SlidesDeck, title = 'Migrated presentation'): PptdProject {
+export type LegacySlideLayout =
+  | 'title' | 'content' | 'two-column' | 'image-text'
+  | 'comparison' | 'stats' | 'timeline' | 'section'
+
+export interface LegacySlideItem {
+  layout: LegacySlideLayout
+  title?: string
+  subtitle?: string
+  body?: string | string[]
+  left?: string | string[]
+  right?: string | string[]
+  leftTitle?: string
+  rightTitle?: string
+  image?: string
+  stats?: Array<{ label: string; value: string }>
+  items?: Array<{ time: string; text: string }>
+  notes?: string
+}
+
+export interface LegacySlidesDeck {
+  slides: LegacySlideItem[]
+  theme?: string
+}
+
+const legacyColors = Object.freeze({
+  primary: '#D4915E',
+  background: '#FFFDF9',
+  surface: '#F5F0EB',
+  text: '#1A1A1A',
+  textSecondary: '#6B6560',
+  accent: '#D4915E',
+})
+
+/** Parse the retired eight-layout JSON only at the migration boundary. */
+export function parseLegacySlidesDeck(raw: string): LegacySlidesDeck | null {
+  try {
+    const parsed = JSON.parse(stripCodeFence(raw)) as Record<string, unknown>
+    if (!parsed || !Array.isArray(parsed.slides) || parsed.slides.length === 0) return null
+    if (!parsed.slides.every(isLegacySlide)) return null
+    return { slides: parsed.slides, ...(typeof parsed.theme === 'string' ? { theme: parsed.theme } : {}) }
+  } catch {
+    return null
+  }
+}
+
+export function legacyToPptd(deck: LegacySlidesDeck, title = 'Migrated presentation'): PptdProject {
   const theme = {
     colors: {
-      bg: defaultTheme.colors.background,
-      surface: defaultTheme.colors.surface,
-      text: defaultTheme.colors.text,
-      muted: defaultTheme.colors.textSecondary,
-      primary: defaultTheme.colors.primary,
-      accent: defaultTheme.colors.accent,
+      bg: legacyColors.background,
+      surface: legacyColors.surface,
+      text: legacyColors.text,
+      muted: legacyColors.textSecondary,
+      primary: legacyColors.primary,
+      accent: legacyColors.accent,
     },
     textStyles: {
-      title: { fontSize: 32, bold: true, color: defaultTheme.colors.primary } satisfies PptdTextStyle,
-      body: { fontSize: 18, color: defaultTheme.colors.text } satisfies PptdTextStyle,
-      small: { fontSize: 13, color: defaultTheme.colors.textSecondary } satisfies PptdTextStyle,
+      title: { fontSize: 32, bold: true, color: legacyColors.primary } satisfies PptdTextStyle,
+      body: { fontSize: 18, color: legacyColors.text } satisfies PptdTextStyle,
+      small: { fontSize: 13, color: legacyColors.textSecondary } satisfies PptdTextStyle,
     },
   }
   const pages = deck.slides.map((slide, index) => migrateSlide(slide, theme.colors, index))
   return { version: 'v2', title, size: SIZE, theme, pages, pagePaths: pages.map((_page, index) => `pages/${String(index + 1).padStart(2, '0')}.page`), media: {} }
 }
 
-function migrateSlide(slide: SlideItem, colors: Record<string, string>, pageIndex: number): PptdPage {
+function migrateSlide(slide: LegacySlideItem, colors: Record<string, string>, pageIndex: number): PptdPage {
   const elements: PptdElement[] = []
   const titleBounds: readonly [number, number, number, number] = slide.layout === 'title' || slide.layout === 'section' ? [80, 150, 800, 72] : [48, 32, 864, 48]
   if (slide.title) elements.push(textElement(`page-${pageIndex}-title`, slide.title, titleBounds, slide.layout === 'title' || slide.layout === 'section' ? 40 : 30, slide.layout === 'title' || slide.layout === 'section' ? '#FFFFFF' : colors.primary, slide.layout === 'title' || slide.layout === 'section' ? 'center' : 'left'))
@@ -96,4 +143,20 @@ function bulletText(elementId: string, value: string | string[] | undefined, bou
 
 function card(elementId: string, bounds: readonly [number, number, number, number], color: string): PptdElement {
   return { elementId, elementType: 'shape', bounds, shapeName: 'roundRect', fill: { type: 'solid', color }, stroke: { color: '#E5E0DC', width: 1 } }
+}
+
+function isLegacySlide(value: unknown): value is LegacySlideItem {
+  return Boolean(
+    value
+    && typeof value === 'object'
+    && !Array.isArray(value)
+    && typeof (value as Record<string, unknown>).layout === 'string'
+    && LEGACY_LAYOUTS.has((value as Record<string, unknown>).layout as string),
+  )
+}
+
+function stripCodeFence(raw: string): string {
+  const trimmed = raw.trim()
+  const match = trimmed.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?\s*```$/i)
+  return match ? match[1].trim() : trimmed
 }

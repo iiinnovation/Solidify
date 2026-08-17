@@ -120,6 +120,14 @@ describe('M2 harness acceptance', () => {
     expect(loadRecentRunTelemetry()).toEqual([])
   })
 
+  it('解析失败诊断可持久化并回放', () => {
+    const ledger = new RunLedger('parse-failed', 'test-parse-failed')
+    ledger.clear()
+    ledger.append('artifact.parse_failed', { artifactId: 'deck-1', position: 71, line: 1 })
+    expect(new RunLedger('parse-failed', 'test-parse-failed').find('artifact.parse_failed')[0].payload)
+      .toEqual({ artifactId: 'deck-1', position: 71, line: 1 })
+  })
+
   it('观察 hook 异常隔离且继续通知其他观察者', async () => {
     const hooks = new HookManager()
     const called: string[] = []

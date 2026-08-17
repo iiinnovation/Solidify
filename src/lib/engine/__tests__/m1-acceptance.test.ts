@@ -236,6 +236,8 @@ describe('M1-27 agent loop acceptance', () => {
     expect(requests[0].tools).toBeUndefined()
     expect(requests[0].system).not.toContain('# Available Tools')
     expect(requests[0].system).toContain('No tools are available')
+    expect(requests[0].system).not.toContain('type="document"')
+    expect(requests[0].system).toContain('type="ARTIFACT_TYPE"')
     expect(events.at(-1)?.type).toBe('run.completed')
   })
 

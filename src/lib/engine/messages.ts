@@ -34,7 +34,6 @@ interface SystemPromptParts {
   base: string
   harness?: string
   skill?: string
-  tools?: string
 }
 
 /**
@@ -113,10 +112,9 @@ function buildSystemPrompt(ctx: QueryContext): string {
     parts.skill = buildSkillSection(ctx)
   }
 
-  // Add tool definitions if available
-  if (ctx.tools.length > 0) {
-    parts.tools = buildToolsSection(ctx)
-  }
+  // Tool definitions travel in the provider's native `tools` field (see
+  // model.ts) — repeating name+description here only spent tokens twice and
+  // left the model guessing which of the two contracts to call against.
 
   // Retrieved memory deliberately does NOT go here — see buildMessages().
 
@@ -169,25 +167,10 @@ Think step by step and explain your reasoning when helpful.`
     + `
 
 When producing a user-facing deliverable, stream it in this exact envelope:
-<solidify-artifact title="Human readable title" type="document" path="03-交付物/file.md">content</solidify-artifact>
-Always include a workspace-relative path. Valid types are document, code, mermaid, chart, drawio, and slides.`
-}
+<solidify-artifact title="Human readable title" type="ARTIFACT_TYPE" path="03-交付物/file.ext">content</solidify-artifact>
+Replace ARTIFACT_TYPE with the matching deliverable type. Always include a workspace-relative path. Valid types are document, code, mermaid, chart, drawio, and slides.
 
-/**
- * Build tools section for system prompt
- */
-function buildToolsSection(ctx: QueryContext): string {
-  const toolList = ctx.tools
-    .map(tool => `- ${tool.name}: ${tool.description}`)
-    .join('\n')
-
-  return `# Available Tools
-
-You have access to the following tools:
-
-${toolList}
-
-Use tools by calling them with valid JSON parameters according to their schema.`
+For type="slides", use generate_pptd when that tool is available and do not handwrite or re-wrap its artifact. Otherwise the content must be one complete, parseable PPTD v2 bundle JSON ({ manifest, pages, media }) or inline PPTD YAML with pages[]. Never emit the retired {"slides": [...]} format. Any JSON string content must escape ASCII double quotes.`
 }
 
 /**

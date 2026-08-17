@@ -3,7 +3,7 @@ import { AlertTriangle, Copy, FileQuestion, History, LoaderCircle } from 'lucide
 import { MarkdownRenderer } from '@/components/artifacts/markdown-renderer'
 import { MermaidRenderer } from '@/components/artifacts/mermaid-renderer'
 import { ChartRenderer } from '@/components/artifacts/chart-renderer'
-import { SlidesRenderer } from '@/components/artifacts/slides-renderer'
+import { PresentationArtifactRenderer } from '@/components/artifacts/pptd-renderer'
 import { DrawioRenderer } from '@/components/artifacts/drawio-renderer'
 import { ExportDropdown } from '@/components/artifacts/export-dropdown'
 import { ErrorBoundary } from '@/components/shared/error-boundary'
@@ -12,6 +12,7 @@ import { VersionHistory } from './version-history'
 import { readWorkspaceBytes, readWorkspaceFile } from '@/lib/tauri'
 import { extractText } from '@/lib/file-extractor'
 import { useDocumentStore } from '@/stores/document-store'
+import { useChatStore } from '@/stores/chat-store'
 import { useWorkspaceStore } from '@/stores/workspace-store'
 import { toast } from '@/stores/toast-store'
 import type { ArtifactType } from '@/stores/chat-store'
@@ -28,6 +29,9 @@ export function DocumentViewer() {
   const upsertDocument = useDocumentStore((state) => state.upsertDocument)
   const path = activePath ?? selectedPath
   const document = path ? documents[path] : undefined
+  const sourceRunId = useChatStore((state) => document?.messageId
+    ? state.conversations.flatMap((conversation) => conversation.messages).find((message) => message.id === document.messageId)?.agentRun?.runId
+    : undefined)
   const entryMtime = entries.find((entry) => entry.kind === 'file' && entry.path === path)?.modifiedAt
   const [loading, setLoading] = useState(false)
   const [binary, setBinary] = useState<BinaryPreview | null>(null)
@@ -96,7 +100,7 @@ export function DocumentViewer() {
             {binary?.kind === 'image' ? <div className="flex h-full items-center justify-center overflow-auto p-5"><img src={binary.url} alt={path} className="max-h-full max-w-full object-contain" /></div>
               : binary?.kind === 'pdf' ? <iframe title={path} src={binary.url} className="h-full w-full border-0" />
               : binary?.kind === 'unsupported' ? <div className="flex h-full flex-col items-center justify-center gap-2 text-text-tertiary"><FileQuestion size={28} /><span className="text-sm">此文件暂不支持预览</span></div>
-              : <DocumentContent type={type} content={content} streaming={document?.streaming} contentRef={contentRef} chartRef={chartRef} onMermaidReady={onMermaidReady} />}
+              : <DocumentContent type={type} content={content} streaming={document?.streaming} contentRef={contentRef} chartRef={chartRef} onMermaidReady={onMermaidReady} artifactId={path} runId={sourceRunId} />}
           </ErrorBoundary>
         </div>
       </section>
@@ -105,10 +109,10 @@ export function DocumentViewer() {
   )
 }
 
-function DocumentContent({ type, content, streaming, contentRef, chartRef, onMermaidReady }: { type: ArtifactType; content: string; streaming?: boolean; contentRef: React.RefObject<HTMLDivElement | null>; chartRef: React.RefObject<HTMLDivElement | null>; onMermaidReady: (svg: string) => void }) {
+function DocumentContent({ type, content, streaming, contentRef, chartRef, onMermaidReady, artifactId, runId }: { type: ArtifactType; content: string; streaming?: boolean; contentRef: React.RefObject<HTMLDivElement | null>; chartRef: React.RefObject<HTMLDivElement | null>; onMermaidReady: (svg: string) => void; artifactId: string; runId?: string }) {
   if (type === 'mermaid') return <MermaidRenderer content={content} streaming={streaming} onSvgReady={onMermaidReady} />
   if (type === 'chart') return <ChartRenderer content={content} streaming={streaming} chartRef={chartRef} />
-  if (type === 'slides') return <SlidesRenderer content={content} streaming={streaming} />
+  if (type === 'slides') return <PresentationArtifactRenderer content={content} streaming={streaming} artifactId={artifactId} runId={runId} />
   if (type === 'drawio') return <DrawioRenderer content={content} streaming={streaming} />
   if (type === 'code') {
     if (!streaming && /^\s*(?:<!doctype\s+html|<html[\s>])/i.test(content)) return <iframe sandbox="allow-scripts allow-modals" srcDoc={content} className="h-full w-full border-0" title="代码预览" />

@@ -1,4 +1,4 @@
-import type { PptdDiagnostic, PptdElement, PptdProject, PptdValidationResult } from './types'
+import type { PptdDiagnostic, PptdElement, PptdPage, PptdProject, PptdValidationResult } from './types'
 import { getPptdChartSpec, isImagePptdChartType, isNativePptdChartType } from './chart'
 
 export function validatePptdProject(project: PptdProject): PptdValidationResult {
@@ -16,7 +16,7 @@ export function validatePptdProject(project: PptdProject): PptdValidationResult 
       if (ids.has(element.elementId)) errors.push(diagnostic(path, `重复的 elementId：${element.elementId}`, 'duplicate-element-id'))
       ids.add(element.elementId)
       checkBounds(element, width, height, path, errors)
-      checkElement(element, project, path, errors, warnings)
+      checkElement(element, page, project, path, errors, warnings)
     })
     for (let i = 0; i < page.elements.length; i++) {
       for (let j = i + 1; j < page.elements.length; j++) {
@@ -43,7 +43,7 @@ function checkBounds(element: PptdElement, width: number, height: number, path: 
   if (![x, y, w, h].every((value) => Number.isFinite(value)) || w <= 0 || h <= 0 || x < 0 || y < 0 || x + w > width || y + h > height) errors.push(diagnostic(path, `元素超出画布边界：${element.elementId}`, 'out-of-bounds'))
 }
 
-function checkElement(element: PptdElement, project: PptdProject, path: string, errors: PptdDiagnostic[], warnings: PptdDiagnostic[]) {
+function checkElement(element: PptdElement, page: PptdPage, project: PptdProject, path: string, errors: PptdDiagnostic[], warnings: PptdDiagnostic[]) {
   if (element.elementType === 'image') {
     const src = typeof element.src === 'string' ? element.src : undefined
     if (!src) errors.push(diagnostic(path, 'image 元素必须提供 src', 'invalid-field'))
@@ -60,7 +60,8 @@ function checkElement(element: PptdElement, project: PptdProject, path: string, 
     const configuredFontSize = typeof content?.fontSize === 'number' ? content.fontSize : undefined
     if (configuredFontSize !== undefined && configuredFontSize < 10) warnings.push(diagnostic(path, `正文字号过小：${configuredFontSize}pt`, 'small-font', 'warning'))
     const color = typeof content?.color === 'string' ? content.color : undefined
-    const background = typeof project.theme.colors.bg === 'string' ? project.theme.colors.bg : undefined
+    const actualBackground = page.background?.color ?? project.theme.colors.bg
+    const background = typeof actualBackground === 'string' ? actualBackground : undefined
     if (color && background && contrastRatio(color, background) < 4.5) warnings.push(diagnostic(path, '文字与背景对比度低于 WCAG AA 建议值', 'low-contrast', 'warning'))
     const rawText = typeof content?.text === 'string' ? content.text : ''
     const text = rawText.replace(/<\/p\s*>/gi, '\n').replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]*>/g, '')

@@ -5,7 +5,7 @@
 
 ## 1. 为什么换掉现有的幻灯片模型
 
-现有模型（`src/lib/slide-types.ts`）是 8 种固定布局的**模板填空**：
+旧模型（原 `src/lib/slide-types.ts`）是 8 种固定布局的**模板填空**：
 
 ```ts
 type SlideLayout = 'title' | 'content' | 'two-column' | 'image-text'
@@ -217,16 +217,16 @@ slide.addText([
 
 ## 9. 从旧格式迁移
 
-现有的 8 布局 `SlideItem` 数据需要能继续打开。做一个单向转换器：
+已保存的 8 布局 `SlideItem` 数据需要能继续打开。单向转换器为：
 
 ```ts
 // src/lib/pptd/migrate-legacy.ts
-export function legacyToPptd(deck: SlidesDeck): PptdProject
+export function legacyToPptd(deck: LegacySlidesDeck): PptdProject
 ```
 
-每种 legacy 布局映射到一组固定的 PPTD 元素（就是把现在 `slide-export.ts` 里的 `switch (layout)` 逻辑翻译成 PPTD 元素）。转换后旧 artifact 可正常渲染与导出，之后统一走新链路。
+每种 legacy 布局映射到一组固定的 PPTD 元素。转换后旧 artifact 可正常渲染与导出，之后统一走新链路。
 
-`slides-renderer.tsx` 和 `slide-export.ts` 在迁移完成并稳定一个版本后删除。
+2026-08-17 已删除 `slides-renderer.tsx`、`slide-export.ts`、`slide-types.ts` 和 `slide-themes.ts`。
 
 ## 10. 验收测试
 

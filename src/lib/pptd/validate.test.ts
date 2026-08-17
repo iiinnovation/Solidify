@@ -61,4 +61,21 @@ describe('PPTD semantic validation gate', () => {
     })
     expect(result.warnings.some((item) => item.code === 'invalid-color')).toBe(true)
   })
+
+  it('checks text contrast against the page background override', () => {
+    const result = validatePptdProject({
+      version: 'v2', title: 'Dark cover', size: [960, 540], pagePaths: ['pages/01.page'], media: {},
+      theme: { colors: { bg: '#F8FAFC' }, textStyles: {} },
+      pages: [{
+        background: { color: '#111827' },
+        elements: [{
+          elementId: 'title', elementType: 'text', bounds: [64, 180, 832, 80],
+          content: { text: 'Quarterly review', fontSize: 40, color: '#FFFFFF' },
+        }],
+      }],
+    })
+
+    expect(result.valid).toBe(true)
+    expect(result.warnings.some((item) => item.code === 'low-contrast')).toBe(false)
+  })
 })

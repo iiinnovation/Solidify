@@ -17,6 +17,7 @@ import { InMemoryState, WorkspaceMemory } from '@/lib/memory'
 import { configureLedgerWorkspace } from '@/lib/harness/ledger'
 import type { WorkspaceHandle } from '@/lib/workspace'
 import { enableSubAgents } from './sub-agent/context'
+import { enablePptdPipeline } from './pptd-context'
 
 const DEFAULT_LIMITS: RunLimits = {
   maxTurns: 25,
@@ -67,6 +68,8 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
       })
     : []
 
+  const maxOutputTokens = inferMaxOutputTokens(options.provider.modelId)
+
   const context: QueryContext = {
     runId: options.runId,
     conversationId: options.conversationId,
@@ -81,10 +84,10 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
       provider: providerName,
       model: options.provider.modelId,
       temperature: 0.7,
-      maxTokens: DEFAULT_LIMITS.maxOutputTokens,
+      maxTokens: maxOutputTokens,
       contextWindow: options.provider.contextWindow ?? inferContextWindow(options.provider.modelId),
     },
-    limits: { ...DEFAULT_LIMITS },
+    limits: { ...DEFAULT_LIMITS, maxOutputTokens },
     signal: options.signal,
     providerRegistry: createProviderRegistry({
       [providerName]: {
@@ -103,7 +106,8 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
     platform,
     workspace: workspaceRoot ? createWorkspaceHandle(workspaceRoot) : undefined,
   }
-  return isEnabled('subAgents') ? enableSubAgents(context) : context
+  const withSubAgents = isEnabled('subAgents') ? enableSubAgents(context) : context
+  return isEnabled('toolCalling') ? enablePptdPipeline(withSubAgents) : withSubAgents
 }
 
 export interface ChatSkillRuntime {
@@ -186,6 +190,29 @@ function inferContextWindow(modelId: string): number | undefined {
   return undefined
 }
 
+/**
+ * Output ceilings are a separate budget from the context window, and asking for
+ * more than a model allows is a hard 400 rather than a silent clamp — so every
+ * branch stays at or below the documented limit and unknown ids keep the
+ * conservative shared default. A single deliverable routinely needs more than
+ * the old flat 4096, which truncated decks mid-page.
+ */
+function inferMaxOutputTokens(modelId: string): number {
+  const id = modelId.toLowerCase()
+  if (id.includes('claude')) {
+    if (id.includes('claude-3-5') || id.includes('claude-3.5')) return 8_192
+    if (id.includes('claude-3-')) return 4_096
+    return 32_000
+  }
+  if (id.includes('gpt-5') || id.includes('gpt-4.1')) return 32_768
+  if (id.includes('gpt-4o')) return 16_384
+  if (id.includes('gpt-4-turbo') || id.includes('gpt-3.5')) return 4_096
+  if (id.includes('deepseek-reasoner')) return 32_768
+  if (id.includes('deepseek')) return 8_192
+  if (id.includes('qwen') || id.includes('glm') || id.includes('moonshot')) return 8_192
+  return DEFAULT_LIMITS.maxOutputTokens
+}
+
 function normalizeWorkspacePath(path: string): string {
   const slashPath = path.replace(/\\/g, '/')
   const drive = slashPath.match(/^[A-Za-z]:/)?.[0] ?? ''
@@ -221,7 +248,7 @@ function createSettings(provider: ModelProvider, cwd: string): Settings {
       apiKey: provider.apiKey,
       baseUrl: providerBaseURL(provider.apiUrl, provider.format),
       temperature: 0.7,
-      maxTokens: DEFAULT_LIMITS.maxOutputTokens,
+      maxTokens: inferMaxOutputTokens(provider.modelId),
     },
     ui: { theme: 'auto', fontSize: 14, codeTheme: 'default', compactMode: false },
     privacy: { allowTelemetry: false, allowCrashReports: false, shareUsageData: false },

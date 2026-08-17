@@ -103,15 +103,17 @@ interface Skill {
 
 **局限**：没有文件资源、没有可执行部分、没有工具绑定、没有版本、没有导入导出、清缓存就没了。与业界 Skill 概念（目录 + 渐进式披露 + 工具白名单）完全不是一个东西。
 
-### 2.5 演示文稿：模板填空
+### 2.5 演示文稿：模板填空（M5 前历史基线）
 
-现有链路是自研的一套简化模型：
+M5 前链路是自研的一套简化模型：
 
 - `src/lib/slide-types.ts` — 8 种固定布局（title / content / two-column / image-text / comparison / stats / timeline / section），字段是 `title / body / left / right / stats / items`
 - `src/components/artifacts/slides-renderer.tsx` (13.8KB) — HTML 预览
 - `src/lib/slide-export.ts` (8.4KB) — pptxgenjs 导出，`switch (layout)` 逐个 case 拼版
 
 **本质是模板填空，不是排版**。表达力天花板很低：模型无法控制任何元素的位置、大小、层级、填充，只能往固定槽位塞文本。这决定了产出的 PPT 永远是「一眼 AI 生成」的观感。
+
+2026-08-17 该链路已删除；旧 8 布局数据在 `src/lib/pptd/migrate-legacy.ts` 边界迁移后统一走 PPTD 预览与导出。
 
 ### 2.6 数据与文件
 

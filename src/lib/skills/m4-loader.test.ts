@@ -64,7 +64,14 @@ describe('SkillLoader', () => {
       if (skill.metadata.name === 'pptd-deck') {
         expect(skill.metadata.version).toBe('1.0.0')
         expect(skill.content).toContain('PPTD v2')
+        expect(skill.content).toContain('整份 deck 只能交付为一个 `<solidify-artifact type="slides">`')
+        expect(skill.content).toContain('不得使用 `type="document"` 交付页面 YAML')
         expect(skill.resourceFiles?.['reference/pptd.md']).toContain('960, 540')
+      } else if (skill.metadata.name === 'presentation') {
+        expect(skill.metadata.version).toBe('2.1.0')
+        expect(skill.metadata.allowedTools).toContain('generate_pptd')
+        expect(skill.content).toContain('调用一次 `generate_pptd`')
+        expect(skill.content).not.toContain('读取 `reference/legacy-guidance.md`')
       } else {
         expect(skill.metadata.version, skill.metadata.name).toBe('2.1.0')
         expect(skill.content, skill.metadata.name).toContain('reference/legacy-guidance.md')
@@ -79,8 +86,16 @@ describe('SkillLoader', () => {
     expect(requirement?.resourceFiles?.['reference/output-format.md']).toContain('需求规格文档')
     const drawio = result.skills.find((skill) => skill.metadata.name === 'drawio-diagram')
     expect(drawio?.content).toContain('reference/layout-guidance.md')
+    expect(drawio?.content).toContain('独立的有填充色方块')
+    expect(drawio?.content).toContain('<solidify-artifact type="drawio"')
+    expect(drawio?.content).toContain('不要把 XML 直接输出到对话正文')
+    expect(drawio?.resourceFiles?.['reference/legacy-guidance.md']).toContain('<solidify-artifact type="drawio"')
+    expect(drawio?.resourceFiles?.['reference/legacy-guidance.md']).not.toContain('直接输出完整的 Draw.io XML 格式')
     expect(drawio?.resourceFiles?.['reference/layout-guidance.md']).toContain('输出前几何检查')
+    expect(drawio?.resourceFiles?.['reference/layout-guidance.md']).toContain('禁止把多个组件合并进一个')
+    expect(drawio?.resourceFiles?.['reference/layout-guidance.md']).toContain('不能填写画布绝对坐标')
     expect(drawio?.resourceFiles?.['reference/xml-checklist.md']).toContain('连线不穿过')
+    expect(drawio?.resourceFiles?.['reference/xml-checklist.md']).toContain('不能用一个无填充、无边框的 text 节点')
   })
 
   it('merges roots with project-over-user-over-builtin precedence', async () => {

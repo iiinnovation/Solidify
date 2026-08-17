@@ -158,6 +158,6 @@ M5-26 不能省。静默降级会让用户在客户面前才发现问题。
 - 视觉回环：集成测试覆盖“发现重叠 → 修复 → 重新截图 → 审核通过”。
 - 真实产物：已通过浏览器预览和 macOS Quick Look 检查导出的 PPTX，确认画布缩放、背景图、富文本换行及标题自适应正常。
 
-## 后续清理
+## 后续清理 ✅
 
-M5 稳定一个版本后删除：`src/lib/slide-types.ts`、`src/lib/slide-export.ts`、`src/lib/slide-themes.ts`、`src/components/artifacts/slides-renderer.tsx`。删除前确认 `migrate-legacy.ts` 覆盖了全部 8 种布局。
+2026-08-17 已删除 `src/lib/slide-types.ts`、`src/lib/slide-export.ts`、`src/lib/slide-themes.ts`、`src/components/artifacts/slides-renderer.tsx`。旧 8 布局 JSON 在 Artifact 解析边界单向迁移为 PPTD，预览和导出不再保留第二套管线；迁移测试覆盖全部 8 种布局。
