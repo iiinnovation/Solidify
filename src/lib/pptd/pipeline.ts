@@ -173,6 +173,8 @@ export async function generatePptdDeck(
   const outline = await generateOutline(input, maxPages, callModel, signal, warnings, options.onProgress)
   const theme = getPptdThemePreset(outline.themeId)
   const scheduler = new SubAgentScheduler(concurrency)
+  const previewStates = outline.pages.map((page, pageIndex) => pendingPreviewState(page, pageIndex, theme))
+  let hasGeneratedPreviewPage = false
   let startedPages = 0
   let completedPages = 0
   const pageStartedAt = Date.now()
@@ -199,10 +201,22 @@ export async function generatePptdDeck(
           maxTokens: 1_800,
           pageIndex,
         })
-        return parsePageState(result.text, pageOutline, pageIndex, pagePath, theme)
+        const state = parsePageState(result.text, pageOutline, pageIndex, pagePath, theme)
+        previewStates[pageIndex] = state
+        hasGeneratedPreviewPage = true
+        return state
       } finally {
         completedPages++
-        reportPageProgress(`已完成 ${completedPages}/${outline.pages.length} 页`, pageIndex)
+        const progress: PptdPipelineProgress = {
+          stage: 'page', current: completedPages, total: outline.pages.length, pageIndex,
+          message: `已完成 ${completedPages}/${outline.pages.length} 页`,
+        }
+        if (hasGeneratedPreviewPage) {
+          const previewAssembly = assembleStates(outline.title, theme, previewStates)
+          publishPreview(options.onProgress, input, outline, previewAssembly.project, progress)
+        } else {
+          options.onProgress?.(progress)
+        }
       }
     }, signal)
   } finally {
@@ -623,6 +637,46 @@ function fallbackPage(page: DeckOutlinePage, theme: ReturnType<typeof getPptdThe
         content: { text: reason, fontSize: 11, color: muted, lineHeight: 1.1 },
       },
     ],
+  }
+}
+
+function pendingPreviewState(
+  page: DeckOutlinePage,
+  pageIndex: number,
+  theme: ReturnType<typeof getPptdThemePreset>,
+): PageState {
+  const background = theme.colors.bg ?? '#FFFFFF'
+  const surface = theme.colors.surface ?? background
+  const muted = theme.colors.muted ?? theme.colors.text ?? '#64748B'
+  const accent = theme.colors.accent ?? '#2563EB'
+  const pagePath = pagePathFor(pageIndex)
+  return {
+    pageIndex,
+    pagePath,
+    outline: page,
+    raw: '',
+    page: {
+      pageType: page.pageType,
+      background: { type: 'solid', color: background },
+      elements: [
+        {
+          elementId: 'pending-track', elementType: 'shape', bounds: [72, 258, 816, 4],
+          shapeName: 'rect', fill: { type: 'solid', color: surface }, stroke: { color: surface },
+        },
+        {
+          elementId: 'pending-progress', elementType: 'shape', bounds: [72, 258, Math.max(8, 816 * ((pageIndex + 1) / Math.max(1, pageIndex + 2))), 4],
+          shapeName: 'rect', fill: { type: 'solid', color: accent }, stroke: { color: accent },
+        },
+        {
+          elementId: 'pending-label', elementType: 'text', bounds: [72, 278, 816, 30],
+          content: { text: `第 ${pageIndex + 1} 页正在生成`, fontSize: 14, color: muted, align: 'center' },
+        },
+      ],
+    },
+    attempts: 0,
+    repaired: false,
+    fallback: false,
+    diagnostics: [],
   }
 }
 

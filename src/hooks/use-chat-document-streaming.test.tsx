@@ -94,4 +94,53 @@ describe('documents settle when a run ends without the closing tag', () => {
     })
     expect(document?.streaming).toBe(false)
   })
+
+  it('publishes PPTD tool previews into the file document store and preserves the latest valid deck on failure', async () => {
+    const firstDeck = `version: v2\ntitle: Preview deck\nsize: [960, 540]\ntheme: {colors: {bg: '#fff'}, textStyles: {}}\npages:\n  - elements: []\n`
+    const secondDeck = firstDeck.replace('elements: []', 'pageType: content\n    elements: []')
+    let releaseRun: (() => void) | undefined
+    const runGate = new Promise<void>((resolve) => { releaseRun = resolve })
+    mocks.runQuery.mockImplementation(async function* () {
+      yield { type: 'run.started', runId: 'run-pptd-file-preview' }
+      yield { type: 'tool.requested', call: { id: 'generate-deck', name: 'generate_pptd', input: { brief: 'deck' } } }
+      for (const [current, content] of [[1, firstDeck], [2, secondDeck]] as const) {
+        yield {
+          type: 'tool.progress',
+          callId: 'generate-deck',
+          progress: {
+            phase: 'pptd_page', current, total: 2, message: `已完成 ${current}/2 页`,
+            detail: {
+              stage: 'page', current, total: 2, message: `已完成 ${current}/2 页`,
+              preview: {
+                title: 'Preview deck', type: 'slides', path: '03-交付物/deck.pptd',
+                content, pageCount: 2,
+              },
+            },
+          },
+        }
+      }
+      await runGate
+      yield { type: 'run.failed', error: { kind: 'network', message: 'connection reset' } }
+    })
+    const { result } = renderHook(() => useChat(), { wrapper })
+
+    let sendPromise: Promise<void> | undefined
+    await act(async () => {
+      sendPromise = result.current.sendMessage('生成 PPT')
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    await waitFor(() => expect(useDocumentStore.getState().documents['03-交付物/deck.pptd']?.content).toBe(secondDeck))
+    expect(useDocumentStore.getState().documents['03-交付物/deck.pptd']).toMatchObject({
+      title: 'Preview deck', type: 'slides', streaming: true, version: 1,
+    })
+    expect(useChatStore.getState().artifacts).toHaveLength(0)
+
+    releaseRun?.()
+    await act(async () => { await sendPromise })
+    expect(useDocumentStore.getState().documents['03-交付物/deck.pptd']).toMatchObject({
+      content: secondDeck, streaming: false,
+    })
+  })
 })

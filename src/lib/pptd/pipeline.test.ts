@@ -41,6 +41,7 @@ elements:
 describe('PPTD layered generation pipeline', () => {
   it('retries invalid outline JSON, isolates page prompts, repairs only the failed page, and emits one slides bundle', async () => {
     const calls: PptdModelCall[] = []
+    const progressEvents: Parameters<NonNullable<Parameters<typeof generatePptdDeck>[1]['onProgress']>>[0][] = []
     const previews: NonNullable<Parameters<NonNullable<Parameters<typeof generatePptdDeck>[1]['onProgress']>>[0]['preview']>[] = []
     let outlineCalls = 0
     const result = await generatePptdDeck({
@@ -54,6 +55,7 @@ describe('PPTD layered generation pipeline', () => {
         return { text: validPage('增长由核心客户驱动') }
       },
       onProgress: (progress) => {
+        progressEvents.push(progress)
         if (progress.preview) previews.push(progress.preview)
       },
     })
@@ -69,6 +71,8 @@ describe('PPTD layered generation pipeline', () => {
     expect(previews.every((preview) => preview.pageCount === 2)).toBe(true)
     expect(parsePptdArtifactContent(previews[0].content)?.pages).toHaveLength(2)
     expect(previews.at(-1)?.content).toBe(result.artifact.content)
+    expect(progressEvents.filter((event) => event.stage === 'page' && event.preview).map((event) => event.current))
+      .toEqual([1, 2])
 
     const pageCalls = calls.filter((call) => call.stage === 'page')
     expect(pageCalls).toHaveLength(2)

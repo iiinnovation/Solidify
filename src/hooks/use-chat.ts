@@ -714,8 +714,40 @@ ${result.content}
                 ? withoutPptdPreview(event)
                 : event
               run = applyRunEvent(run, reducedEvent)
-              if (pptdPreview && !useFileDocuments) {
-                if (!streamingArtifactId) {
+              if (pptdPreview) {
+                observedAssistantOutput = true
+                if (useFileDocuments) {
+                  const previewPath = normalizeArtifactPath(
+                    pptdPreview.path,
+                    pptdPreview.title,
+                    'slides',
+                    pptdPreview.content,
+                  )
+                  if (streamingDocumentPath && streamingDocumentPath !== previewPath) {
+                    useDocumentStore.getState().removeDocument(streamingDocumentPath)
+                  }
+                  if (streamingDocumentPath !== previewPath) {
+                    streamingDocumentPath = previewPath
+                    streamingDocumentModifiedAt = useWorkspaceStore.getState().entries
+                      .find((entry) => entry.kind === 'file' && entry.path === previewPath)?.modifiedAt
+                    useDocumentStore.getState().upsertDocument({
+                      path: previewPath,
+                      title: pptdPreview.title,
+                      type: 'slides',
+                      content: pptdPreview.content,
+                      messageId: assistantMsg.id,
+                      streaming: true,
+                      version: 1,
+                      modifiedAt: streamingDocumentModifiedAt,
+                    })
+                  } else {
+                    useDocumentStore.getState().patchDocument(previewPath, {
+                      title: pptdPreview.title,
+                      content: pptdPreview.content,
+                      streaming: true,
+                    })
+                  }
+                } else if (!streamingArtifactId) {
                   streamingArtifactId = newId('artifact')
                   addArtifact({
                     id: streamingArtifactId,
