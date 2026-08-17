@@ -572,8 +572,9 @@ Artifact 内容必须是合法的 Draw.io XML 格式。Draw.io 使用 mxGraph �
 
 ### 输出规则
 
-- 直接输出完整的 Draw.io XML 格式
-- 不要使用 markdown 代码围栏包裹（系统会自动处理）
+- 最终结果必须且只能输出一个完整的 \`<solidify-artifact type="drawio" title="图表标题" path="03-交付物/图表标题.drawio">\` 交付物，并使用 \`</solidify-artifact>\` 闭合
+- Artifact 内部直接放完整的 Draw.io XML，不要把 XML 输出到 Artifact 外部
+- 不要使用 markdown 代码围栏包裹最终结果
 - 确保 XML 格式正确，可以被 Draw.io 正确解析
 - 根据用户描述的流程或架构，合理设计图表布局
 - 使用清晰的标签和配色，确保图表易读

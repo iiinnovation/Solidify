@@ -12,7 +12,7 @@
 
 1. 使用约 1200x760 的紧凑内容区，四周留 40px；不要在内容上方放置脱离主体的大标题，Artifact 标题已经承担图名。
 2. 分层容器统一从 x=40 开始，宽度约 1120；层间垂直间距 24-32px。容器高度由节点行数决定，不创建空层。
-3. swimlane 标题区预留 34px，并使用 `align=left;spacingLeft=12`。子节点以容器为 parent，坐标相对容器计算，y 至少为 48px；任何子节点右边界和下边界都必须留出至少 24px 内边距。
+3. swimlane 标题区预留 34px，并使用 `align=left;spacingLeft=12`。子节点以容器为 parent，`mxGeometry x/y` 必须是相对容器左上角的局部坐标，不能填写画布绝对坐标。若容器位于 `[40,280]`，子节点希望显示在画布 `[150,340]`，子节点必须写 `x=110,y=60`，不能写 `x=150,y=340`。子节点 y 至少为 48px，且必须满足 `x + width <= parent.width - 24`、`y + height <= parent.height - 24`。
 4. 同层节点使用 160-190px 宽、56-68px 高；水平间距至少 40px。节点数超过 5 个时换行或合并职责，不要把节点挤出容器。
 5. 外部依赖放在独立的“外部系统”容器或画布右侧专用列中，不能悬在某个业务层边界之外。只有确有交互时才连线。
 6. 先完成全部节点和容器坐标，再添加 edge。跨层节点尽量纵向对齐，使主链路为垂直直线。
@@ -26,11 +26,18 @@
 
 ## 视觉层级
 
-- 同一层使用同一配色，颜色用于区分职责层而不是装饰。
-- 容器采用浅背景和中性边框；节点对比度要足够，但避免每个节点一种颜色。
+- 架构层只负责分组，层内每个组件或职责必须是独立的圆角矩形 vertex。禁止把多个组件合并进一个 `style="text"` 的项目符号列表；这种输出视为未完成。
+- 容器采用 `fillColor=#F8FAFC;strokeColor=#94A3B8`。层内节点必须同时设置 `rounded=1;whiteSpace=wrap;html=1;strokeWidth=1.5` 以及非 `none` 的 `fillColor`、`strokeColor`、`fontColor`。
+- 按职责层复用以下专业配色，同层保持一致，不要退化成全灰：
+  - 基础设施/数据：`fillColor=#E0F2FE;strokeColor=#0284C7;fontColor=#0C4A6E`
+  - 模型服务：`fillColor=#EDE9FE;strokeColor=#7C3AED;fontColor=#4C1D95`
+  - AI 能力：`fillColor=#DCFCE7;strokeColor=#16A34A;fontColor=#14532D`
+  - 业务应用：`fillColor=#FFEDD5;strokeColor=#EA580C;fontColor=#7C2D12`
+  - 安全治理/运维：`fillColor=#FCE7F3;strokeColor=#DB2777;fontColor=#831843`
+- 节点名称尽量单行；确需换行时在 XML 属性中使用 `&lt;br&gt;`，禁止写字面量 `\n`。
 - 字号保持一致：容器标题 14-16，节点 12-14，边标签 10-11。
 - 最终内容边界应接近画布边界，禁止出现超过内容高度 20% 的无意义留白。
 
 ## 输出前几何检查
 
-逐个计算节点的 `[x, y, x+width, y+height]`：不得与同级节点相交，不得越过父容器边界。逐条检查连线路径：不得与除 source/target 外的节点矩形相交。任何一项不满足都先修改坐标，再输出 XML。
+先按父子层级把局部坐标换算成画布坐标，再逐个计算节点的 `[x, y, x+width, y+height]`：不得与同级节点相交，不得越过父容器边界。特别检查每个非根节点的原始局部坐标不大于父容器宽高，禁止把画布 y 坐标直接复制给子节点。逐条检查连线路径：不得与除 source/target 外的节点矩形相交。任何一项不满足都先修改坐标，再输出 XML。

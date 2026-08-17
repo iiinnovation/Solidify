@@ -147,6 +147,7 @@ function parseCellStyle(raw: string | null): Record<string, string> {
 
 function stripHtml(html: string): string {
   return html
+    .replace(/\\n/g, '\n')
     .replace(/<br\s*\/?>/gi, '\n')
     .replace(/<[^>]*>/g, '')
     .replace(/&amp;/g, '&')
@@ -201,8 +202,8 @@ function extractCells(xml: string): {
   edges: CellInfo[]
 } | null {
   try {
-    const doc = new DOMParser().parseFromString(xml, 'text/xml')
-    const els = doc.querySelectorAll('mxCell')
+    const doc = parseXmlDocument(xml)
+    const els = descendantsByLocalName(doc, 'mxCell')
     if (els.length <= 2) return null
 
     const cellMap = new Map<string, CellInfo>()
@@ -213,7 +214,7 @@ function extractCells(xml: string): {
       const id = el.getAttribute('id') || ''
       if (id === '0' || id === '1') continue
 
-      const geo = el.querySelector('mxGeometry')
+      const geo = descendantsByLocalName(el, 'mxGeometry')[0]
       let x = 0, y = 0, width = 0, height = 0
       const points: Array<{ x: number; y: number }> = []
       let sourcePoint: { x: number; y: number } | undefined
@@ -226,8 +227,8 @@ function extractCells(xml: string): {
         height = parseFloat(geo.getAttribute('height') || '0') || 0
 
         // Waypoints
-        for (const arr of geo.querySelectorAll(':scope > Array')) {
-          for (const pt of arr.querySelectorAll('mxPoint')) {
+        for (const arr of Array.from(geo.children).filter((child) => localName(child) === 'Array')) {
+          for (const pt of descendantsByLocalName(arr, 'mxPoint')) {
             points.push({
               x: parseFloat(pt.getAttribute('x') || '0') || 0,
               y: parseFloat(pt.getAttribute('y') || '0') || 0,
@@ -235,9 +236,9 @@ function extractCells(xml: string): {
           }
         }
 
-        const srcEl = geo.querySelector('mxPoint[as="sourcePoint"]')
+        const srcEl = descendantsByLocalName(geo, 'mxPoint').find((point) => point.getAttribute('as') === 'sourcePoint')
         if (srcEl) sourcePoint = { x: parseFloat(srcEl.getAttribute('x') || '0') || 0, y: parseFloat(srcEl.getAttribute('y') || '0') || 0 }
-        const tgtEl = geo.querySelector('mxPoint[as="targetPoint"]')
+        const tgtEl = descendantsByLocalName(geo, 'mxPoint').find((point) => point.getAttribute('as') === 'targetPoint')
         if (tgtEl) targetPoint = { x: parseFloat(tgtEl.getAttribute('x') || '0') || 0, y: parseFloat(tgtEl.getAttribute('y') || '0') || 0 }
       }
 
@@ -260,26 +261,78 @@ function extractCells(xml: string): {
       if (cell.isEdge) edges.push(cell)
     }
 
-    // 解析父级偏移 → 绝对坐标
-    for (const cell of [...vertices, ...edges]) {
-      let cx = cell.x, cy = cell.y, pid = cell.parentId
-      const visited = new Set<string>()
-      while (pid && pid !== '0' && pid !== '1' && !visited.has(pid)) {
-        visited.add(pid)
-        const parent = cellMap.get(pid)
-        if (!parent) break
-        cx += parent.x
-        cy += parent.y
-        pid = parent.parentId
+    // Resolve parent-relative coordinates. Model-authored XML sometimes writes
+    // canvas coordinates on children even though mxGraph requires coordinates
+    // relative to the parent. When the relative interpretation falls outside
+    // the parent but the raw coordinates fit inside its canvas bounds, preserve
+    // the evident visual intent instead of applying the parent offset twice.
+    const resolved = new Set<string>()
+    const resolving = new Set<string>()
+    const resolveAbsolute = (cell: CellInfo): void => {
+      if (resolved.has(cell.id)) return
+      if (resolving.has(cell.id)) return
+      resolving.add(cell.id)
+      const parent = cellMap.get(cell.parentId)
+      if (!parent || cell.parentId === '0' || cell.parentId === '1') {
+        cell.absX = cell.x
+        cell.absY = cell.y
+      } else {
+        resolveAbsolute(parent)
+        const relativeX = parent.absX + cell.x
+        const relativeY = parent.absY + cell.y
+        const relativeFits = fitsInside(relativeX, relativeY, cell.width, cell.height, parent)
+        const absoluteFits = fitsInside(cell.x, cell.y, cell.width, cell.height, parent)
+        if (!relativeFits && absoluteFits) {
+          cell.absX = cell.x
+          cell.absY = cell.y
+        } else {
+          cell.absX = relativeX
+          cell.absY = relativeY
+        }
       }
-      cell.absX = cx
-      cell.absY = cy
+      resolving.delete(cell.id)
+      resolved.add(cell.id)
     }
+    for (const cell of [...vertices, ...edges]) resolveAbsolute(cell)
 
     return { cellMap, vertices, edges }
   } catch {
     return null
   }
+}
+
+function parseXmlDocument(xml: string): Document {
+  const parser = new DOMParser()
+  let document = parser.parseFromString(xml, 'text/xml')
+  if (hasXmlParserError(document)) {
+    // Models occasionally emit a bare ampersand in a label. It is invalid XML
+    // but unambiguous to repair when it is not already an entity/reference.
+    const repaired = xml.replace(/&(?!#\d+;|#x[\da-f]+;|[a-z][\da-z]+;)/gi, '&amp;')
+    if (repaired !== xml) document = parser.parseFromString(repaired, 'text/xml')
+  }
+  if (hasXmlParserError(document)) throw new Error('Draw.io XML 解析失败')
+  return document
+}
+
+function hasXmlParserError(document: Document): boolean {
+  return descendantsByLocalName(document, 'parsererror').length > 0
+}
+
+function localName(element: Element): string {
+  return element.localName || element.tagName.split(':').pop() || element.tagName
+}
+
+function descendantsByLocalName(root: Document | Element, name: string): Element[] {
+  const expected = name.toLowerCase()
+  const candidates = Array.from(root.getElementsByTagName('*'))
+  return candidates.filter((element) => localName(element).toLowerCase() === expected)
+}
+
+function fitsInside(x: number, y: number, width: number, height: number, parent: CellInfo): boolean {
+  return x >= parent.absX
+    && y >= parent.absY
+    && x + width <= parent.absX + parent.width
+    && y + height <= parent.absY + parent.height
 }
 
 /** 计算线段与形状边界的交点 */

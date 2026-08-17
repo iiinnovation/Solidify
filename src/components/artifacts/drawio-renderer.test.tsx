@@ -43,4 +43,52 @@ describe('DrawioRenderer streaming updates', () => {
     expect(layerLabel?.getAttribute('text-anchor')).toBe('start')
     expect(Number(layerLabel?.getAttribute('x'))).toBeLessThan(40)
   })
+
+  it('preserves authored colours and treats literal backslash-n labels as line breaks', () => {
+    const content = `<mxfile><diagram><mxGraphModel><root>
+      <mxCell id="0"/><mxCell id="1" parent="0"/>
+      <mxCell id="node" value="智能校对\\n语义提炼" style="rounded=1;fillColor=#DCFCE7;strokeColor=#16A34A;fontColor=#14532D;" vertex="1" parent="1">
+        <mxGeometry x="20" y="20" width="180" height="68" as="geometry"/>
+      </mxCell>
+    </root></mxGraphModel></diagram></mxfile>`
+
+    const view = render(<DrawioRenderer content={content} streaming={false} />)
+    const node = view.container.querySelector('svg > rect')
+    const labels = [...view.container.querySelectorAll('text')].map((item) => item.textContent)
+
+    expect(node?.getAttribute('fill')).toBe('#DCFCE7')
+    expect(node?.getAttribute('stroke')).toBe('#16A34A')
+    expect(labels).toEqual(['智能校对', '语义提炼'])
+  })
+
+  it('recovers child vertices authored with canvas coordinates inside a swimlane', () => {
+    const content = `<mxfile><diagram><mxGraphModel><root>
+      <mxCell id="0"/><mxCell id="1" parent="0"/>
+      <mxCell id="layer" value="模型服务层" style="swimlane;" vertex="1" parent="1">
+        <mxGeometry x="40" y="280" width="1120" height="160" as="geometry"/>
+      </mxCell>
+      <mxCell id="service" value="大模型服务" style="rounded=1;fillColor=#EDE9FE;strokeColor=#7C3AED;" vertex="1" parent="layer">
+        <mxGeometry x="150" y="340" width="180" height="60" as="geometry"/>
+      </mxCell>
+    </root></mxGraphModel></diagram></mxfile>`
+
+    const view = render(<DrawioRenderer content={content} streaming={false} />)
+    const service = [...view.container.querySelectorAll('svg > rect')]
+      .find((item) => item.getAttribute('fill') === '#EDE9FE')
+
+    expect(service?.getAttribute('x')).toBe('150')
+    expect(service?.getAttribute('y')).toBe('340')
+  })
+
+  it('renders namespaced XML and labels containing a bare ampersand', () => {
+    const content = `<?xml version="1.0"?><mxfile xmlns="urn:drawio"><diagram><mxGraphModel><root>
+      <mxCell id="0"/><mxCell id="1" parent="0"/>
+      <mxCell id="node" value="输入 & 校验" vertex="1" parent="1"><mxGeometry x="20" y="20" width="180" height="68" as="geometry"/></mxCell>
+    </root></mxGraphModel></diagram></mxfile>`
+
+    const view = render(<DrawioRenderer content={content} streaming={false} />)
+    expect(view.container.querySelector('svg')).toBeTruthy()
+    expect(view.container.textContent).not.toContain('本地预览不可用')
+    expect([...view.container.querySelectorAll('text')].map((item) => item.textContent)).toContain('输入 & 校验')
+  })
 })
