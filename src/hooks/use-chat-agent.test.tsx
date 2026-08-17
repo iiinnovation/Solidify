@@ -176,6 +176,50 @@ describe('useChat agent loop switch', () => {
     expect(result.current.messages).toHaveLength(2)
   })
 
+  it('detaches a running stream when switching to a different conversation', async () => {
+    useChatStore.setState({
+      conversations: [
+        { id: 'conv-a', title: 'A', createdAt: 1, messages: [] },
+        { id: 'conv-b', title: 'B', createdAt: 2, messages: [] },
+      ],
+      artifacts: [],
+      activeArtifactId: null,
+    })
+    let releaseRun: (() => void) | undefined
+    const runGate = new Promise<void>((resolve) => { releaseRun = resolve })
+    mocks.runQuery.mockImplementation(async function* () {
+      yield { type: 'run.started', runId: 'run-switch' }
+      await runGate
+      yield { type: 'message.delta', text: 'late old reply' }
+      yield { type: 'message.completed', content: 'late old reply' }
+      yield {
+        type: 'run.completed',
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, turns: 1, toolCalls: 0 },
+      }
+    })
+
+    const { result, rerender } = renderHook(({ id }: { id: string }) => useChat(id), {
+      initialProps: { id: 'conv-a' },
+      wrapper,
+    })
+    let sendPromise: Promise<void> | undefined
+    await act(async () => { sendPromise = result.current.sendMessage('start old run'); await Promise.resolve() })
+    await waitFor(() => expect(result.current.isStreaming).toBe(true))
+
+    rerender({ id: 'conv-b' })
+    await waitFor(() => {
+      expect(result.current.isStreaming).toBe(false)
+      expect(result.current.messages).toEqual([])
+    })
+    releaseRun?.()
+    await act(async () => { await sendPromise })
+
+    expect(result.current.messages).toEqual([])
+    expect(useChatStore.getState().conversations.find((conversation) => conversation.id === 'conv-b')?.messages).toEqual([])
+    expect(useChatStore.getState().conversations.find((conversation) => conversation.id === 'conv-a')?.messages.at(-1)?.agentRun)
+      .toMatchObject({ status: 'aborted', error: '已切换到其他对话' })
+  })
+
   it('keeps using the legacy stream when the switch is off', async () => {
     mocks.agentLoop = false
     mocks.fetchChatStream.mockResolvedValue(new Response('data: [DONE]\n\n', { status: 200 }))

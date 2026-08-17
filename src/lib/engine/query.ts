@@ -16,6 +16,24 @@ import { readWorkspaceFile } from '../tauri'
 import { snapshotJson } from '../harness/ledger'
 
 /**
+ * How many times a single answer may be resumed after hitting the model's
+ * output ceiling. Bounded so a model that never emits a stop sequence cannot
+ * spin, but high enough that a full deck fits.
+ */
+const MAX_CONTINUATIONS = 4
+
+/**
+ * Drop the trailing assistant prefill so a resumed answer replaces it instead
+ * of stacking a second assistant turn. Matched by content rather than assumed
+ * to be last: a before_model_call hook may have rewritten the list in between.
+ */
+function dropPrefill(messages: Message[], prefill: string): Message[] {
+  if (!prefill) return messages
+  const last = messages.at(-1)
+  return last?.role === 'assistant' && last.content === prefill ? messages.slice(0, -1) : messages
+}
+
+/**
  * Main query loop - async generator that yields events
  * @see docs/specs/agent-loop.md §1
  */
@@ -24,6 +42,8 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
   let turn = 0
   let totalToolCalls = 0
   let completed = false
+  let continuations = 0
+  let prefill = ''
   const usage: UsageStats = {
     inputTokens: 0,
     outputTokens: 0,
@@ -168,6 +188,25 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       }
 
       // Handle stop reason (M1-10)
+      // A deliverable longer than one output window is ordinary, not a failure:
+      // resume from the partial text so the artifact envelope can still close.
+      // Truncated tool calls are not resumable — their JSON arguments are cut
+      // mid-object — so those still end the run rather than risk replaying a
+      // malformed call.
+      if (response.stopReason === 'max_tokens' && response.toolCalls.length === 0 && continuations < MAX_CONTINUATIONS) {
+        // The whole partial answer travels as ONE assistant message: providers
+        // reject two assistant turns in a row, and Anthropic rejects a prefill
+        // that ends in whitespace.
+        const resumed = `${prefill}${response.text}`.replace(/\s+$/, '')
+        if (resumed) {
+          continuations++
+          currentMessages = [...dropPrefill(currentMessages, prefill), { role: 'assistant', content: resumed }]
+          prefill = resumed
+          logger.log('turn.continued', { turn, continuations, reason: 'max_tokens' })
+          continue
+        }
+      }
+
       if (response.stopReason === 'max_tokens') {
         harness?.ledger.append('run.exhausted', { reason: 'max_tokens', usage })
         yield { type: 'run.exhausted', reason: 'max_tokens', usage: { ...usage } }
@@ -205,14 +244,36 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       }
 
       // Execute tools (M1-14, M1-15, M1-16)
-      const results = yield* executeTools(runCtx, response.toolCalls, logger, harness)
+      // Tool input repairs (for example resolving a mistaken read_handle
+      // placeholder) need the latest tool-result messages, not only the
+      // immutable context from the start of the run.
+      const results = yield* executeTools({ ...runCtx, messages: currentMessages }, response.toolCalls, logger, harness)
+
+      // Some deterministic generators own their final artifact contract. Their
+      // tool result stores the complete assistant payload behind a memory
+      // handle so it bypasses another lossy model round and the normal 8KB tool
+      // result clipping boundary.
+      const directAssistant = await readDirectAssistantContent(results, runCtx)
+      if (directAssistant) {
+        usage.inputTokens += directAssistant.usage.inputTokens
+        usage.outputTokens += directAssistant.usage.outputTokens
+        usage.totalTokens += directAssistant.usage.totalTokens
+        yield { type: 'message.delta', text: directAssistant.content }
+        yield { type: 'message.completed', content: directAssistant.content }
+        harness?.ledger.append('artifact.created', { id: directAssistant.callId, ...directAssistant.artifact })
+        completed = true
+        break
+      }
 
       // Append assistant message with tool calls
+      // A resumed answer already sits in the trailing prefill message; fold it
+      // in rather than appending a second assistant turn.
       const assistantMessage: Message = {
         role: 'assistant',
-        content: buildAssistantContent(response.text, response.toolCalls)
+        content: buildAssistantContent(prefill + response.text, response.toolCalls)
       }
-      currentMessages = [...currentMessages, assistantMessage]
+      currentMessages = [...dropPrefill(currentMessages, prefill), assistantMessage]
+      prefill = ''
 
       // Append tool results as next message
       const toolResultContent: MessageContent[] = results.flatMap((result) => {
@@ -314,6 +375,35 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
     unlink()
     await logger.flush()
   }
+}
+
+interface DirectAssistantToolData {
+  directAssistantContent: true
+  contentHandle: string
+  artifact: { title: string; type: string; path: string }
+  usage: { inputTokens: number; outputTokens: number; totalTokens: number }
+}
+
+async function readDirectAssistantContent(
+  results: Array<ToolResult & { callId: string }>,
+  ctx: QueryContext,
+): Promise<{ callId: string; content: string; artifact: DirectAssistantToolData['artifact']; usage: DirectAssistantToolData['usage'] } | undefined> {
+  const direct = results.find((result) => isDirectAssistantToolData(result.data))
+  if (!direct || !isDirectAssistantToolData(direct.data)) return undefined
+  const content = await ctx.memory.retrieve(direct.data.contentHandle)
+  if (!content) throw new Error(`无法读取工具生成的最终 artifact：${direct.data.contentHandle}`)
+  return { callId: direct.callId, content, artifact: direct.data.artifact, usage: direct.data.usage }
+}
+
+function isDirectAssistantToolData(value: unknown): value is DirectAssistantToolData {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const data = value as Record<string, unknown>
+  const artifact = data.artifact as Record<string, unknown> | undefined
+  const usage = data.usage as Record<string, unknown> | undefined
+  return data.directAssistantContent === true
+    && typeof data.contentHandle === 'string'
+    && Boolean(artifact && typeof artifact.title === 'string' && typeof artifact.type === 'string' && typeof artifact.path === 'string')
+    && Boolean(usage && typeof usage.inputTokens === 'number' && typeof usage.outputTokens === 'number' && typeof usage.totalTokens === 'number')
 }
 
 /**

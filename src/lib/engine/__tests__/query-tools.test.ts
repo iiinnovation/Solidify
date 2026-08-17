@@ -93,6 +93,59 @@ const finalTurn: CompletionChunk[] = [
 ]
 
 describe('runQuery tool execution (M1-14/15)', () => {
+  it('emits a generator-owned artifact directly without a second model turn', async () => {
+    let providerCalls = 0
+    const provider: ModelProvider = {
+      ...makeMockProvider([]),
+      async *stream(): AsyncGenerator<CompletionChunk> {
+        providerCalls++
+        yield { type: 'tool_call_start', id: 'deck-1', name: 'generate_pptd' }
+        yield { type: 'tool_call_end', id: 'deck-1', input: {} }
+        yield {
+          type: 'message_end',
+          usage: { inputTokens: 10, outputTokens: 2, totalTokens: 12 },
+          stopReason: 'tool_use',
+        }
+      },
+    }
+    const stored = new Map<string, string>()
+    const memory: MemoryState = {
+      async store(data) { stored.set('mem-deck', data); return 'mem-deck' },
+      async retrieve(handle) { return stored.get(handle) ?? null },
+      async search() { return [] },
+      async clear() { stored.clear() },
+    }
+    const artifact = '<solidify-artifact title="Deck" type="slides" path="03-交付物/deck.pptd">{}</solidify-artifact>'
+    const generator: Tool = {
+      name: 'generate_pptd', description: 'generate', inputSchema: { type: 'object' },
+      readOnly: true, concurrencySafe: false, destructive: false,
+      requiresConfirmation: false, availability: 'always', permissions: [],
+      async execute(): Promise<ToolResult> {
+        const contentHandle = await memory.store(artifact)
+        return {
+          success: true,
+          content: 'generated',
+          data: {
+            directAssistantContent: true,
+            contentHandle,
+            artifact: { title: 'Deck', type: 'slides', path: '03-交付物/deck.pptd' },
+            usage: { inputTokens: 30, outputTokens: 20, totalTokens: 50 },
+          },
+        }
+      },
+      renderCall: () => 'generate',
+    }
+    const ctx = { ...makeCtx(provider, [generator]), memory }
+    const events: QueryEvent[] = []
+    for await (const event of runQuery(ctx)) events.push(event)
+
+    expect(providerCalls).toBe(1)
+    expect(events).toContainEqual({ type: 'message.delta', text: artifact })
+    expect(events.find((event) => event.type === 'run.completed')).toMatchObject({
+      usage: { inputTokens: 40, outputTokens: 22, totalTokens: 62, toolCalls: 1 },
+    })
+  })
+
   it('feeds capture results back as an image in the next model turn', async () => {
     const requests: CompletionRequest[] = []
     let turn = 0

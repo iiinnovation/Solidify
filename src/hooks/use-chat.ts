@@ -37,6 +37,8 @@ interface StreamingArtifactInfo {
 
 export function processStreamingContent(fullContent: string) {
   if (!fullContent.includes('<solidify-artifact')) {
+    const nakedDrawio = parseNakedDrawioArtifact(fullContent)
+    if (nakedDrawio) return nakedDrawio
     return {
       cleanText: fullContent.replace(/\n{3,}/g, '\n\n').trim(),
       completeArtifacts: [],
@@ -90,12 +92,52 @@ export function processStreamingContent(fullContent: string) {
   return { cleanText, completeArtifacts, streamingArtifact }
 }
 
+function parseNakedDrawioArtifact(fullContent: string) {
+  // Some models ignore the artifact envelope and emit the requested XML
+  // directly. Only promote responses that start with mxfile, so XML examples
+  // embedded in an ordinary answer remain chat text.
+  const match = fullContent.match(
+    /^\s*(?:```(?:xml|drawio)?[ \t]*\r?\n\s*)?(?:<\?xml\b[^>]*\?>\s*)?(<mxfile\b[\s\S]*)$/i,
+  )
+  if (!match) return null
+
+  const xmlWithTail = match[1]
+  const closingTag = /<\/mxfile\s*>/i.exec(xmlWithTail)
+  const diagramAttributes = /<diagram\b([^>]*)>/i.exec(xmlWithTail)?.[1] ?? ''
+  const title = parseArtifactAttributes(diagramAttributes).name?.trim() || 'Draw.io 图表'
+  const artifact: StreamingArtifactInfo = {
+    title,
+    type: 'drawio',
+    path: deriveArtifactPath(title, 'drawio', xmlWithTail),
+    content: xmlWithTail,
+  }
+
+  if (!closingTag) {
+    return { cleanText: '', completeArtifacts: [], streamingArtifact: artifact }
+  }
+
+  const xmlEnd = closingTag.index + closingTag[0].length
+  const suffix = xmlWithTail.slice(xmlEnd)
+  if (!/^\s*(?:```\s*)?$/.test(suffix)) return null
+
+  artifact.content = xmlWithTail.slice(0, xmlEnd)
+  artifact.path = deriveArtifactPath(title, 'drawio', artifact.content)
+  return { cleanText: '', completeArtifacts: [artifact], streamingArtifact: null }
+}
+
 function parseArtifactAttributes(source: string): Record<string, string> {
   const attributes: Record<string, string> = {}
   for (const match of source.matchAll(/([\w-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) {
-    attributes[match[1].toLowerCase()] = match[2] ?? match[3] ?? ''
+    attributes[match[1].toLowerCase()] = decodeArtifactAttribute(match[2] ?? match[3] ?? '')
   }
   return attributes
+}
+
+function decodeArtifactAttribute(value: string): string {
+  const entities: Record<string, string> = {
+    amp: '&', quot: '"', apos: "'", lt: '<', gt: '>',
+  }
+  return value.replace(/&(amp|quot|apos|lt|gt);/g, (_match, name: string) => entities[name])
 }
 
 /* ── Hook ── */
@@ -106,6 +148,10 @@ export function useChat(conversationId?: string) {
   const [error, setError] = useState<Error | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const isStreamingRef = useRef(false)
+  const requestSequenceRef = useRef(0)
+  const activeRequestConversationRef = useRef<string | undefined>(conversationId)
+  const streamConversationRef = useRef<string | undefined>(conversationId)
+  const messagesOwnerRef = useRef<string | undefined>(conversationId)
   const resumedConversationsRef = useRef(new Set<string>())
   const navigate = useNavigate()
 
@@ -119,6 +165,33 @@ export function useChat(conversationId?: string) {
 
   // 从 store 加载已有对话
   useEffect(() => {
+    // A route change must detach the old stream before loading the new view.
+    // The provider may resolve one more chunk after abort, so the sequence
+    // token below also prevents stale callbacks from painting into this chat.
+    const activeConversation = activeRequestConversationRef.current
+    if (activeConversation !== undefined && activeConversation !== conversationId) {
+      const store = useChatStore.getState()
+      const oldConversation = store.conversations.find((item) => item.id === activeConversation)
+      const runningAssistant = [...(oldConversation?.messages ?? [])].reverse()
+        .find((message) => message.role === 'assistant' && message.agentRun?.status === 'running')
+      if (runningAssistant?.agentRun) {
+        const stoppedEvent: QueryEvent = {
+          type: 'run.failed',
+          error: { kind: 'aborted', message: '已切换到其他对话' },
+        }
+        store.patchMessageInConversation(activeConversation, runningAssistant.id, {
+          agentRun: applyRunEvent(runningAssistant.agentRun, stoppedEvent),
+          runEvents: [...(runningAssistant.runEvents ?? []), stoppedEvent],
+        })
+      }
+      requestSequenceRef.current += 1
+      abortRef.current?.abort()
+      abortRef.current = null
+      activeRequestConversationRef.current = undefined
+      isStreamingRef.current = false
+      setIsStreaming(false)
+    }
+    messagesOwnerRef.current = conversationId
     if (conversationId) {
       const conv = useChatStore.getState().conversations.find((c) => c.id === conversationId)
       if (conv) {
@@ -135,10 +208,13 @@ export function useChat(conversationId?: string) {
   // 组件卸载时中止正在进行的流，防止资源泄漏
   useEffect(() => {
     return () => {
+      requestSequenceRef.current += 1
       if (abortRef.current) {
         abortRef.current.abort()
         abortRef.current = null
       }
+      activeRequestConversationRef.current = undefined
+      isStreamingRef.current = false
     }
   }, [])
 
@@ -160,6 +236,8 @@ export function useChat(conversationId?: string) {
       // React state updates are asynchronous. Use a synchronous guard so two
       // events in the same render cannot start duplicate model runs.
       isStreamingRef.current = true
+      const requestToken = ++requestSequenceRef.current
+      const isCurrentRequest = () => requestSequenceRef.current === requestToken
 
       setError(null)
 
@@ -171,7 +249,7 @@ export function useChat(conversationId?: string) {
         const providerError = new Error(savedProviderId
           ? '无法恢复 Agent：原 Provider 已被删除'
           : '请先在设置中配置 AI 模型')
-        setError(providerError)
+        if (isCurrentRequest()) setError(providerError)
         if (resume?.assistantMessage.agentRun) {
           const failureEvent: QueryEvent = {
             type: 'run.failed',
@@ -179,18 +257,23 @@ export function useChat(conversationId?: string) {
           }
           const failedRun = applyRunEvent(resume.assistantMessage.agentRun, failureEvent)
           const runEvents = [...(resume.assistantMessage.runEvents ?? []), failureEvent]
-          setMessages((prev) => prev.map((message) =>
-            message.id === resume.assistantMessage.id
-              ? { ...message, agentRun: failedRun, runEvents }
-              : message,
-          ))
-          patchMessageInConversation(
-            resume.conversationId,
-            resume.assistantMessage.id,
-            { agentRun: failedRun, runEvents },
-          )
+          if (isCurrentRequest()) {
+            setMessages((prev) => prev.map((message) =>
+              message.id === resume.assistantMessage.id
+                ? { ...message, agentRun: failedRun, runEvents }
+                : message,
+            ))
+            patchMessageInConversation(
+              resume.conversationId,
+              resume.assistantMessage.id,
+              { agentRun: failedRun, runEvents },
+            )
+          }
         }
-        isStreamingRef.current = false
+        if (isCurrentRequest()) {
+          isStreamingRef.current = false
+          activeRequestConversationRef.current = undefined
+        }
         return
       }
 
@@ -202,6 +285,8 @@ export function useChat(conversationId?: string) {
         convIdRef.current = currentConvId
         navigate(`/chat/${currentConvId}`, { replace: true })
       }
+      activeRequestConversationRef.current = currentConvId
+      streamConversationRef.current = currentConvId
 
       const userMsg: Message = {
         id: genId(),
@@ -295,6 +380,8 @@ ${result.content}
         enrichedContent = `${enrichedContent}${knowledgeContext}`
       }
 
+      if (!isCurrentRequest()) return
+
       // 更新本地 state + store
       if (!resume) {
         setMessages((prev) => [...prev, userMsg, assistantMsg])
@@ -327,6 +414,7 @@ ${result.content}
        * is both O(n²) and a fast route to the storage quota.
        */
       const patchAssistantMessage = (patch: Partial<Message>, persist = true) => {
+        if (!isCurrentRequest()) return
         setMessages((prev) => prev.map((message) =>
           message.id === assistantMsg.id ? { ...message, ...patch } : message,
         ))
@@ -334,6 +422,7 @@ ${result.content}
       }
 
       const consumeArtifactContent = (fullContent: string, final = false, persist = true) => {
+        if (!isCurrentRequest()) return ''
         const { cleanText, completeArtifacts, streamingArtifact } =
           processStreamingContent(fullContent)
 
@@ -428,6 +517,17 @@ ${result.content}
           streamingArtifactId = null
         }
 
+        // A run can end without the closing tag ever arriving — the output
+        // ceiling was hit, the user stopped it, the request failed. The
+        // document still has to settle: while it stays flagged as streaming
+        // every renderer keeps showing raw text instead of the parsed
+        // deck/diagram, so a truncated answer looks like a plain document.
+        if (final && streamingDocumentPath) {
+          useDocumentStore.getState().patchDocument(streamingDocumentPath, { streaming: false })
+          streamingDocumentPath = null
+          streamingDocumentModifiedAt = undefined
+        }
+
         patchAssistantMessage({
           content: cleanText,
           ...(final && knowledgeSources.length > 0 ? { knowledgeSources } : {}),
@@ -437,7 +537,7 @@ ${result.content}
 
       const flushMaterializations = async () => {
         await Promise.all(pendingMaterializations)
-        if (documentRefs.length > 0) patchAssistantMessage({ documents: [...documentRefs] })
+        if (isCurrentRequest() && documentRefs.length > 0) patchAssistantMessage({ documents: [...documentRefs] })
       }
 
       try {
@@ -508,6 +608,8 @@ ${result.content}
             }
           }
 
+          if (!isCurrentRequest()) return
+
           const context = createChatQueryContext({
             runId,
             conversationId: currentConvId,
@@ -541,6 +643,7 @@ ${result.content}
 
           try {
             for await (const event of runQuery(context)) {
+              if (!isCurrentRequest()) break
               if (event.type === 'message.delta') {
                 run = applyRunEvent(run, event)
                 frameDirty = true
@@ -598,6 +701,7 @@ ${result.content}
           }
 
           const finalText = consumeArtifactContent(run.text, true)
+          if (!isCurrentRequest()) return
           await flushMaterializations()
           patchAssistantMessage({
             ...(finalText !== undefined ? { content: finalText } : {}),
@@ -622,7 +726,7 @@ ${result.content}
         if (!response.ok) {
           const errData = await response.json().catch(() => null)
           throw new Error(
-            errData?.error?.message ?? `请求失败: ${response.status}`,
+            errData?.error?.message ?? errData?.message ?? `请求失败: ${response.status}`,
           )
         }
 
@@ -673,7 +777,7 @@ ${result.content}
         consumeArtifactContent(fullContent, true)
         await flushMaterializations()
       } catch (err) {
-        if (abortController.signal.aborted) return
+        if (abortController.signal.aborted || !isCurrentRequest()) return
         const error = err instanceof Error ? err : new Error('未知错误')
         setError(error)
         // New requests discard an empty placeholder. A resumed run retains
@@ -694,9 +798,12 @@ ${result.content}
           }
         }
       } finally {
-        isStreamingRef.current = false
-        setIsStreaming(false)
-        abortRef.current = null
+        if (isCurrentRequest()) {
+          isStreamingRef.current = false
+          setIsStreaming(false)
+          abortRef.current = null
+          activeRequestConversationRef.current = undefined
+        }
         // 窗口不在前台时发送系统通知
         if (document.hidden) {
           sendNotification('Solidify', 'AI 回复已生成')
@@ -795,5 +902,10 @@ ${result.content}
     )
   }, [messages, isStreaming, sendMessage, removeLastMessageFromConversation])
 
-  return { messages, isStreaming, error, sendMessage, stopStreaming, regenerate, retry }
+  // During a route transition React can render once before the conversation
+  // loading effect runs. Hide the previous conversation's local state in that
+  // frame, and never expose its stream status to the new composer.
+  const visibleMessages = messagesOwnerRef.current === conversationId ? messages : []
+  const visibleStreaming = streamConversationRef.current === conversationId ? isStreaming : false
+  return { messages: visibleMessages, isStreaming: visibleStreaming, error, sendMessage, stopStreaming, regenerate, retry }
 }

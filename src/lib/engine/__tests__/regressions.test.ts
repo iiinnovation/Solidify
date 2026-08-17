@@ -285,3 +285,114 @@ describe('run completion vs exhaustion', () => {
     expect(types).not.toContain('run.exhausted')
   })
 })
+
+/**
+ * A deck is routinely longer than one output window. Stopping at the ceiling
+ * left the artifact envelope unclosed, which downstream renders as raw text
+ * rather than slides — so the answer must resume instead.
+ */
+describe('output ceiling resumes instead of ending the run', () => {
+  const truncated = (text: string): CompletionChunk[] => [
+    { type: 'content_delta', delta: text },
+    { type: 'message_end', usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, stopReason: 'max_tokens' },
+  ]
+
+  it('continues a truncated answer and completes the run', async () => {
+    const ctx = makeCtx(provider([
+      truncated('<solidify-artifact type="slides">{"slides":['),
+      [
+        { type: 'content_delta', delta: ']}</solidify-artifact>' },
+        { type: 'message_end', usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, stopReason: 'end_turn' },
+      ],
+    ]))
+    const events = await collect(runQuery(ctx))
+    expect(events.map(e => e.type)).not.toContain('run.exhausted')
+    const text = events.filter(e => e.type === 'message.delta').map(e => (e as { text: string }).text).join('')
+    expect(text).toBe('<solidify-artifact type="slides">{"slides":[]}</solidify-artifact>')
+  })
+
+  it('passes the partial answer back as an assistant prefill without trailing whitespace', async () => {
+    const seen: CompletionRequest[] = []
+    const base = provider([truncated('page one\n\n'), doneTurn])
+    const spy: ModelProvider = {
+      ...base,
+      async *stream(request: CompletionRequest) {
+        seen.push(request)
+        yield* base.stream(request)
+      },
+    }
+    await collect(runQuery(makeCtx(spy)))
+    const last = seen[1].messages.at(-1)
+    expect(last?.role).toBe('assistant')
+    expect(last?.content).toBe('page one')
+  })
+
+  it('still exhausts when the model never stops hitting the ceiling', async () => {
+    const ctx = makeCtx(provider([truncated('more')]), {
+      limits: { maxTurns: 50, maxTokens: 100_000, maxOutputTokens: 1000, maxToolCalls: 20, toolTimeoutMs: 1000 },
+    })
+    const events = await collect(runQuery(ctx))
+    expect(events.map(e => e.type)).toContain('run.exhausted')
+  })
+
+  /**
+   * Every provider rejects two assistant turns in a row, so a resumed answer
+   * has to replace the previous prefill rather than stack onto it.
+   */
+  it('never sends two assistant messages in a row while resuming', async () => {
+    const seen: CompletionRequest[] = []
+    const base = provider([truncated('one'), truncated('two'), truncated('three'), doneTurn])
+    const spy: ModelProvider = {
+      ...base,
+      async *stream(request: CompletionRequest) {
+        seen.push(request)
+        yield* base.stream(request)
+      },
+    }
+    await collect(runQuery(makeCtx(spy)))
+    expect(seen.length).toBeGreaterThan(2)
+    for (const request of seen) {
+      const roles = request.messages.map(m => m.role)
+      expect(roles.some((role, i) => i > 0 && role === 'assistant' && roles[i - 1] === 'assistant')).toBe(false)
+    }
+    // The resumed text accumulates into that single trailing message.
+    expect(seen.at(-1)?.messages.at(-1)?.content).toBe('onetwothree')
+  })
+
+  it('folds a resumed answer into the assistant turn that carries the tool call', async () => {
+    const seen: CompletionRequest[] = []
+    const base = provider([
+      truncated('partial answer'),
+      [
+        { type: 'tool_call_start', id: 'call-1', name: 'read_file' },
+        { type: 'tool_call_end', id: 'call-1', input: { path: 'a' } },
+        { type: 'message_end', usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, stopReason: 'tool_use' },
+      ],
+      doneTurn,
+    ])
+    const spy: ModelProvider = {
+      ...base,
+      async *stream(request: CompletionRequest) {
+        seen.push(request)
+        yield* base.stream(request)
+      },
+    }
+    // The tool is deliberately unregistered: the call still produces a result
+    // message, which is all this assertion needs to see the turn appended.
+    await collect(runQuery(makeCtx(spy)))
+    const roles = seen.at(-1)?.messages.map(m => m.role) ?? []
+    expect(roles.some((role, i) => i > 0 && role === 'assistant' && roles[i - 1] === 'assistant')).toBe(false)
+    expect(JSON.stringify(seen.at(-1)?.messages)).toContain('partial answer')
+  })
+
+  it('does not replay a tool call that was cut off mid-arguments', async () => {
+    const ctx = makeCtx(provider([[
+      { type: 'tool_call_start', id: 'call-1', name: 'read_file' },
+      { type: 'tool_call_delta', id: 'call-1', delta: '{"path":"a' },
+      { type: 'tool_call_end', id: 'call-1', input: { path: 'a' } },
+      { type: 'message_end', usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, stopReason: 'max_tokens' },
+    ]]))
+    const events = await collect(runQuery(ctx))
+    expect(events.map(e => e.type)).toContain('run.exhausted')
+  })
+})

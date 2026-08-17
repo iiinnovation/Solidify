@@ -29,6 +29,7 @@ export function buildToolUseContext(
     platform: ctx.platform ?? 'web',
     logger,
     skillResources: ctx.skillResources,
+    messages: ctx.messages,
   }
 }
 

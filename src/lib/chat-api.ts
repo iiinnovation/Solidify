@@ -16,6 +16,57 @@ export interface ChatRequestBody {
   skillSkipConfirmation?: boolean
 }
 
+/** Normalize the common base-URL forms accepted in the model settings UI. */
+export function normalizeProviderEndpoint(apiUrl: string, format: ApiFormat): string {
+  const value = apiUrl.trim()
+  if (!value) throw new Error('模型 API URL 不能为空')
+
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch {
+    throw new Error('模型 API URL 无效，请填写完整的 http(s) 地址')
+  }
+  if (!/^https?:$/.test(url.protocol)) {
+    throw new Error('模型 API URL 必须使用 http:// 或 https://')
+  }
+
+  const path = url.pathname.replace(/\/+$/, '')
+  if (!path || path === '/v1') {
+    url.pathname = format === 'openai'
+      ? '/v1/chat/completions'
+      : '/v1/messages'
+  }
+  return url.toString()
+}
+
+function formatProviderFetchError(error: unknown, endpoint: string): Error | null {
+  if (!(error instanceof TypeError) || !/fetch/i.test(error.message)) return null
+  const browserOrigin = typeof window !== 'undefined' ? window.location.origin : ''
+  let crossOrigin = false
+  try {
+    crossOrigin = Boolean(browserOrigin && new URL(endpoint).origin !== browserOrigin)
+  } catch {
+    // URL validation has already produced the actionable error above.
+  }
+  if (crossOrigin) {
+    return new Error(
+      `无法连接模型服务。浏览器拦截了跨域请求（CORS）：${endpoint}。请让该 API 返回 Access-Control-Allow-Origin，或配置服务端代理/使用桌面版。`,
+    )
+  }
+  return new Error(`无法连接模型服务：${endpoint}。请检查网络、API 地址和服务状态。`)
+}
+
+function providerRequestTarget(endpoint: string): { url: string; headers: Record<string, string> } {
+  if (import.meta.env.DEV) {
+    return {
+      url: '/__solidify/model-proxy',
+      headers: { 'X-Solidify-Target': endpoint },
+    }
+  }
+  return { url: endpoint, headers: {} }
+}
+
 /**
  * 上下文压缩：保留首轮对话 + 最近 N 轮对话
  * 适用于项目实施场景，首轮通常包含项目背景，最近对话保持连贯性
@@ -100,17 +151,20 @@ export async function fetchChatStream(body: ChatRequestBody): Promise<Response> 
   }
 
   const { apiUrl, apiKey, modelId, format } = body.provider
+  const endpoint = normalizeProviderEndpoint(apiUrl, format)
+  const requestTarget = providerRequestTarget(endpoint)
 
   if (format === 'openai') {
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), 60000) // 60秒超时
 
     try {
-      const response = await fetch(apiUrl, {
+      const response = await fetch(requestTarget.url, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
+          ...requestTarget.headers,
         },
         body: JSON.stringify({
           model: modelId,
@@ -129,27 +183,44 @@ export async function fetchChatStream(body: ChatRequestBody): Promise<Response> 
       if (error instanceof Error && error.name === 'AbortError') {
         throw new Error('请求超时，请检查网络连接或 API 配置')
       }
+      const providerError = formatProviderFetchError(error, endpoint)
+      if (providerError) throw providerError
       throw error
     }
   }
 
   // Anthropic 格式
   const nonSystemMsgs = body.messages
-  return fetch(apiUrl, {
-    method: 'POST',
-    headers: {
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: modelId,
-      max_tokens: 8192,
-      system: getSystemPrompt(body.skillSystemPrompt, body.skillSkipConfirmation),
-      messages: nonSystemMsgs,
-      stream: true,
-    }),
-  })
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), 60000)
+  try {
+    return await fetch(requestTarget.url, {
+      method: 'POST',
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'Content-Type': 'application/json',
+        ...requestTarget.headers,
+      },
+      body: JSON.stringify({
+        model: modelId,
+        max_tokens: 8192,
+        system: getSystemPrompt(body.skillSystemPrompt, body.skillSkipConfirmation),
+        messages: nonSystemMsgs,
+        stream: true,
+      }),
+      signal: controller.signal,
+    })
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error('请求超时，请检查网络连接或 API 配置')
+    }
+    const providerError = formatProviderFetchError(error, endpoint)
+    if (providerError) throw providerError
+    throw error
+  } finally {
+    clearTimeout(timeoutId)
+  }
 }
 
 export function getSystemPrompt(skillAddition?: string, skipConfirmation?: boolean): string {

@@ -95,6 +95,8 @@ export interface ToolUseContext {
   readonly logger: RunLogger              // Write to run ledger
   /** Read-only resources for the currently selected Skill. */
   readonly skillResources?: SkillResourceResolver
+  /** Current conversation, exposed only for recoverable tool-input repairs. */
+  readonly messages?: readonly unknown[]
 }
 
 // ============================================================================

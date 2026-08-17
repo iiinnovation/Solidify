@@ -557,7 +557,7 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
       {error && (
         <div className="px-6">
           <div className="max-w-2xl mx-auto bg-error-light border border-error/20 rounded-lg px-4 py-2 flex items-center justify-between gap-3">
-            <p className="text-sm text-error min-w-0 truncate">{error.message}</p>
+            <p className="text-sm text-error min-w-0 whitespace-normal break-words">{error.message}</p>
             <button
               onClick={retry}
               className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium text-error hover:bg-error/10 transition-colors"
