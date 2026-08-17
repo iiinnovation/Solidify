@@ -45,7 +45,7 @@ describe('PPTD pipeline context', () => {
   it('attaches one dynamic generator and a shared budget to the pptd-deck Skill', () => {
     const enabled = enablePptdPipeline(context())
     expect(enabled.tools.map((tool) => tool.name)).toEqual(['generate_pptd'])
-    expect(enabled.taskTree?.budget.snapshot()).toMatchObject({ limit: 10_000, used: 0 })
+    expect(enabled.taskTree).toBeUndefined()
     expect(enablePptdPipeline(enabled)).toBe(enabled)
   })
 

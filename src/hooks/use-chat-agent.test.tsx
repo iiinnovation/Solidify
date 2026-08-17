@@ -112,6 +112,73 @@ describe('useChat agent loop switch', () => {
     expect(useChatStore.getState().artifacts.filter((item) => item.title === '交付物')).toHaveLength(1)
   })
 
+  it('publishes a PPTD preview during tool execution and finalizes the same artifact', async () => {
+    const deck = `version: v2\ntitle: Preview deck\nsize: [960, 540]\ntheme: {colors: {bg: '#fff', text: '#111'}, textStyles: {}}\npages:\n  - elements: []\n`
+    const envelope = `<solidify-artifact title="Preview deck" type="slides" path="03-交付物/deck.pptd">${deck}</solidify-artifact>`
+    let finishRun: (() => void) | undefined
+    const runGate = new Promise<void>((resolve) => { finishRun = resolve })
+    mocks.runQuery.mockImplementation(async function* () {
+      yield { type: 'run.started', runId: 'run-pptd-preview' }
+      yield { type: 'tool.requested', call: { id: 'generate-deck', name: 'generate_pptd', input: { brief: 'deck' } } }
+      yield {
+        type: 'tool.progress',
+        callId: 'generate-deck',
+        progress: {
+          phase: 'pptd_assemble',
+          current: 1,
+          total: 1,
+          message: '已装配 PPTD 工程，正在校验和修复',
+          detail: {
+            stage: 'assemble',
+            current: 1,
+            total: 1,
+            message: '已装配 PPTD 工程，正在校验和修复',
+            preview: {
+              title: 'Preview deck',
+              type: 'slides',
+              path: '03-交付物/deck.pptd',
+              content: deck,
+              pageCount: 1,
+            },
+          },
+        },
+      }
+      await runGate
+      yield { type: 'tool.completed', callId: 'generate-deck', result: { success: true, content: 'generated' } }
+      yield { type: 'message.delta', text: envelope }
+      yield { type: 'message.completed', content: envelope }
+      yield {
+        type: 'run.completed',
+        usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15, turns: 1, toolCalls: 1 },
+      }
+    })
+    const { result } = renderHook(() => useChat(), { wrapper })
+
+    let sendPromise: Promise<void> | undefined
+    await act(async () => {
+      sendPromise = result.current.sendMessage('create deck')
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    await waitFor(() => expect(useChatStore.getState().artifacts).toHaveLength(1))
+    const preview = useChatStore.getState().artifacts[0]
+    expect(preview).toMatchObject({ title: 'Preview deck', type: 'slides', content: deck, streaming: true })
+    expect(result.current.messages.find((message) => message.role === 'assistant')?.agentRun?.tools[0].progressDetail)
+      .not.toHaveProperty('preview')
+
+    finishRun?.()
+    await act(async () => { await sendPromise })
+
+    expect(useChatStore.getState().artifacts).toHaveLength(1)
+    expect(useChatStore.getState().artifacts[0]).toMatchObject({
+      id: preview.id,
+      title: 'Preview deck',
+      content: deck.trim(),
+      streaming: false,
+    })
+  })
+
   it('flushes streamed deltas while the run is still open', async () => {
     vi.useFakeTimers()
     try {

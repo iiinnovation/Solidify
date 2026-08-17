@@ -709,7 +709,27 @@ ${result.content}
               // copy an ever-larger array into localStorage.
               const isDurableFact = event.type !== 'tool.progress'
               if (isDurableFact) runEvents.push(event)
-              run = applyRunEvent(run, event)
+              const pptdPreview = getPptdProgressPreview(event)
+              const reducedEvent = pptdPreview && event.type === 'tool.progress'
+                ? withoutPptdPreview(event)
+                : event
+              run = applyRunEvent(run, reducedEvent)
+              if (pptdPreview && !useFileDocuments) {
+                if (!streamingArtifactId) {
+                  streamingArtifactId = newId('artifact')
+                  addArtifact({
+                    id: streamingArtifactId,
+                    title: pptdPreview.title,
+                    type: 'slides',
+                    content: pptdPreview.content,
+                    messageId: assistantMsg.id,
+                    version: 1,
+                    streaming: true,
+                  })
+                } else {
+                  updateArtifactContent(streamingArtifactId, pptdPreview.content, true)
+                }
+              }
               const completedTool = event.type === 'tool.completed'
                 ? [...runEvents].reverse().find((candidate) =>
                     candidate.type === 'tool.requested' && candidate.call.id === event.callId)
@@ -972,4 +992,38 @@ ${result.content}
     : []
   const visibleStreaming = streamConversationRef.current === conversationId ? isStreaming : false
   return { messages: visibleMessages, isStreaming: visibleStreaming, error, sendMessage, stopStreaming, regenerate, retry }
+}
+
+interface PptdProgressPreview {
+  title: string
+  type: 'slides'
+  path: string
+  content: string
+  pageCount: number
+}
+
+function getPptdProgressPreview(event: QueryEvent): PptdProgressPreview | undefined {
+  if (event.type !== 'tool.progress' || !event.progress.phase.startsWith('pptd_')) return undefined
+  const detail = event.progress.detail
+  if (!detail || typeof detail !== 'object' || Array.isArray(detail)) return undefined
+  const preview = (detail as { preview?: unknown }).preview
+  if (!preview || typeof preview !== 'object' || Array.isArray(preview)) return undefined
+  const candidate = preview as Record<string, unknown>
+  if (
+    typeof candidate.title !== 'string'
+    || candidate.type !== 'slides'
+    || typeof candidate.path !== 'string'
+    || typeof candidate.content !== 'string'
+    || typeof candidate.pageCount !== 'number'
+  ) return undefined
+  return candidate as unknown as PptdProgressPreview
+}
+
+function withoutPptdPreview(event: Extract<QueryEvent, { type: 'tool.progress' }>): QueryEvent {
+  const detail = event.progress.detail as Record<string, unknown>
+  const { preview: _preview, ...progressDetail } = detail
+  return {
+    ...event,
+    progress: { ...event.progress, detail: progressDetail },
+  }
 }

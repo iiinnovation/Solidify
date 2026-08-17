@@ -14,17 +14,29 @@ interface PresentationArtifactRendererProps {
 
 /** All presentation formats are normalized to PPTD before rendering. */
 export function PresentationArtifactRenderer({ content, streaming, artifactId, runId }: PresentationArtifactRendererProps) {
-  const result = useMemo(() => streaming ? null : parsePptdArtifactContentDetailed(content), [content, streaming])
-  const diagnostic = result?.project ? undefined : result?.diagnostics[0]
+  const result = useMemo(() => parsePptdArtifactContentDetailed(content), [content])
+  const diagnostic = result?.project || streaming ? undefined : result?.diagnostics[0]
 
   useEffect(() => {
     if (!runId || !diagnostic) return
     recordParseFailure(runId, artifactId, diagnostic)
   }, [artifactId, diagnostic, runId])
 
+  if (result?.project) {
+    return (
+      <div className="relative h-full">
+        {streaming && (
+          <div className="absolute right-3 top-3 z-10 flex items-center gap-1.5 rounded-md border border-accent/20 bg-background/90 px-2 py-1 text-xs text-accent shadow-sm">
+            <div className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse" />
+            生成中
+          </div>
+        )}
+        <PptdDeckView project={result.project} />
+      </div>
+    )
+  }
   if (streaming) return <ScrollArea className="h-full"><pre className="p-4 text-xs text-text-secondary font-mono whitespace-pre-wrap break-all">{content}</pre></ScrollArea>
-  if (!result?.project) return <ParseFailure diagnostic={diagnostic} />
-  return <PptdDeckView project={result.project} />
+  return <ParseFailure diagnostic={diagnostic} />
 }
 
 function ParseFailure({ diagnostic }: { diagnostic?: PptdArtifactParseDiagnostic }) {

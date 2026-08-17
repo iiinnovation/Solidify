@@ -32,6 +32,14 @@ describe('PresentationArtifactRenderer', () => {
     expect(document.querySelector('[data-pptd-artifact="Inline deck"]')).toBeTruthy()
   })
 
+  it('renders a complete in-progress PPTD preview instead of raw source', () => {
+    render(<PresentationArtifactRenderer content={pptd} streaming />)
+
+    expect(screen.getByText('First page')).toBeTruthy()
+    expect(screen.getByText('生成中')).toBeTruthy()
+    expect(document.querySelector('[data-pptd-artifact="Inline deck"]')).toBeTruthy()
+  })
+
   it('migrates legacy slides onto the PPTD renderer', () => {
     render(<PresentationArtifactRenderer content={JSON.stringify({ slides: [{ layout: 'title', title: 'Legacy title' }] })} />)
     expect(screen.getByText('Legacy title')).toBeTruthy()

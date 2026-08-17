@@ -1,7 +1,6 @@
 import { createGeneratePptdTool } from '../tools/builtin/generate-pptd'
 import type { Tool } from '../tools/types'
 import type { QueryContext } from './types'
-import { SharedTaskTreeBudget } from './sub-agent/budget'
 
 const LEGACY_PRESENTATION_OVERRIDE = `
 
@@ -23,7 +22,6 @@ export function enablePptdPipeline(base: QueryContext): QueryContext {
   if (typeof navigator !== 'undefined' && !navigator.onLine) return base
   if (base.tools.some((tool) => tool.name === 'generate_pptd')) return base
 
-  const budget = base.taskTree?.budget ?? new SharedTaskTreeBudget(base.limits.maxTokens, base.signal)
   const holder: { current?: QueryContext } = {}
   const tool = createGeneratePptdTool(() => {
     if (!holder.current) throw new Error('PPTD pipeline context is not initialized')
@@ -42,10 +40,6 @@ export function enablePptdPipeline(base: QueryContext): QueryContext {
           ? base.skill.content
           : `${base.skill.content}${LEGACY_PRESENTATION_OVERRIDE}`,
       },
-    } : {}),
-    ...(!base.taskTree ? {
-      signal: budget.signal,
-      taskTree: { rootRunId: base.runId, depth: 0 as const, budget },
     } : {}),
     // Chat attachments are already present in the conversation. Without a
     // selected workspace these tools can only read bundled Skill resources,

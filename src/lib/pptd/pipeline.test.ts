@@ -41,6 +41,7 @@ elements:
 describe('PPTD layered generation pipeline', () => {
   it('retries invalid outline JSON, isolates page prompts, repairs only the failed page, and emits one slides bundle', async () => {
     const calls: PptdModelCall[] = []
+    const previews: NonNullable<Parameters<NonNullable<Parameters<typeof generatePptdDeck>[1]['onProgress']>>[0]['preview']>[] = []
     let outlineCalls = 0
     const result = await generatePptdDeck({
       brief: '基于内部经营材料生成两页深色汇报，不要把原始需求泄漏到逐页调用。',
@@ -52,6 +53,9 @@ describe('PPTD layered generation pipeline', () => {
         if (call.stage === 'page') return { text: call.pageIndex === 0 ? validPage('经营复盘与下一步') : INVALID_PAGE }
         return { text: validPage('增长由核心客户驱动') }
       },
+      onProgress: (progress) => {
+        if (progress.preview) previews.push(progress.preview)
+      },
     })
 
     expect(result.project.pages).toHaveLength(2)
@@ -61,6 +65,10 @@ describe('PPTD layered generation pipeline', () => {
     expect(result.artifact.type).toBe('slides')
     expect(result.artifact.envelope.match(/<solidify-artifact/g)).toHaveLength(1)
     expect(parsePptdArtifactContent(result.artifact.content)?.pages).toHaveLength(2)
+    expect(previews.length).toBeGreaterThanOrEqual(2)
+    expect(previews.every((preview) => preview.pageCount === 2)).toBe(true)
+    expect(parsePptdArtifactContent(previews[0].content)?.pages).toHaveLength(2)
+    expect(previews.at(-1)?.content).toBe(result.artifact.content)
 
     const pageCalls = calls.filter((call) => call.stage === 'page')
     expect(pageCalls).toHaveLength(2)
@@ -187,7 +195,7 @@ elements:
 })
 
 describe('PPTD QueryContext model adapter', () => {
-  it('streams through the active provider without tools and meters the shared task budget', async () => {
+  it('streams through the active provider without charging the generic Agent task budget', async () => {
     const requests: CompletionRequest[] = []
     const provider: ModelProvider = {
       name: 'mock',
@@ -216,6 +224,6 @@ describe('PPTD QueryContext model adapter', () => {
     expect(response.text).toBe('{"ok":true}')
     expect(requests[0]).toMatchObject({ model: 'mock-model', system: 'system', stream: true })
     expect(requests[0].tools).toBeUndefined()
-    expect(budget.snapshot()).toMatchObject({ used: 15, byRun: { 'root:pptd:outline:1': 15 } })
+    expect(budget.snapshot()).toMatchObject({ used: 0, byRun: {} })
   })
 })

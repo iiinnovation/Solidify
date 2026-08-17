@@ -69,6 +69,15 @@ export interface PptdPipelineProgress {
   total: number
   pageIndex?: number
   message: string
+  preview?: PptdDeckPreview
+}
+
+export interface PptdDeckPreview {
+  title: string
+  type: 'slides'
+  path: string
+  content: string
+  pageCount: number
 }
 
 export interface PptdPageGenerationReport {
@@ -110,10 +119,9 @@ export interface GeneratePptdDeckOptions {
   concurrency?: number
   maxRepairRounds?: number
   onProgress?: (progress: PptdPipelineProgress) => void
-  maxTotalTokens?: number
 }
 
-export interface RunPptdDeckPipelineOptions extends Omit<GeneratePptdDeckOptions, 'callModel' | 'signal' | 'maxTotalTokens'> {
+export interface RunPptdDeckPipelineOptions extends Omit<GeneratePptdDeckOptions, 'callModel' | 'signal'> {
   signal?: AbortSignal
 }
 
@@ -159,9 +167,6 @@ export async function generatePptdDeck(
     usage.outputTokens += measured.outputTokens
     usage.totalTokens += measured.totalTokens ?? measured.inputTokens + measured.outputTokens
     usage.calls++
-    if (options.maxTotalTokens !== undefined && usage.totalTokens > options.maxTotalTokens) {
-      throw new Error(`PPTD 管线超过 token 预算：${usage.totalTokens}/${options.maxTotalTokens}`)
-    }
     return result
   }
 
@@ -225,7 +230,9 @@ export async function generatePptdDeck(
 
   let assembly = assembleStates(outline.title, theme, states)
   assertNoProjectErrors(assembly)
-  options.onProgress?.({ stage: 'assemble', current: 1, total: 1, message: '装配并校验 PPTD 工程' })
+  publishPreview(options.onProgress, input, outline, assembly.project, {
+    stage: 'assemble', current: 1, total: 1, message: '已装配 PPTD 工程，正在校验和修复',
+  })
 
   for (let round = 1; round <= maxRepairRounds; round++) {
     const targets = repairTargets(states, assembly)
@@ -282,6 +289,12 @@ export async function generatePptdDeck(
     })
     assembly = assembleStates(outline.title, theme, states)
     assertNoProjectErrors(assembly)
+    publishPreview(options.onProgress, input, outline, assembly.project, {
+      stage: 'repair',
+      current: completedRepairs,
+      total: targets.length,
+      message: `第 ${round}/${maxRepairRounds} 轮修复结果已更新`,
+    })
   }
 
   const unresolved = repairTargets(states, assembly)
@@ -296,6 +309,12 @@ export async function generatePptdDeck(
     warnings.push(`${requiredFallbacks.length} 页在 ${maxRepairRounds} 轮修复后仍未通过，已降级为纯文本页`)
     assembly = assembleStates(outline.title, theme, states)
     assertNoProjectErrors(assembly)
+    publishPreview(options.onProgress, input, outline, assembly.project, {
+      stage: 'repair',
+      current: requiredFallbacks.length,
+      total: requiredFallbacks.length,
+      message: '已更新降级页面预览',
+    })
   }
   if (!assembly.validation.valid) {
     throw new Error(`PPTD 最终装配仍未通过校验：${formatDiagnostics(assembly.validation.errors)}`)
@@ -314,16 +333,7 @@ export async function generatePptdDeck(
     warnings.push(`PPTD 工程存在 ${assembly.projectWarnings.length} 条非阻塞 warning：${formatDiagnostics(assembly.projectWarnings)}`)
   }
 
-  const content = serializePptdArtifactContent(assembly.project)
-  const artifactTitle = input.title?.trim() || outline.title
-  const artifactPath = safeArtifactPath(input.artifactPath)
-  const artifact: PptdDeckArtifact = {
-    title: artifactTitle,
-    type: 'slides',
-    path: artifactPath,
-    content,
-    envelope: `<solidify-artifact title="${escapeAttribute(artifactTitle)}" type="slides" path="${escapeAttribute(artifactPath)}">${content}</solidify-artifact>`,
-  }
+  const artifact = createDeckArtifact(input, outline, assembly.project)
   const pageReports = states.map((state) => ({
     pageIndex: state.pageIndex,
     pagePath: state.pagePath,
@@ -334,7 +344,45 @@ export async function generatePptdDeck(
   return { outline, project: assembly.project, assembly, artifact, pageReports, warnings, usage }
 }
 
-/** Uses the active QueryContext provider and its shared task-tree budget. */
+function publishPreview(
+  onProgress: GeneratePptdDeckOptions['onProgress'],
+  input: PptdDeckPipelineInput,
+  outline: DeckOutline,
+  project: PptdProject,
+  progress: Omit<PptdPipelineProgress, 'preview'>,
+): void {
+  if (!onProgress) return
+  const artifact = createDeckArtifact(input, outline, project)
+  onProgress({
+    ...progress,
+    preview: {
+      title: artifact.title,
+      type: artifact.type,
+      path: artifact.path,
+      content: artifact.content,
+      pageCount: project.pages.length,
+    },
+  })
+}
+
+function createDeckArtifact(
+  input: PptdDeckPipelineInput,
+  outline: DeckOutline,
+  project: PptdProject,
+): PptdDeckArtifact {
+  const content = serializePptdArtifactContent(project)
+  const title = input.title?.trim() || outline.title
+  const path = safeArtifactPath(input.artifactPath)
+  return {
+    title,
+    type: 'slides',
+    path,
+    content,
+    envelope: `<solidify-artifact title="${escapeAttribute(title)}" type="slides" path="${escapeAttribute(path)}">${content}</solidify-artifact>`,
+  }
+}
+
+/** Uses the active QueryContext provider inside the pipeline's bounded stages. */
 export function runPptdDeckPipeline(
   ctx: QueryContext,
   input: PptdDeckPipelineInput,
@@ -344,7 +392,6 @@ export function runPptdDeckPipeline(
   return generatePptdDeck(input, {
     ...options,
     signal,
-    maxTotalTokens: ctx.limits.maxTokens,
     callModel: createPptdModelCaller(ctx),
   })
 }
@@ -380,9 +427,6 @@ export function createPptdModelCaller(ctx: QueryContext): PptdModelCaller {
     if (stopReason === 'max_tokens') throw new Error(`PPTD ${request.stage} 输出达到 token 上限`)
     if (!text.trim()) throw new Error(`PPTD ${request.stage} 模型返回空内容`)
     const measured = usage ?? estimateUsage(request, text)
-    if (ctx.taskTree && !ctx.taskTree.budget.consume(`${ctx.runId}:${request.runId}`, measured.totalTokens ?? measured.inputTokens + measured.outputTokens)) {
-      throw new Error('PPTD 管线共享 token 预算已耗尽')
-    }
     return { text, usage: measured }
   }
 }
