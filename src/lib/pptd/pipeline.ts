@@ -591,17 +591,26 @@ export function createPptdModelCaller(ctx: QueryContext): PptdModelCaller {
       let text = ''
       let usage: TokenUsage | undefined
       let stopReason: string | undefined
+      let streamError: PptdTechnicalModelError | undefined
       for await (const chunk of provider.stream(completion)) {
         if (chunk.type === 'content_delta') text += chunk.delta
         else if (chunk.type === 'message_end') {
           usage = chunk.usage
           stopReason = chunk.stopReason
         } else if (chunk.type === 'error') {
-          if (!chunk.error.recoverable) throw new PptdTechnicalModelError(chunk.error)
+          if (!chunk.error.recoverable) {
+            const technical = new PptdTechnicalModelError(chunk.error)
+            if (attempt < MAX_EMPTY_OUTPUT_ATTEMPTS && isRetryablePptdStreamError(chunk.error)) {
+              streamError = technical
+              break
+            }
+            throw technical
+          }
         } else if (chunk.type === 'tool_call_start' || chunk.type === 'tool_call_delta' || chunk.type === 'tool_call_end') {
           throw new PptdContentGenerationError('PPTD 管线不接受模型工具调用')
         }
       }
+      if (streamError) continue
       if (stopReason === 'max_tokens') throw new PptdOutputLimitError(request.stage)
       totalUsage = mergeTokenUsage(totalUsage, usage ?? estimateUsage(request, text))
       if (text.trim()) return { text, usage: totalUsage }
@@ -943,6 +952,15 @@ function isPptdOutputLimitError(error: unknown): boolean {
 
 function isPptdEmptyOutputError(error: unknown): boolean {
   return error instanceof PptdEmptyModelOutputError || errorMessage(error).includes('返回空内容')
+}
+
+function isRetryablePptdStreamError(error: ModelError): boolean {
+  const message = error.message.toLowerCase()
+  return error.kind === 'parse'
+    || message.includes('json parse')
+    || message.includes('unterminated string')
+    || message.includes('unexpected end of json')
+    || message.includes('sse')
 }
 
 function isPptdContentFailure(error: unknown): boolean {
@@ -1648,18 +1666,46 @@ function pendingPreviewState(
 
 function parseJsonObject(raw: string): Record<string, unknown> {
   const text = stripCodeFence(raw)
-  try {
-    const parsed = JSON.parse(text) as unknown
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as Record<string, unknown>
-  } catch {
-    const start = text.indexOf('{')
-    const end = text.lastIndexOf('}')
-    if (start >= 0 && end > start) {
-      const parsed = JSON.parse(text.slice(start, end + 1)) as unknown
+  const candidates = [text]
+  const extracted = extractJsonObject(text)
+  if (extracted && extracted !== text) candidates.push(extracted)
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate) as unknown
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as Record<string, unknown>
+    } catch {
+      // Try the next bounded candidate, then return a stable pipeline error.
     }
   }
-  throw new Error('输出不是有效 JSON 对象')
+  throw new Error('输出不是有效 JSON 对象（模型输出可能被截断或包含未转义字符串）')
+}
+
+function extractJsonObject(text: string): string | undefined {
+  let start = -1
+  let depth = 0
+  let inString = false
+  let escaped = false
+  for (let index = 0; index < text.length; index++) {
+    const char = text[index]
+    if (inString) {
+      if (escaped) escaped = false
+      else if (char === '\\') escaped = true
+      else if (char === '"') inString = false
+      continue
+    }
+    if (char === '"') {
+      inString = true
+      continue
+    }
+    if (char === '{') {
+      if (start < 0) start = index
+      depth++
+    } else if (char === '}' && start >= 0) {
+      depth--
+      if (depth === 0) return text.slice(start, index + 1)
+    }
+  }
+  return undefined
 }
 
 function stripCodeFence(raw: string): string {

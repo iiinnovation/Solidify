@@ -289,6 +289,20 @@ elements:
     expect(calls.find((call) => call.stage === 'repair')?.maxTokens).toBe(5_200)
   })
 
+  it('contains truncated outline JSON errors instead of leaking the native parser message', async () => {
+    const result = await generatePptdDeck({ brief: '截断 JSON 时仍应交付可见方案' }, {
+      callModel: async (call) => {
+        if (call.stage === 'design') return { text: DESIGN }
+        if (call.stage === 'outline') return { text: '{"title":"未闭合' }
+        return { text: validPage('确定性兜底页面') }
+      },
+    })
+
+    expect(result.project.pages.length).toBeGreaterThan(0)
+    expect(result.warnings.join('\n')).toContain('模型输出可能被截断')
+    expect(result.warnings.join('\n')).not.toContain('Unterminated string')
+  })
+
   it('falls back to the deterministic design when both design responses hit the output ceiling', async () => {
     const calls: PptdModelCall[] = []
     const result = await generatePptdDeck({ brief: '设计阶段输出过长时仍交付一页方案' }, {
@@ -732,6 +746,44 @@ describe('PPTD QueryContext model adapter', () => {
       text: '{"ok":true}',
       usage: { inputTokens: 14, outputTokens: 3, totalTokens: 17 },
     })
+  })
+
+  it('retries one transient provider JSON parse failure before surfacing it', async () => {
+    let requests = 0
+    const provider: ModelProvider = {
+      name: 'parse-once',
+      metadata: {
+        name: 'parse-once', displayName: 'Parse Once', supportsVision: false, supportsTools: true,
+        supportsStreaming: true, defaultMaxTokens: 4096, models: ['parse-once-model'],
+      },
+      async *stream() {
+        requests++
+        if (requests === 1) {
+          yield {
+            type: 'error',
+            error: {
+              code: 'stream_parse', message: 'JSON Parse error: Unterminated string', type: 'unknown',
+              retryable: false, kind: 'parse', recoverable: false,
+            },
+          }
+          return
+        }
+        yield { type: 'content_delta', delta: '{"ok":true}' }
+        yield { type: 'message_end', stopReason: 'end_turn' }
+      },
+    }
+    const registry = new ProviderRegistry()
+    registry.register('parse-once', provider)
+    const ctx = {
+      runId: 'root', model: { provider: 'parse-once', model: 'parse-once-model' }, providerRegistry: registry,
+    } as unknown as QueryContext
+
+    const response = await createPptdModelCaller(ctx)({
+      stage: 'outline', runId: 'pptd:outline:1', system: 'system', prompt: 'prompt', maxTokens: 100,
+    }, new AbortController().signal)
+
+    expect(requests).toBe(2)
+    expect(response.text).toBe('{"ok":true}')
   })
 
   it('caps empty-output retries and does not retry max-token responses', async () => {
