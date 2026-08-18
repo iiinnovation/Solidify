@@ -55,6 +55,59 @@ elements:
 `
 
 describe('PPTD layered generation pipeline', () => {
+  it('batch-reviews rendered pages and repairs only pages reported by vision', async () => {
+    const calls: PptdModelCall[] = []
+    let reviewCalls = 0
+    const result = await generatePptdDeck({ brief: '生成一页视觉复核方案' }, {
+      visualReview: { visionAvailable: true, maxRounds: 2 },
+      callModel: async (call) => {
+        calls.push(call)
+        if (call.stage === 'design') return { text: DESIGN }
+        if (call.stage === 'outline') {
+          return { text: JSON.stringify({
+            title: '视觉复核', audience: '客户', goal: '确认方案', themeId: 'business-light',
+            pages: [{ pageType: 'content', intent: '推荐方案', keyPoints: ['证据'], layout: '主视觉加结论', visualTask: '建立清晰层级' }],
+          }) }
+        }
+        if (call.stage === 'review') {
+          reviewCalls++
+          return reviewCalls === 1
+            ? { text: JSON.stringify({ approved: false, pages: [{ pageIndex: 0, feedback: 'body 与 title 间距不足，请移动 body' }] }) }
+            : { text: JSON.stringify({ approved: true, pages: [] }) }
+        }
+        if (call.stage === 'repair') return { text: validPage('视觉修复后的结论') }
+        return { text: validPage('推荐方案') }
+      },
+    })
+
+    expect(calls.filter((call) => call.stage === 'review')).toHaveLength(2)
+    expect(calls.find((call) => call.stage === 'review')?.images?.[0]?.dataUrl).toMatch(/^data:image\/(?:png|svg\+xml)/)
+    expect(calls.filter((call) => call.stage === 'repair')).toHaveLength(1)
+    expect(result.pageReports[0]).toMatchObject({ status: 'repaired', attempts: 2 })
+    expect(result.warnings.some((warning) => warning.includes('仍有问题'))).toBe(false)
+  })
+
+  it('records a deterministic skip instead of calling review on non-vision models', async () => {
+    const calls: PptdModelCall[] = []
+    const result = await generatePptdDeck({ brief: '生成一页方案' }, {
+      visualReview: { visionAvailable: false },
+      callModel: async (call) => {
+        calls.push(call)
+        if (call.stage === 'design') return { text: DESIGN }
+        if (call.stage === 'outline') {
+          return { text: JSON.stringify({
+            title: '方案', audience: '客户', goal: '确认', themeId: 'business-light',
+            pages: [{ pageType: 'content', intent: '推荐方案', keyPoints: ['证据'] }],
+          }) }
+        }
+        return { text: validPage('推荐方案') }
+      },
+    })
+
+    expect(calls.some((call) => call.stage === 'review')).toBe(false)
+    expect(result.warnings).toContain('当前模型不支持 vision，已跳过 PPTD 截图审阅，仅执行结构校验')
+  })
+
   it('carries trusted media into visual calls, page prompts, previews, and the final bundle', async () => {
     const calls: PptdModelCall[] = []
     const previews: string[] = []

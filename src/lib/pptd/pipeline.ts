@@ -13,6 +13,7 @@ import {
 } from './design-resources'
 import { pptdMediaDataUrl } from './media'
 import { parsePptdPage } from './parse'
+import { buildPptdReviewPrompt, capturePptdPageImages, runPptdReviewLoop } from './review'
 import {
   getPptdThemePreset,
   inferPptdThemeId,
@@ -61,7 +62,7 @@ export interface PptdDeckPipelineInput {
   artifactPath?: string
 }
 
-export type PptdPipelineStage = 'design' | 'outline' | 'page' | 'repair'
+export type PptdPipelineStage = 'design' | 'outline' | 'page' | 'repair' | 'review'
 
 export interface PptdModelCall {
   stage: PptdPipelineStage
@@ -141,6 +142,7 @@ export interface GeneratePptdDeckOptions {
   signal?: AbortSignal
   concurrency?: number
   maxRepairRounds?: number
+  visualReview?: { visionAvailable: boolean; maxRounds?: number }
   onProgress?: (progress: PptdPipelineProgress) => void
 }
 
@@ -361,6 +363,21 @@ export async function generatePptdDeck(
       message: '已更新降级页面预览',
     })
   }
+  if (options.visualReview) {
+    const visual = await runProductionVisualReview(
+      outline,
+      design,
+      theme,
+      states,
+      assembly,
+      media.values,
+      options.visualReview,
+      callModel,
+      signal,
+      warnings,
+    )
+    assembly = visual.assembly
+  }
   if (!assembly.validation.valid) {
     throw new Error(`PPTD 最终装配仍未通过校验：${formatDiagnostics(assembly.validation.errors)}`)
   }
@@ -438,6 +455,7 @@ export function runPptdDeckPipeline(
     ...options,
     signal,
     callModel: createPptdModelCaller(ctx),
+    visualReview: { visionAvailable: ctx.providerRegistry.get(ctx.model.provider).metadata.supportsVision, maxRounds: 2 },
   })
 }
 
@@ -480,6 +498,145 @@ export function createPptdModelCaller(ctx: QueryContext): PptdModelCaller {
     const measured = usage ?? estimateUsage(request, text)
     return { text, usage: measured }
   }
+}
+
+interface VisualReviewOutcome {
+  assembly: PptdAssemblyResult
+}
+
+/** Runs the bounded production visual pass using the same local page model. */
+async function runProductionVisualReview(
+  outline: DeckOutline,
+  design: PptdDesignSpec,
+  theme: ReturnType<typeof getPptdThemePreset>,
+  states: PageState[],
+  initialAssembly: PptdAssemblyResult,
+  media: Readonly<Record<string, string | Uint8Array>>,
+  options: NonNullable<GeneratePptdDeckOptions['visualReview']>,
+  callModel: (request: PptdModelCall) => Promise<PptdModelCallResult>,
+  signal: AbortSignal,
+  warnings: string[],
+): Promise<VisualReviewOutcome> {
+  if (options.visionAvailable === false) {
+    warnings.push('当前模型不支持 vision，已跳过 PPTD 截图审阅，仅执行结构校验')
+    return { assembly: initialAssembly }
+  }
+
+  const reviewMedia = preparePptdMedia(media).images
+  const feedbackByPage = new Map<number, string>()
+  const imageByPage = new Map<number, { path: string; dataUrl: string }>()
+  let reviewRound = 0
+  const result = await runPptdReviewLoop(initialAssembly.project, {
+    maxRounds: Math.max(1, Math.min(2, options.maxRounds ?? 1)),
+    visionAvailable: true,
+    capture: async (project, pageIndexes) => capturePptdPageImages(project, pageIndexes),
+    review: async (images, project) => {
+      throwIfAborted(signal)
+      reviewRound++
+      feedbackByPage.clear()
+      const modelImages = images.map((image) => {
+        const path = `media/__pptd_review_page_${image.pageIndex + 1}.png`
+        const modelImage = { path, dataUrl: image.imageDataUrl }
+        imageByPage.set(image.pageIndex, modelImage)
+        return modelImage
+      })
+      const response = await callModel({
+        stage: 'review',
+        runId: `pptd:review:${reviewRound}`,
+        system: REVIEW_SYSTEM_PROMPT,
+        prompt: [
+          `按图片顺序审阅这套 PPTD 的 ${project.pages.length} 页。${buildPptdReviewPrompt(0, project.pages.length)}`,
+          `<page_element_catalog>\n${JSON.stringify(project.pages.map((page, pageIndex) => ({
+            pageIndex,
+            elements: page.elements.map((element) => ({ elementId: element.elementId, elementType: element.elementType, bounds: element.bounds })),
+          })))}\n</page_element_catalog>`,
+          '只返回 JSON：{"approved":true,"pages":[]}；有问题时 pages 只列问题页，结构为 {"pageIndex":0,"feedback":"包含 elementId 的最小修复建议"}。pageIndex 从 0 开始。不要评价主题内容，不要泛泛评价美观。',
+        ].join('\n'),
+        maxTokens: 2_200,
+        images: modelImages,
+      })
+      const text = response.text.trim()
+      if (/^APPROVED(?:\s|$)/i.test(text)) return { approved: true, feedback: '' }
+      try {
+        const parsed = parseJsonObject(text)
+        const pages = Array.isArray(parsed.pages) ? parsed.pages : []
+        for (const item of pages) {
+          if (!item || typeof item !== 'object' || Array.isArray(item)) continue
+          const record = item as Record<string, unknown>
+          const pageIndex = typeof record.pageIndex === 'number' && Number.isInteger(record.pageIndex) ? record.pageIndex : -1
+          const pageFeedback = typeof record.feedback === 'string' ? record.feedback.trim() : ''
+          if (pageIndex >= 0 && pageIndex < project.pages.length && pageFeedback) feedbackByPage.set(pageIndex, pageFeedback)
+        }
+        if (parsed.approved === true && feedbackByPage.size === 0) return { approved: true, feedback: '' }
+      } catch {
+        // Treat malformed review output as feedback for the first page so the
+        // bounded repair/review loop can recover without multiplying calls.
+      }
+      if (feedbackByPage.size === 0 && project.pages.length > 0) feedbackByPage.set(0, text || '截图审阅没有返回有效 JSON')
+      return {
+        approved: false,
+        feedback: [...feedbackByPage.entries()].map(([pageIndex, value]) => `第 ${pageIndex + 1} 页：${value}`).join('\n'),
+      }
+    },
+    repair: async (project, feedback, validation) => {
+      const nextPages = [...project.pages]
+      const targets = feedbackByPage.size > 0 ? [...feedbackByPage.keys()] : []
+      for (const pageIndex of targets) {
+        throwIfAborted(signal)
+        const page = project.pages[pageIndex]
+        const pageOutline = outline.pages[pageIndex]
+        if (!page || !pageOutline) continue
+        const pagePath = project.pagePaths[pageIndex] ?? pagePathFor(pageIndex)
+        const previous: PageState = {
+          pageIndex,
+          pagePath,
+          outline: pageOutline,
+          raw: JSON.stringify(page),
+          page,
+          attempts: states[pageIndex]?.attempts ?? 1,
+          repaired: Boolean(states[pageIndex]?.repaired),
+          fallback: Boolean(states[pageIndex]?.fallback),
+          diagnostics: [],
+        }
+        const diagnostics = [
+          ...(validation.errors.filter((item) => item.path === pagePath || item.path.startsWith(`${pagePath}:`))),
+          { path: pagePath, message: `视觉审阅：${feedbackByPage.get(pageIndex) ?? feedback}`, severity: 'error' as const, code: 'visual-review' },
+        ]
+        const response = await callModel({
+          stage: 'repair',
+          runId: `pptd:visual-repair:${pageIndex + 1}`,
+          system: PAGE_SYSTEM_PROMPT,
+          prompt: buildRepairPrompt(outline, previous, diagnostics, theme, design, buildMediaPrompt(reviewMedia)),
+          maxTokens: 1_800,
+          pageIndex,
+          images: [
+            ...reviewMedia,
+            ...(imageByPage.get(pageIndex) ? [imageByPage.get(pageIndex)!] : []),
+          ],
+        })
+        const repaired = parsePageState(response.text, pageOutline, pageIndex, pagePath, theme, previous)
+        if (!repaired.parseError) {
+          nextPages[pageIndex] = repaired.page
+          states[pageIndex] = { ...repaired, repaired: true }
+        }
+      }
+      return {
+        ...project,
+        pages: nextPages,
+        media: { ...media },
+      }
+    },
+  })
+
+  if (!result.approved) warnings.push(`PPTD 视觉审阅在 ${result.rounds} 轮后仍有问题，已保留结构合法版本：${result.feedback.at(-1) ?? '无具体反馈'}`)
+  const assembly = assemblePptdProject({
+    title: result.project.title,
+    theme,
+    pages: result.project.pages,
+    pagePaths: result.project.pagePaths,
+    media,
+  })
+  return { assembly }
 }
 
 async function generateOutline(
@@ -1041,3 +1198,5 @@ const OUTLINE_SYSTEM_PROMPT = '你是演示文稿信息架构师。输出必须�
 const DESIGN_SYSTEM_PROMPT = '你是资深演示文稿艺术指导。你的任务是把场景方法、设计系统和参考样页压缩为一套可执行且内容驱动的视觉规范，避免模板化 AI 排版。输出必须是满足给定结构的单个 JSON 对象。'
 
 const PAGE_SYSTEM_PROMPT = '你是 PPTD v2 页面排版器。输出必须是单个可解析的 YAML 页面文档。严格遵守 960x540 边界、元素契约和诊断要求，不要输出 Markdown 围栏或解释。'
+
+const REVIEW_SYSTEM_PROMPT = '你是 PPTD 视觉质量审查器。只根据截图检查布局事实，不评论主题内容正确性，不要求远程素材。输出 APPROVED 或按 elementId 给出可执行修复意见。'
