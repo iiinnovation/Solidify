@@ -1,6 +1,6 @@
 ---
 name: pptd-deck
-version: 1.1.0
+version: 1.2.0
 description: 使用本地 PPTD v2 引擎与专业设计系统生成、校验、预览和导出演示文稿
 displayName: PPTD 演示文稿
 allowed-tools: [read_file, list_dir, search_files, generate_pptd]
@@ -24,6 +24,7 @@ skip-confirmation: true
 3. 调用一次 `generate_pptd`。该工具内置 Art Director、大纲、逐页生成、装配校验、定向修复和最终单一 `slides` artifact。不要把远程图片 URL 写入 brief 或页面，图片只引用工具提供的本地 `media/...` 路径。
 4. 工具成功后不要复述、拆分或重新包装 deck；其 artifact 会直接进入聊天交付流。
 5. 工具内置的渲染校验与定向修复是本轮视觉复核依据；不得在 artifact 进入聊天交付流前调用截图工具，也不得用逐页 document 替代 deck。
+6. 若复杂页面在有界修复后仍不可交付，工具会显式失败并保留最新预览；不得把失败页改写成纯文本页冒充完成品。
 
 ## 提交前自检
 

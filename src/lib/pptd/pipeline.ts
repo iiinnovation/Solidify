@@ -33,6 +33,9 @@ const MAX_MATERIAL_CHARS = 48_000
 const PROGRESS_HEARTBEAT_MS = 10_000
 const MAX_MEDIA_FILE_BYTES = 15 * 1024 * 1024
 const MAX_MEDIA_TOTAL_BYTES = 40 * 1024 * 1024
+const OUTLINE_MAX_TOKENS = 3_200
+const PAGE_MAX_TOKENS = 4_800
+const PAGE_REPAIR_MAX_TOKENS = 5_200
 export interface DeckOutlinePage {
   pageType: string
   intent: string
@@ -106,7 +109,7 @@ export interface PptdDeckPreview {
 export interface PptdPageGenerationReport {
   pageIndex: number
   pagePath: string
-  status: 'generated' | 'repaired' | 'fallback'
+  status: 'generated' | 'repaired'
   attempts: number
   diagnostics: PptdDiagnostic[]
 }
@@ -229,7 +232,7 @@ export async function generatePptdDeck(
           runId: `pptd:page:${pageIndex + 1}`,
           system: PAGE_SYSTEM_PROMPT,
           prompt: buildPagePrompt(outline, pageOutline, pageIndex, theme, design, mediaPrompt),
-          maxTokens: 1_800,
+          maxTokens: PAGE_MAX_TOKENS,
           pageIndex,
           images: media.images,
         })
@@ -304,7 +307,7 @@ export async function generatePptdDeck(
             runId: `pptd:repair:${target.state.pageIndex + 1}:${round}`,
             system: PAGE_SYSTEM_PROMPT,
             prompt: buildRepairPrompt(outline, target.state, diagnostics, theme, design, mediaPrompt),
-            maxTokens: 1_800,
+            maxTokens: PAGE_REPAIR_MAX_TOKENS,
             pageIndex: target.state.pageIndex,
             images: media.images,
           })
@@ -345,23 +348,19 @@ export async function generatePptdDeck(
   }
 
   const unresolved = repairTargets(states, assembly)
-  const requiredFallbacks = unresolved.map((target) => target.state)
-  for (const state of requiredFallbacks) {
-    state.diagnostics.push(...diagnosticsForState(state, assembly))
-    state.page = fallbackPage(state.outline, theme, '自动排版未通过校验，已降级为纯文本页')
-    state.parseError = undefined
-    state.fallback = true
-  }
-  if (requiredFallbacks.length > 0) {
-    warnings.push(`${requiredFallbacks.length} 页在 ${maxRepairRounds} 轮修复后仍未通过，已降级为纯文本页`)
-    assembly = assembleStates(outline.title, theme, states, media.values)
-    assertNoProjectErrors(assembly)
+  if (unresolved.length > 0) {
+    const details = unresolved.map(({ state }) => {
+      const diagnostics = diagnosticsForState(state, assembly)
+      state.diagnostics.push(...diagnostics)
+      return `第 ${state.pageIndex + 1} 页：${formatDiagnostics(diagnostics)}`
+    }).join('\n')
     publishPreview(options.onProgress, input, outline, assembly.project, {
       stage: 'repair',
-      current: requiredFallbacks.length,
-      total: requiredFallbacks.length,
-      message: '已更新降级页面预览',
+      current: unresolved.length,
+      total: unresolved.length,
+      message: '复杂页面仍未通过校验，已保留最新预览并停止交付',
     })
+    throw new Error(`PPTD 有 ${unresolved.length} 页在 ${maxRepairRounds} 轮修复后仍不可交付；已拒绝降级为纯文本页。\n${details}`)
   }
   if (options.visualReview) {
     const visual = await runProductionVisualReview(
@@ -399,7 +398,7 @@ export async function generatePptdDeck(
   const pageReports = states.map((state) => ({
     pageIndex: state.pageIndex,
     pagePath: state.pagePath,
-    status: state.fallback ? 'fallback' as const : state.repaired ? 'repaired' as const : 'generated' as const,
+    status: state.repaired ? 'repaired' as const : 'generated' as const,
     attempts: state.attempts,
     diagnostics: dedupeDiagnostics(state.diagnostics),
   }))
@@ -607,7 +606,7 @@ async function runProductionVisualReview(
           runId: `pptd:visual-repair:${pageIndex + 1}`,
           system: PAGE_SYSTEM_PROMPT,
           prompt: buildRepairPrompt(outline, previous, diagnostics, theme, design, buildMediaPrompt(reviewMedia)),
-          maxTokens: 1_800,
+          maxTokens: PAGE_REPAIR_MAX_TOKENS,
           pageIndex,
           images: [
             ...reviewMedia,
@@ -659,7 +658,7 @@ async function generateOutline(
       runId: `pptd:outline:${attempt}`,
       system: OUTLINE_SYSTEM_PROMPT,
       prompt: buildOutlinePrompt(input, design, maxPages, parseFailure, mediaPrompt),
-      maxTokens: 1_800,
+      maxTokens: OUTLINE_MAX_TOKENS,
       images,
     })
     try {
@@ -906,10 +905,11 @@ function buildPagePrompt(
     '页面尺寸固定为 960x540。安全边距至少 48。所有 bounds 必须是 [x,y,width,height] 且位于画布内。',
     '顶层只能包含 pageType、可选 background、elements。每个 elementId 在本页唯一。',
     mediaPrompt
-      ? '支持 text、shape、line、icon、table、chart、image。image 的 src 只能逐字使用 media_catalog 中列出的本地 media/... 路径，禁止远程 URL。'
+      ? '支持 text、shape、line、icon、table、chart、image。image 的 src 以及 background.type=image 的 src 只能逐字使用 media_catalog 中列出的本地 media/... 路径，禁止远程 URL。'
       : '支持 text、shape、line、icon、table、chart。当前没有可用图片，禁止生成 image 元素或远程 URL。',
     'text 元素格式示例：{elementId: title, elementType: text, bounds: [64,48,832,64], content: {text: 标题, fontSize: 32, color: "$text", bold: true}}。',
     '同页 text bounds 不得重叠。正文不小于 14pt，标题不小于 28pt。通过图表、表格、形状关系、细线和留白表达结构，禁止把 keyPoints 原样堆成大段项目符号。',
+    '用 6-24 个必要元素完成页面，YAML 保持紧凑且必须完整闭合；不要用冗余装饰消耗输出预算。',
     '严格执行 visualTask、layout 和设计规范。每个元素都必须服务于本页结论；相邻页面不得机械重复相同版式。',
     `<design_spec>\n${JSON.stringify(design)}\n</design_spec>`,
     `<theme>\n${JSON.stringify(theme)}\n</theme>`,

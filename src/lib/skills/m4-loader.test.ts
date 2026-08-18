@@ -63,7 +63,7 @@ describe('SkillLoader', () => {
     expect(result.skills.some((skill) => skill.metadata.name === 'presentation')).toBe(false)
     for (const skill of result.skills.filter((item) => item.source === 'builtin')) {
       if (skill.metadata.name === 'pptd-deck') {
-        expect(skill.metadata.version).toBe('1.1.0')
+        expect(skill.metadata.version).toBe('1.2.0')
         expect(skill.metadata.allowedTools).toContain('generate_pptd')
         expect(skill.metadata.allowedTools).not.toContain('capture_preview')
         expect(skill.content).toContain('PPTD v2')

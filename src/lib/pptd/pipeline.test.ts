@@ -183,11 +183,16 @@ describe('PPTD layered generation pipeline', () => {
     expect(pageCalls[0].prompt).not.toContain('收入增长 20%')
     expect(pageCalls[1].prompt).not.toContain('本季度结论')
     expect(calls.filter((call) => call.stage === 'repair').map((call) => call.pageIndex)).toEqual([1])
+    expect(pageCalls.every((call) => call.maxTokens === 4_800)).toBe(true)
+    expect(calls.find((call) => call.stage === 'repair')?.maxTokens).toBe(5_200)
   })
 
-  it('falls back to a valid text page after two unsuccessful repair rounds', async () => {
-    const result = await generatePptdDeck({ brief: '生成一页方案' }, {
+  it('fails explicitly instead of silently delivering a text fallback after repair exhaustion', async () => {
+    let repairCalls = 0
+    const progress: string[] = []
+    const generation = generatePptdDeck({ brief: '生成一页方案' }, {
       maxRepairRounds: 2,
+      onProgress(event) { progress.push(event.message) },
       callModel: async (call) => {
         if (call.stage === 'design') return { text: DESIGN }
         if (call.stage === 'outline') {
@@ -196,14 +201,14 @@ describe('PPTD layered generation pipeline', () => {
             pages: [{ pageType: 'content', intent: '推荐方案 A', keyPoints: ['成本更低', '上线更快'] }],
           }) }
         }
+        if (call.stage === 'repair') repairCalls++
         return { text: INVALID_PAGE }
       },
     })
 
-    expect(result.pageReports[0]).toMatchObject({ status: 'fallback', attempts: 3 })
-    expect(result.warnings[0]).toContain('已降级为纯文本页')
-    expect(result.assembly.validation.valid).toBe(true)
-    expect(result.project.pages[0].elements.map((element) => element.elementId)).toContain('fallback-note')
+    await expect(generation).rejects.toThrow('已拒绝降级为纯文本页')
+    expect(repairCalls).toBe(2)
+    expect(progress.at(-1)).toContain('保留最新预览并停止交付')
   })
 
   it('keeps a valid warning-only page unchanged without spending repair calls', async () => {

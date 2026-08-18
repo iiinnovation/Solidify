@@ -21,7 +21,7 @@ export interface GeneratePptdOutput {
   directAssistantContent: true
   contentHandle: string
   artifact: { title: string; type: 'slides'; path: string }
-  pageReports: Array<{ pageIndex: number; status: 'generated' | 'repaired' | 'fallback'; attempts: number }>
+  pageReports: Array<{ pageIndex: number; status: 'generated' | 'repaired'; attempts: number }>
   warnings: string[]
   usage: PptdDeckPipelineResult['usage']
 }
