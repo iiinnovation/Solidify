@@ -62,8 +62,13 @@ export function createHarnessRuntime(ctx: QueryContext, options: HarnessRuntimeO
     return { action: 'continue' as const, value: appendQueryContext(value, index) }
   } })
   hooks.register({ id: 'enforceTokenBudget', type: 'before_model_call', mode: 'waterfall', priority: 30, handler: (value: unknown) => {
-    const usage = isRecord(value) && isRecord(value.usage) ? Number(value.usage.totalTokens ?? 0) : 0
-    return usage >= ctx.limits.maxTokens ? { action: 'abort' as const, reason: 'Run token budget exhausted' } : { action: 'continue' as const, value }
+    // `usage.totalTokens` is provider telemetry and includes the full prompt on
+    // every turn. The query loop exposes the de-duplicated progress charge as
+    // `budgetTokens`; using telemetry here exhausted long-context runs early.
+    const progress = isRecord(value) && typeof value.budgetTokens === 'number'
+      ? value.budgetTokens
+      : 0
+    return progress >= ctx.limits.maxTokens ? { action: 'abort' as const, reason: 'Run token budget exhausted' } : { action: 'continue' as const, value }
   } })
   return { hooks, policy: new PolicyEngine(options.policy), approvals, ledger }
 }

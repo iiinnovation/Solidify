@@ -127,9 +127,20 @@ interface DeckOutline {
 
 ## 5. 已决问题（2026-08-17）
 
-- **调度归属**：采用 PPTD 专用编排器 `generatePptdDeck()`，复用 `SubAgentScheduler` 的有界 FIFO 与 5 并发上限，不走 `dispatchSubAgents()` 的完整 Agent 循环。实际模型调用仍使用当前 `ModelProvider`，并通过 `createPptdModelCaller()` 计入 `SharedTaskTreeBudget`。
+- **调度归属**：当前采用 PPTD 专用编排器 `generatePptdDeck()`，复用 `SubAgentScheduler` 的有界 FIFO 与 5 并发上限，不走 `dispatchSubAgents()` 的完整 Agent 循环。`createPptdModelCaller()` 仍直接调用当前 `ModelProvider`，尚未继承 `runQuery()` 的续写、预算、账本与快照能力；这是明确保留的中期架构债务，不应继续在管线内复制第二套 runtime。
 - **结构化输出**：阶段 ① 采用跨网关基线：严格 JSON 提示、标准 `JSON.parse`、运行时字段校验和一次纠错。暂不把 provider-native structured output 作为正确性前提，避免 OpenAI 兼容网关能力漂移；以后可作为同一接口下的优化路径。
 - **主题来源**：模型只选择 `themeId`，代码从 `business-light`、`business-dark`、`editorial`、`data` 四个受控预设解析出 `PptdTheme`。显式用户选择优先，模型值无效时按 brief 确定性推断。
-- **失败页占位**：阶段 ④ 对校验错误及文本溢出、低对比度、小字号、非法颜色、未解析 token、遮挡等可修复 warning 最多处理两轮；仍失败则由代码生成保留原始结论和要点的纯文本页，并在 `pageReports` 与 warnings 中记录降级，不阻塞整份交付。
+- **失败页占位**：阶段 ④ 对校验错误及文本溢出、低对比度、小字号、非法颜色、未解析 token、遮挡等可修复问题最多处理两轮；仍失败则由代码生成保留原始结论和要点的安全版式，在 `pageReports`、artifact 顶部质量报告与 warnings 中记录降级，不阻塞整份交付。
+- **检查点**：已选择桌面工作区时，设计、大纲和每个完成页面立即写入 `.solidify/pptd-checkpoints/<source-hash>/deck.pptd + pages/*.page`。相同输入重试时先校验 source/page hash，再复用检查点；Web 或无工作区时保持内存交付。
+
+### 可靠性边界
+
+逐页模型生成是概率事件，整套演示文稿不能采用“所有页面都成功才交付”的合取式终态。以 23 页、单页成功率 87% 为例，整套一次通过率只有 `0.87^23 ≈ 4%`；即使单页达到 95%，整套也只有 `0.95^23 ≈ 31%`。要让整套达到 90%，单页成功率必须达到约 `99.55%`，这不应成为 LLM 页面生成器的工程假设。
+
+因此终态规则固定为：
+
+- 模型输出截断、空输出、页面解析失败、页面级校验失败和视觉审阅不通过属于内容质量问题，经过有界修复后使用确定性安全版式并显式报告。
+- 网络、鉴权、用户取消、工作区检查点写入失败以及确定性装配自身失败属于技术故障，必须中止并保留已写入检查点。
+- 不再通过增加 fail-closed 页面 guard 或调整固定 token 常数来追求整套成功率；运行时能力的复用作为后续架构工作单独推进。
 
 实现位于 `src/lib/pptd/pipeline.ts`、`theme-presets.ts` 和 `artifact.ts`。最终结果直接包含单个 `type="slides"` 的 bundle artifact 描述，上层入口无需再让模型复述整份 deck。

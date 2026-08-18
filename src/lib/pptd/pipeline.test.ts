@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { ProviderRegistry, type CompletionRequest, type ModelProvider } from '../model'
 import { SharedTaskTreeBudget } from '../engine/sub-agent/budget'
 import type { QueryContext } from '../engine/types'
-import { parsePptdArtifactContent } from './artifact'
+import { parsePptdArtifactContent, parsePptdArtifactContentDetailed } from './artifact'
 import { createPptdModelCaller, generatePptdDeck, runPptdDeckPipeline, type PptdModelCall } from './pipeline'
 
 const OUTLINE = JSON.stringify({
@@ -256,7 +256,7 @@ elements:
         calls.push(call)
         if (call.stage === 'design') return { text: DESIGN }
         if (call.stage === 'outline') throw new Error('PPTD outline 输出达到 token 上限')
-        return { text: validPage(call.pageIndex === 0 ? '技术方案' : `第 ${call.pageIndex + 1} 页`) }
+        return { text: validPage(call.pageIndex === 0 ? '技术方案' : `第 ${(call.pageIndex ?? 0) + 1} 页`) }
       },
     })
 
@@ -267,10 +267,50 @@ elements:
     expect(result.assembly.validation.valid).toBe(true)
   })
 
-  it('fails explicitly instead of silently delivering a text fallback after repair exhaustion', async () => {
+  it('falls back instead of aborting when design and outline empty-output retries are exhausted', async () => {
+    const calls: PptdModelCall[] = []
+    const result = await generatePptdDeck({ brief: '# 空响应恢复\n生成可交付方案', maxPages: 2 }, {
+      callModel: async (call) => {
+        calls.push(call)
+        if (call.stage === 'design' || call.stage === 'outline') {
+          throw new Error(`PPTD ${call.stage} 模型连续 2 次返回空内容`)
+        }
+        return { text: validPage(`第 ${(call.pageIndex ?? 0) + 1} 页`) }
+      },
+    })
+
+    expect(calls.filter((call) => call.stage === 'design')).toHaveLength(1)
+    expect(calls.filter((call) => call.stage === 'outline')).toHaveLength(1)
+    expect(result.project.pages).toHaveLength(2)
+    expect(result.warnings.some((warning) => warning.includes('确定性设计规范'))).toBe(true)
+    expect(result.warnings.some((warning) => warning.includes('确定性大纲'))).toBe(true)
+    expect(result.assembly.validation.valid).toBe(true)
+  })
+
+  it('keeps a structurally valid deck when visual review returns empty content after retries', async () => {
+    const result = await generatePptdDeck({ brief: '生成一页并容忍审阅空响应' }, {
+      visualReview: { visionAvailable: true, maxRounds: 2 },
+      callModel: async (call) => {
+        if (call.stage === 'design') return { text: DESIGN }
+        if (call.stage === 'outline') {
+          return { text: JSON.stringify({
+            title: '审阅恢复', audience: '客户', goal: '交付', themeId: 'business-light',
+            pages: [{ pageType: 'content', intent: '方案结论', keyPoints: ['证据'] }],
+          }) }
+        }
+        if (call.stage === 'review') throw new Error('PPTD review 模型连续 2 次返回空内容')
+        return { text: validPage('方案结论') }
+      },
+    })
+
+    expect(result.assembly.validation.valid).toBe(true)
+    expect(result.warnings.some((warning) => warning.includes('已保留结构合法版本'))).toBe(true)
+  })
+
+  it('delivers a visible deterministic fallback after repair exhaustion', async () => {
     let repairCalls = 0
     const progress: string[] = []
-    const generation = generatePptdDeck({ brief: '生成一页方案' }, {
+    const result = await generatePptdDeck({ brief: '生成一页方案' }, {
       maxRepairRounds: 2,
       onProgress(event) { progress.push(event.message) },
       callModel: async (call) => {
@@ -286,9 +326,81 @@ elements:
       },
     })
 
-    await expect(generation).rejects.toThrow('已拒绝降级为纯文本页')
     expect(repairCalls).toBe(2)
-    expect(progress.at(-1)).toContain('保留最新预览并停止交付')
+    expect(progress).toContain('1 页已切换为安全版式，继续交付完整演示文稿')
+    expect(result.pageReports[0]).toMatchObject({ status: 'fallback', attempts: 3 })
+    expect(result.assembly.validation.valid).toBe(true)
+    expect(result.warnings).toContain('1 页在 2 轮修复后使用安全版式：第 1 页')
+    expect(parsePptdArtifactContentDetailed(result.artifact.content).qualityReport?.fallbackPages[0]).toMatchObject({
+      pageIndex: 0,
+      pagePath: 'pages/01.page',
+    })
+  })
+
+  it('still fails the deck for a technical model transport error', async () => {
+    await expect(generatePptdDeck({ brief: '生成一页方案' }, {
+      callModel: async (call) => {
+        if (call.stage === 'design') return { text: DESIGN }
+        if (call.stage === 'outline') return { text: JSON.stringify({
+          title: '方案', audience: '客户', goal: '交付', themeId: 'business-light',
+          pages: [{ pageType: 'content', intent: '结论', keyPoints: ['证据'] }],
+        }) }
+        throw new Error('network unavailable')
+      },
+    })).rejects.toThrow('network unavailable')
+  })
+
+  it('persists canonical checkpoints and reuses completed pages on retry', async () => {
+    const files = new Map<string, string>()
+    let firstCalls = 0
+    const input = { brief: '可恢复的一页方案' }
+    const first = await generatePptdDeck(input, {
+      onCheckpoint: async ({ path, content }) => { files.set(path, content) },
+      loadCheckpoint: async (path) => files.get(path),
+      callModel: async (call) => {
+        firstCalls++
+        if (call.stage === 'design') return { text: DESIGN }
+        if (call.stage === 'outline') return { text: JSON.stringify({
+          title: '检查点方案', audience: '客户', goal: '交付', themeId: 'business-light',
+          pages: [{ pageType: 'content', intent: '检查点结论', keyPoints: ['证据'] }],
+        }) }
+        return { text: validPage('检查点结论') }
+      },
+    })
+    expect(firstCalls).toBe(3)
+    expect([...files.keys()]).toEqual(expect.arrayContaining([
+      expect.stringMatching(/\/deck\.pptd$/),
+      expect.stringMatching(/\/pages\/01\.page$/),
+    ]))
+
+    let retryCalls = 0
+    const retry = await generatePptdDeck(input, {
+      onCheckpoint: async ({ path, content }) => { files.set(path, content) },
+      loadCheckpoint: async (path) => files.get(path),
+      callModel: async () => {
+        retryCalls++
+        throw new Error('checkpoint should avoid model calls')
+      },
+    })
+
+    expect(retryCalls).toBe(0)
+    expect(retry.project.pages).toEqual(first.project.pages)
+    expect(retry.warnings).toContain('已从工作区检查点恢复视觉系统和大纲')
+    expect(retry.warnings).toContain('已从工作区检查点恢复 1/1 页')
+  })
+
+  it('treats a checkpoint write failure as a technical failure', async () => {
+    await expect(generatePptdDeck({ brief: '检查点写入失败' }, {
+      onCheckpoint: async () => { throw new Error('disk full') },
+      callModel: async (call) => {
+        if (call.stage === 'design') return { text: DESIGN }
+        if (call.stage === 'outline') return { text: JSON.stringify({
+          title: '方案', audience: '客户', goal: '交付', themeId: 'business-light',
+          pages: [{ pageType: 'content', intent: '结论', keyPoints: ['证据'] }],
+        }) }
+        return { text: validPage('结论') }
+      },
+    })).rejects.toThrow('disk full')
   })
 
   it('keeps a valid warning-only page unchanged without spending repair calls', async () => {
@@ -391,6 +503,34 @@ elements:
     expect(progress.map((event) => event.current)).toEqual([0, 1, 2])
     expect(progress.at(-1)?.message).toContain('已完成 2/2 页')
   })
+
+  it('throttles full deck previews while continuing to report every completed page', async () => {
+    const pageProgress: Array<{ current: number; preview: boolean }> = []
+    const pages = Array.from({ length: 8 }, (_, index) => ({
+      pageType: 'content', intent: `结论 ${index + 1}`, keyPoints: [`证据 ${index + 1}`],
+    }))
+
+    await generatePptdDeck({ brief: '生成八页汇报' }, {
+      concurrency: 1,
+      onProgress(event) {
+        if (event.stage === 'page' && event.current > 0) {
+          pageProgress.push({ current: event.current, preview: Boolean(event.preview) })
+        }
+      },
+      callModel: async (call) => {
+        if (call.stage === 'design') return { text: DESIGN }
+        if (call.stage === 'outline') {
+          return { text: JSON.stringify({
+            title: '八页汇报', audience: '管理层', goal: '决策', themeId: 'business-light', pages,
+          }) }
+        }
+        return { text: validPage(`第 ${(call.pageIndex ?? 0) + 1} 页`) }
+      },
+    })
+
+    expect(pageProgress.map((event) => event.current)).toEqual([1, 2, 3, 4, 5, 6, 7, 8])
+    expect(pageProgress.filter((event) => event.preview).map((event) => event.current)).toEqual([1, 4, 8])
+  })
 })
 
 describe('PPTD QueryContext model adapter', () => {
@@ -463,6 +603,88 @@ describe('PPTD QueryContext model adapter', () => {
     expect(requests[0].messages[0].content).toBe('prompt')
     expect(requests[0].tools).toBeUndefined()
     expect(budget.snapshot()).toMatchObject({ used: 0, byRun: {} })
+  })
+
+  it('retries an empty provider stream once and includes both attempts in usage', async () => {
+    const requests: CompletionRequest[] = []
+    const provider: ModelProvider = {
+      name: 'empty-once',
+      metadata: {
+        name: 'empty-once', displayName: 'Empty Once', supportsVision: false, supportsTools: true,
+        supportsStreaming: true, defaultMaxTokens: 4096, models: ['empty-once-model'],
+      },
+      async *stream(request) {
+        requests.push(request)
+        if (requests.length === 1) {
+          yield { type: 'message_end', usage: { inputTokens: 7, outputTokens: 0, totalTokens: 7 }, stopReason: 'end_turn' }
+          return
+        }
+        yield { type: 'content_delta', delta: '{"ok":true}' }
+        yield { type: 'message_end', usage: { inputTokens: 7, outputTokens: 3, totalTokens: 10 }, stopReason: 'end_turn' }
+      },
+    }
+    const registry = new ProviderRegistry()
+    registry.register('empty-once', provider)
+    const ctx = {
+      runId: 'root', model: { provider: 'empty-once', model: 'empty-once-model' }, providerRegistry: registry,
+    } as unknown as QueryContext
+
+    const response = await createPptdModelCaller(ctx)({
+      stage: 'outline', runId: 'pptd:outline:1', system: 'system', prompt: 'prompt', maxTokens: 100,
+    }, new AbortController().signal)
+
+    expect(requests).toHaveLength(2)
+    expect(response).toEqual({
+      text: '{"ok":true}',
+      usage: { inputTokens: 14, outputTokens: 3, totalTokens: 17 },
+    })
+  })
+
+  it('caps empty-output retries and does not retry max-token responses', async () => {
+    let emptyRequests = 0
+    const emptyProvider: ModelProvider = {
+      name: 'always-empty',
+      metadata: {
+        name: 'always-empty', displayName: 'Always Empty', supportsVision: false, supportsTools: true,
+        supportsStreaming: true, defaultMaxTokens: 4096, models: ['always-empty-model'],
+      },
+      async *stream() {
+        emptyRequests++
+        yield { type: 'message_end', stopReason: 'end_turn' }
+      },
+    }
+    const emptyRegistry = new ProviderRegistry()
+    emptyRegistry.register('always-empty', emptyProvider)
+    const emptyCtx = {
+      runId: 'root', model: { provider: 'always-empty', model: 'always-empty-model' }, providerRegistry: emptyRegistry,
+    } as unknown as QueryContext
+    const request: PptdModelCall = {
+      stage: 'page', runId: 'pptd:page:1', system: 'system', prompt: 'prompt', maxTokens: 100,
+    }
+
+    await expect(createPptdModelCaller(emptyCtx)(request, new AbortController().signal))
+      .rejects.toThrow('连续 2 次返回空内容')
+    expect(emptyRequests).toBe(2)
+
+    let limitedRequests = 0
+    const limitedProvider: ModelProvider = {
+      ...emptyProvider,
+      name: 'limited',
+      metadata: { ...emptyProvider.metadata, name: 'limited', models: ['limited-model'] },
+      async *stream() {
+        limitedRequests++
+        yield { type: 'message_end', stopReason: 'max_tokens' }
+      },
+    }
+    const limitedRegistry = new ProviderRegistry()
+    limitedRegistry.register('limited', limitedProvider)
+    const limitedCtx = {
+      runId: 'root', model: { provider: 'limited', model: 'limited-model' }, providerRegistry: limitedRegistry,
+    } as unknown as QueryContext
+
+    await expect(createPptdModelCaller(limitedCtx)(request, new AbortController().signal))
+      .rejects.toThrow('输出达到 token 上限')
+    expect(limitedRequests).toBe(1)
   })
 
   it('sends data URL image blocks only to a vision-capable provider', async () => {

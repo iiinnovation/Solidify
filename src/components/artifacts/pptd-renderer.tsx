@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import { AlertTriangle, ChevronLeft, ChevronRight } from 'lucide-react'
 import { PptdRenderer } from '@/lib/pptd/renderer'
-import { parsePptdArtifactContentDetailed, type PptdArtifactParseDiagnostic } from '@/lib/pptd/artifact'
+import {
+  parsePptdArtifactContentDetailed,
+  type PptdArtifactParseDiagnostic,
+  type PptdArtifactQualityReport,
+} from '@/lib/pptd/artifact'
 import { RunLedger, type JsonValue } from '@/lib/harness/ledger'
 import { ScrollArea } from '@/components/ui/scroll-area'
 
@@ -31,7 +35,7 @@ export function PresentationArtifactRenderer({ content, streaming, artifactId, r
             生成中
           </div>
         )}
-        <PptdDeckView project={result.project} />
+        <PptdDeckView project={result.project} qualityReport={result.qualityReport} />
       </div>
     )
   }
@@ -82,12 +86,19 @@ function recordParseFailure(runId: string, artifactId: string | undefined, diagn
   }
 }
 
-function PptdDeckView({ project }: { project: NonNullable<ReturnType<typeof parsePptdArtifactContentDetailed>['project']> }) {
+function PptdDeckView({
+  project,
+  qualityReport,
+}: {
+  project: NonNullable<ReturnType<typeof parsePptdArtifactContentDetailed>['project']>
+  qualityReport?: PptdArtifactQualityReport
+}) {
   const [rawPageIndex, setPageIndex] = useState(0)
   const pageIndex = Math.min(rawPageIndex, Math.max(0, project.pages.length - 1))
   if (project.pages.length === 0) return <div className="h-full flex items-center justify-center text-sm text-text-tertiary">PPTD 没有页面</div>
   return (
     <div className="h-full flex flex-col" data-pptd-artifact={project.title}>
+      {qualityReport && <QualityReport report={qualityReport} />}
       <ScrollArea className="flex-1 min-h-0 bg-black/5">
         <div className="min-h-full flex items-center justify-center p-4">
           <div className="w-full min-w-0 max-w-[960px] overflow-hidden rounded-lg bg-white shadow-lg">
@@ -104,5 +115,28 @@ function PptdDeckView({ project }: { project: NonNullable<ReturnType<typeof pars
         {project.pages.map((_page, index) => index === pageIndex ? null : <PptdRenderer key={index} project={project} pageIndex={index} />)}
       </div>
     </div>
+  )
+}
+
+function QualityReport({ report }: { report: PptdArtifactQualityReport }) {
+  const affected = [...report.fallbackPages, ...report.warningPages]
+  const fallbackNumbers = report.fallbackPages.map((page) => page.pageIndex + 1)
+  const summary = report.fallbackPages.length > 0
+    ? `${report.fallbackPages.length} 页使用安全版式：第 ${fallbackNumbers.join('、')} 页`
+    : `${report.warningPages.length} 页存在非阻塞质量提示`
+  return (
+    <details className="shrink-0 border-b border-warning/30 bg-warning/10 px-4 py-2 text-xs text-text-primary" data-pptd-quality-report>
+      <summary className="flex cursor-pointer list-none items-center gap-2 font-medium">
+        <AlertTriangle size={15} className="shrink-0 text-warning" />
+        <span>{summary}</span>
+      </summary>
+      <div className="mt-2 max-h-28 space-y-1 overflow-auto pl-6 text-text-secondary">
+        {affected.map((page) => (
+          <p key={`${page.status}-${page.pagePath}`}>
+            第 {page.pageIndex + 1} 页：{page.reasons.join('；') || (page.status === 'fallback' ? '模型页面未通过质量检查' : '存在非阻塞提示')}
+          </p>
+        ))}
+      </div>
+    </details>
   )
 }

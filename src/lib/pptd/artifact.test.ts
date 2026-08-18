@@ -68,4 +68,17 @@ describe('PPTD artifact bundle', () => {
     expect(serialized).not.toContain('</solidify-artifact>')
     expect(parsePptdArtifactContent(serialized)?.pages[0].elements[0].content?.text).toBe('</solidify-artifact>')
   })
+
+  it('round-trips the optional page quality report', () => {
+    const raw = JSON.stringify({
+      manifest: 'version: v2\ntitle: Bundle\nsize: [960, 540]\npages: [pages/01.page]\n',
+      pages: { 'pages/01.page': 'elements: []\n' },
+      qualityReport: {
+        fallbackPages: [{ pageIndex: 0, pagePath: 'pages/01.page', status: 'fallback', reasons: ['输出达到 token 上限'] }],
+        warningPages: [],
+      },
+    })
+    expect(parsePptdArtifactContentDetailed(raw).qualityReport?.fallbackPages[0].reasons)
+      .toEqual(['输出达到 token 上限'])
+  })
 })

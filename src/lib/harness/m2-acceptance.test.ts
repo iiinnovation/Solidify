@@ -187,6 +187,21 @@ describe('M2 harness acceptance', () => {
     expect(new PolicyEngine({ user: { dispatch_agent: 'ask' } }).evaluate(dispatchTool, call, context).kind).toBe('ask')
   })
 
+  it('generate_pptd 内部检查点默认放行但仍受显式策略约束', () => {
+    const pptdTool = {
+      ...writeTool,
+      name: 'generate_pptd',
+      availability: 'online-only' as const,
+      destructive: false,
+      requiresConfirmation: false,
+    }
+    const call = { id: 'pptd', name: pptdTool.name, input: { brief: 'deck' } }
+
+    expect(new PolicyEngine().evaluate(pptdTool, call, context).kind).toBe('allow')
+    expect(new PolicyEngine({ user: { generate_pptd: 'ask' } }).evaluate(pptdTool, call, context).kind).toBe('ask')
+    expect(new PolicyEngine({ project: { generate_pptd: 'deny' } }).evaluate(pptdTool, call, context).kind).toBe('deny')
+  })
+
   it('prompt 权限会进入审批路径', () => {
     const readTool = { ...writeTool, readOnly: true, destructive: false, requiresConfirmation: false }
     const permissions: PermissionMap = new Map([['fs:write', { scope: 'fs:write', status: 'prompt' }]])

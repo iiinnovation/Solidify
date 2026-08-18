@@ -104,6 +104,37 @@ afterEach(() => {
 })
 
 describe('M2 Harness query integration', () => {
+  it('uses the de-duplicated progress budget instead of cumulative prompt telemetry', async () => {
+    const expensiveToolTurn = (id: string): CompletionChunk[] => [
+      { type: 'tool_call_start', id, name: 'read_item' },
+      { type: 'tool_call_end', id, input: {} },
+      {
+        type: 'message_end',
+        usage: { inputTokens: 60_000, outputTokens: 1, totalTokens: 60_001 },
+        stopReason: 'tool_use',
+      },
+    ]
+    const provider = scriptedProvider([
+      expensiveToolTurn('read-1'),
+      expensiveToolTurn('read-2'),
+      finalTurn,
+    ])
+    const events = await collect(makeContext('m2-progress-budget', provider, [makeTool('read_item', async () => ({ success: true, content: 'ok' }))]))
+
+    expect(events.at(-1)?.type).toBe('run.completed')
+    expect(events.map(event => event.type)).not.toContain('run.failed')
+  })
+
+  it('reports a budget guard stop as exhausted rather than failed', async () => {
+    // The normal query check is not involved here: the before-model guard sees
+    // the zero-sized run budget and exercises its terminal error path.
+    const context = makeContext('m2-budget-guard-zero', scriptedProvider([finalTurn]), [])
+    const guarded = await collect({ ...context, limits: { ...context.limits, maxTokens: 0 } })
+
+    expect(guarded.at(-1)?.type).toBe('run.exhausted')
+    expect(guarded.map(event => event.type)).not.toContain('run.failed')
+  })
+
   it('persists the successful tool lifecycle in authoritative order', async () => {
     const runId = 'm2-read-success'
     const execute = vi.fn(async (): Promise<ToolResult> => ({ success: true, content: 'read complete' }))

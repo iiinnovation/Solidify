@@ -40,6 +40,22 @@ describe('PresentationArtifactRenderer', () => {
     expect(document.querySelector('[data-pptd-artifact="Inline deck"]')).toBeTruthy()
   })
 
+  it('shows fallback pages and reasons above the deck', () => {
+    const bundle = JSON.stringify({
+      manifest: 'version: v2\ntitle: Quality deck\nsize: [960, 540]\ntheme: {colors: {}, textStyles: {}}\npages: [pages/01.page]\n',
+      pages: { 'pages/01.page': 'elements: []\n' },
+      qualityReport: {
+        fallbackPages: [{ pageIndex: 0, pagePath: 'pages/01.page', status: 'fallback', reasons: ['页面输出达到 token 上限'] }],
+        warningPages: [],
+      },
+    })
+    render(<PresentationArtifactRenderer content={bundle} />)
+
+    expect(screen.getByText('1 页使用安全版式：第 1 页')).toBeTruthy()
+    fireEvent.click(screen.getByText('1 页使用安全版式：第 1 页'))
+    expect(screen.getByText('第 1 页：页面输出达到 token 上限')).toBeTruthy()
+  })
+
   it('migrates legacy slides onto the PPTD renderer', () => {
     render(<PresentationArtifactRenderer content={JSON.stringify({ slides: [{ layout: 'title', title: 'Legacy title' }] })} />)
     expect(screen.getByText('Legacy title')).toBeTruthy()

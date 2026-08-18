@@ -3,7 +3,7 @@ import { PPTD_DESIGN_SYSTEM_IDS } from '../../pptd/design-resources'
 import { pptdMediaDataUrl } from '../../pptd/media'
 import { runPptdDeckPipeline, type PptdDeckPipelineResult } from '../../pptd/pipeline'
 import { PPTD_THEME_IDS, type PptdThemeId } from '../../pptd/theme-presets'
-import { readWorkspaceBytes } from '@/lib/tauri'
+import { readWorkspaceBytes, readWorkspaceFile, writeWorkspaceFile } from '@/lib/tauri'
 import type { Tool } from '../types'
 
 export interface GeneratePptdInput {
@@ -21,7 +21,7 @@ export interface GeneratePptdOutput {
   directAssistantContent: true
   contentHandle: string
   artifact: { title: string; type: 'slides'; path: string }
-  pageReports: Array<{ pageIndex: number; status: 'generated' | 'repaired'; attempts: number }>
+  pageReports: Array<{ pageIndex: number; status: 'generated' | 'repaired' | 'fallback'; attempts: number }>
   warnings: string[]
   usage: PptdDeckPipelineResult['usage']
 }
@@ -62,14 +62,14 @@ export function createGeneratePptdTool(getParent: () => QueryContext): Tool<Gene
         artifactPath: { type: 'string', minLength: 1, maxLength: 240 },
       },
     },
-    // Model inference changes no external state; the resulting artifact is
-    // materialized later by the existing chat artifact path.
-    readOnly: true,
+    // With a selected desktop workspace the tool persists resumable checkpoints
+    // under .solidify; the final user-facing artifact is still materialized by chat.
+    readOnly: false,
     concurrencySafe: false,
     destructive: false,
     requiresConfirmation: false,
     availability: 'online-only',
-    permissions: [],
+    permissions: ['fs:write'],
     timeoutMs: GENERATE_PPTD_TIMEOUT_MS,
     async execute(input, ctx, signal, onProgress) {
       if (started) throw new Error('本次运行已启动过 generate_pptd；请等待已有生成结束，不要从头重复生成。')
@@ -77,11 +77,28 @@ export function createGeneratePptdTool(getParent: () => QueryContext): Tool<Gene
       try {
         const parent = getParent()
         const workspaceMedia = await loadWorkspaceMedia(input.mediaPaths, parent, signal)
+        const checkpointIO = parent.workspace ? {
+          async onCheckpoint(checkpoint: { path: string; content: string }) {
+            parent.workspace!.resolve(checkpoint.path)
+            await writeWorkspaceFile(checkpoint.path, checkpoint.content, parent.cwd)
+          },
+          async loadCheckpoint(path: string) {
+            parent.workspace!.resolve(path)
+            try {
+              const result = await readWorkspaceFile(path, parent.cwd)
+              return result.binary || result.truncated ? undefined : result.content ?? undefined
+            } catch (error) {
+              if (isMissingCheckpoint(error)) return undefined
+              throw error
+            }
+          },
+        } : {}
         const result = await runPptdDeckPipeline(parent, {
           ...input,
           media: { ...(parent.pptdMedia ?? {}), ...workspaceMedia },
         }, {
           signal,
+          ...checkpointIO,
           onProgress(progress) {
             onProgress?.({
               phase: `pptd_${progress.stage}`,
@@ -165,4 +182,9 @@ function uniqueMediaPath(media: Readonly<Record<string, unknown>>, requested: st
   let index = 2
   while (`${stem}-${index}${extension}` in media) index++
   return `${stem}-${index}${extension}`
+}
+
+function isMissingCheckpoint(error: unknown): boolean {
+  const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase()
+  return message.includes('not found') || message.includes('no such file') || message.includes('不存在')
 }

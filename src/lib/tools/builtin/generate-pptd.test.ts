@@ -6,10 +6,16 @@ import type { ToolUseContext } from '../types'
 
 const mocks = vi.hoisted(() => ({
   readWorkspaceBytes: vi.fn(),
+  readWorkspaceFile: vi.fn(),
+  writeWorkspaceFile: vi.fn(),
   runPptdDeckPipeline: vi.fn(),
 }))
 
-vi.mock('@/lib/tauri', () => ({ readWorkspaceBytes: mocks.readWorkspaceBytes }))
+vi.mock('@/lib/tauri', () => ({
+  readWorkspaceBytes: mocks.readWorkspaceBytes,
+  readWorkspaceFile: mocks.readWorkspaceFile,
+  writeWorkspaceFile: mocks.writeWorkspaceFile,
+}))
 vi.mock('../../pptd/pipeline', () => ({ runPptdDeckPipeline: mocks.runPptdDeckPipeline }))
 
 import { createGeneratePptdTool } from './generate-pptd'
@@ -47,6 +53,10 @@ function toolContext(context: QueryContext): ToolUseContext {
 describe('generate_pptd workspace media', () => {
   beforeEach(() => {
     mocks.readWorkspaceBytes.mockReset()
+    mocks.readWorkspaceFile.mockReset()
+    mocks.readWorkspaceFile.mockRejectedValue(new Error('not found'))
+    mocks.writeWorkspaceFile.mockReset()
+    mocks.writeWorkspaceFile.mockResolvedValue(1)
     mocks.runPptdDeckPipeline.mockReset()
     mocks.runPptdDeckPipeline.mockResolvedValue({
       artifact: { title: 'Deck', type: 'slides', path: '03-交付物/deck.pptd', content: '{}', envelope: '<artifact />' },
@@ -71,6 +81,26 @@ describe('generate_pptd workspace media', () => {
       'media/chart.png': 'data:image/png;base64,iVBORw0KGgo=',
       'media/chart-2.png': Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]),
     })
+  })
+
+  it('wires resumable checkpoint reads and writes to the selected workspace', async () => {
+    const context = parent()
+    mocks.readWorkspaceFile.mockResolvedValue({ content: 'checkpoint', binary: false, bytes: 10, truncated: false })
+
+    await createGeneratePptdTool(() => context).execute(
+      { brief: 'deck' }, toolContext(context), new AbortController().signal,
+    )
+
+    const options = mocks.runPptdDeckPipeline.mock.calls[0][2] as {
+      onCheckpoint(checkpoint: { path: string; content: string }): Promise<void>
+      loadCheckpoint(path: string): Promise<string | undefined>
+    }
+    await expect(options.loadCheckpoint('.solidify/pptd-checkpoints/key/deck.pptd')).resolves.toBe('checkpoint')
+    await options.onCheckpoint({ path: '.solidify/pptd-checkpoints/key/pages/01.page', content: 'elements: []' })
+    expect(mocks.readWorkspaceFile).toHaveBeenCalledWith('.solidify/pptd-checkpoints/key/deck.pptd', '/workspace')
+    expect(mocks.writeWorkspaceFile).toHaveBeenCalledWith(
+      '.solidify/pptd-checkpoints/key/pages/01.page', 'elements: []', '/workspace',
+    )
   })
 
   it('rejects unsupported workspace media before model generation', async () => {

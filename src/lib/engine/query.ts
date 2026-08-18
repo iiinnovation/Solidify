@@ -151,7 +151,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       // Note: streamModel() will call buildMessages() internally
       logger.log('turn.preparing', { turn })
       if (harness) {
-        const beforeModel = await harness.hooks.waterfall('before_model_call', { messages: currentMessages, usage }, { type: 'before_model_call', runId: ctx.runId, signal: runCtx.signal, onHookError: (id, error) => logger.warn('hook.failed', { id, error: String(error) }) })
+        const beforeModel = await harness.hooks.waterfall('before_model_call', { messages: currentMessages, usage, budgetTokens }, { type: 'before_model_call', runId: ctx.runId, signal: runCtx.signal, onHookError: (id, error) => logger.warn('hook.failed', { id, error: String(error) }) })
         if (beforeModel.action === 'abort') throw new Error(beforeModel.reason)
         if (beforeModel.action === 'continue' && isMessageEnvelope(beforeModel.value)) currentMessages = [...beforeModel.value.messages]
       }
@@ -204,7 +204,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       // Truncated tool calls are not resumable — their JSON arguments are cut
       // mid-object — so those still end the run rather than risk replaying a
       // malformed call.
-      if (response.stopReason === 'max_tokens' && response.toolCalls.length === 0 && continuations < MAX_CONTINUATIONS) {
+      if (response.stopReason === 'max_tokens' && response.toolCalls.length === 0 && response.text.trim() && continuations < MAX_CONTINUATIONS) {
         // The whole partial answer travels as ONE assistant message: providers
         // reject two assistant turns in a row, and Anthropic rejects a prefill
         // that ends in whitespace.
@@ -389,6 +389,10 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       })
       yield { type: 'run.exhausted', reason: 'max_tokens', usage: { ...usage } }
       logger.log('run.exhausted', { reason: 'task_tree_max_tokens', usage })
+    } else if (error instanceof Error && error.message === 'Run token budget exhausted') {
+      appendTerminalFact(harness, logger, 'run.exhausted', { reason: 'max_tokens', usage, budgetTokens })
+      yield { type: 'run.exhausted', reason: 'max_tokens', usage: { ...usage } }
+      logger.log('run.exhausted', { reason: 'progress_budget', usage, budgetTokens })
     } else if (ctx.signal.aborted) {
       appendTerminalFact(harness, logger, 'run.failed', { kind: 'aborted', message: 'Run was aborted by user', usage })
       yield {

@@ -19,6 +19,19 @@ export interface PptdArtifactParseResult {
   project: PptdProject | null
   diagnostics: PptdArtifactParseDiagnostic[]
   repaired: boolean
+  qualityReport?: PptdArtifactQualityReport
+}
+
+export interface PptdArtifactQualityPage {
+  pageIndex: number
+  pagePath: string
+  status: 'fallback' | 'warning'
+  reasons: string[]
+}
+
+export interface PptdArtifactQualityReport {
+  fallbackPages: PptdArtifactQualityPage[]
+  warningPages: PptdArtifactQualityPage[]
 }
 
 /**
@@ -58,7 +71,12 @@ export function parsePptdArtifactContentDetailed(raw: string): PptdArtifactParse
   if (parsedJson !== undefined) {
     if (isBundle(parsedJson)) {
       try {
-        return { project: parsePptdProject(parsedJson), diagnostics, repaired }
+        return {
+          project: parsePptdProject(parsedJson),
+          diagnostics,
+          repaired,
+          qualityReport: parseQualityReport((parsedJson as unknown as Record<string, unknown>).qualityReport),
+        }
       } catch (error) {
         diagnostics.push(toDiagnostic('bundle-json', error, jsonText))
       }
@@ -91,7 +109,14 @@ export function parsePptdArtifactContentDetailed(raw: string): PptdArtifactParse
 }
 
 /** Serializes the canonical project into the self-contained artifact bundle. */
-export function serializePptdArtifactContent(project: PptdProject): string {
+export function serializePptdArtifactContent(project: PptdProject, qualityReport?: PptdArtifactQualityReport): string {
+  const { manifest, pages, media } = serializePptdProjectFiles(project)
+  // Prevent user-authored text from closing the surrounding artifact envelope.
+  return JSON.stringify({ manifest, pages, media, ...(qualityReport ? { qualityReport } : {}) }).replace(/</g, '\\u003c')
+}
+
+/** Serializes the canonical on-disk `deck.pptd + pages/*.page + media/` files. */
+export function serializePptdProjectFiles(project: PptdProject): Required<Pick<PptdFiles, 'manifest' | 'pages' | 'media'>> {
   const pages = Object.fromEntries(project.pagePaths.map((path, index) => [
     path,
     dumpYaml(project.pages[index], { noRefs: true, lineWidth: -1 }),
@@ -109,12 +134,30 @@ export function serializePptdArtifactContent(project: PptdProject): string {
     if (!dataUrl) throw new Error(`无法序列化 PPTD media：${path}`)
     return [path, dataUrl]
   }))
-  // Prevent user-authored text from closing the surrounding artifact envelope.
-  return JSON.stringify({ manifest, pages, media }).replace(/</g, '\\u003c')
+  return { manifest, pages, media }
 }
 
 function isBundle(value: unknown): value is PptdFiles {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value) && typeof (value as Record<string, unknown>).manifest === 'string' && (value as Record<string, unknown>).pages && typeof (value as Record<string, unknown>).pages === 'object')
+}
+
+function parseQualityReport(value: unknown): PptdArtifactQualityReport | undefined {
+  if (!isRecord(value)) return undefined
+  const fallbackPages = parseQualityPages(value.fallbackPages, 'fallback')
+  const warningPages = parseQualityPages(value.warningPages, 'warning')
+  if (fallbackPages.length === 0 && warningPages.length === 0) return undefined
+  return { fallbackPages, warningPages }
+}
+
+function parseQualityPages(value: unknown, status: PptdArtifactQualityPage['status']): PptdArtifactQualityPage[] {
+  if (!Array.isArray(value)) return []
+  return value.flatMap((item) => {
+    if (!isRecord(item) || !Number.isInteger(item.pageIndex) || typeof item.pagePath !== 'string') return []
+    const reasons = Array.isArray(item.reasons)
+      ? item.reasons.filter((reason): reason is string => typeof reason === 'string' && Boolean(reason.trim())).map((reason) => reason.trim())
+      : []
+    return [{ pageIndex: item.pageIndex as number, pagePath: item.pagePath, status, reasons }]
+  })
 }
 
 function isMediaMap(value: unknown): value is Record<string, string | Uint8Array> {

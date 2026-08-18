@@ -1,10 +1,10 @@
 import { dump as dumpYaml, load as parseYaml } from 'js-yaml'
-import type { CompletionRequest, TokenUsage, UnifiedMessage } from '../model'
+import type { CompletionRequest, ModelError, TokenUsage, UnifiedMessage } from '../model'
 import { estimateTokens } from '../engine/context-budget'
 import { SubAgentScheduler, type ScheduledResult } from '../engine/sub-agent/scheduler'
 import type { QueryContext } from '../engine/types'
 import { assemblePptdProject, type PptdAssemblyResult } from './assemble'
-import { serializePptdArtifactContent } from './artifact'
+import { serializePptdArtifactContent, type PptdArtifactQualityReport } from './artifact'
 import {
   fallbackPptdDesignSpec,
   resolvePptdDesignSource,
@@ -27,6 +27,8 @@ import type { PptdDiagnostic, PptdPage, PptdProject } from './types'
 const MAX_OUTLINE_ATTEMPTS = 2
 const MAX_DESIGN_ATTEMPTS = 2
 const MAX_REPAIR_ROUNDS = 2
+const MAX_EMPTY_OUTPUT_ATTEMPTS = 2
+const PREVIEW_INTERVAL = 4
 const MAX_PIPELINE_CONCURRENCY = 5
 const DEFAULT_MAX_PAGES = 24
 const MAX_KEY_POINTS = 6
@@ -111,7 +113,7 @@ export interface PptdDeckPreview {
 export interface PptdPageGenerationReport {
   pageIndex: number
   pagePath: string
-  status: 'generated' | 'repaired'
+  status: 'generated' | 'repaired' | 'fallback'
   attempts: number
   diagnostics: PptdDiagnostic[]
 }
@@ -149,6 +151,15 @@ export interface GeneratePptdDeckOptions {
   maxRepairRounds?: number
   visualReview?: { visionAvailable: boolean; maxRounds?: number }
   onProgress?: (progress: PptdPipelineProgress) => void
+  onCheckpoint?: (checkpoint: PptdCheckpoint) => Promise<void>
+  loadCheckpoint?: (path: string) => Promise<string | undefined>
+}
+
+export interface PptdCheckpoint {
+  path: string
+  content: string
+  kind: 'manifest' | 'page'
+  pageIndex?: number
 }
 
 export interface RunPptdDeckPipelineOptions extends Omit<GeneratePptdDeckOptions, 'callModel' | 'signal'> {
@@ -170,6 +181,44 @@ interface PageState {
 
 interface RepairTarget {
   state: PageState
+}
+
+class PptdEmptyModelOutputError extends Error {
+  constructor(stage: PptdPipelineStage, attempts: number) {
+    super(`PPTD ${stage} 模型连续 ${attempts} 次返回空内容`)
+    this.name = 'PptdEmptyModelOutputError'
+  }
+}
+
+class PptdOutputLimitError extends Error {
+  constructor(stage: PptdPipelineStage) {
+    super(`PPTD ${stage} 输出达到 token 上限`)
+    this.name = 'PptdOutputLimitError'
+  }
+}
+
+class PptdContentGenerationError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'PptdContentGenerationError'
+  }
+}
+
+class PptdTechnicalModelError extends Error {
+  readonly modelError: ModelError
+
+  constructor(error: ModelError) {
+    super(`PPTD 模型调用失败：${error.message}`)
+    this.name = 'PptdTechnicalModelError'
+    this.modelError = error
+  }
+}
+
+interface PptdCheckpointMetadata {
+  schemaVersion: 1
+  sourceHash: string
+  design: PptdDesignSpec
+  outline: DeckOutline
 }
 
 /**
@@ -205,11 +254,30 @@ export async function generatePptdDeck(
   const designSource = resolvePptdDesignSource(`${input.brief}\n${input.materials ?? ''}`, input.designSystemId)
   const baseThemeId = input.themeId ?? inferPptdThemeId(`${input.brief}\n${input.materials ?? ''}`)
   const baseTheme = getPptdThemePreset(baseThemeId)
-  const design = await generateDesignSpec(input, designSource, baseTheme, mediaPrompt, media.images, callModel, signal, warnings, options.onProgress)
-  const outline = await generateOutline(input, design, maxPages, mediaPrompt, media.images, callModel, signal, warnings, options.onProgress)
+  const checkpointRoot = checkpointRootFor(input)
+  const sourceHash = checkpointSourceHash(input)
+  const savedCheckpoint = await loadCheckpointMetadata(options.loadCheckpoint, checkpointRoot, sourceHash)
+  let design: PptdDesignSpec | undefined
+  let outline: DeckOutline | undefined
+  if (savedCheckpoint) {
+    try {
+      design = normalizeDesignSpec(recordField(savedCheckpoint.design, 'checkpoint.design'), designSource, baseTheme)
+      outline = normalizeOutline(recordField(savedCheckpoint.outline, 'checkpoint.outline'), input, maxPages, [])
+      warnings.push('已从工作区检查点恢复视觉系统和大纲')
+    } catch {
+      design = undefined
+      outline = undefined
+    }
+  }
+  design ??= await generateDesignSpec(input, designSource, baseTheme, mediaPrompt, media.images, callModel, signal, warnings, options.onProgress)
+  outline ??= await generateOutline(input, design, maxPages, mediaPrompt, media.images, callModel, signal, warnings, options.onProgress)
   const theme = themeFromDesignSpec(getPptdThemePreset(outline.themeId), design)
   const scheduler = new SubAgentScheduler(concurrency)
   const previewStates = outline.pages.map((page, pageIndex) => pendingPreviewState(page, pageIndex, theme))
+  await saveCheckpointManifest(options.onCheckpoint, checkpointRoot, sourceHash, design, outline, theme, previewStates, media.values)
+  const restoredStates = await restoreCheckpointPages(options.loadCheckpoint, checkpointRoot, sourceHash, outline, design, theme)
+  const restoredCount = restoredStates.filter(Boolean).length
+  if (restoredCount > 0) warnings.push(`已从工作区检查点恢复 ${restoredCount}/${outline.pages.length} 页`)
   let hasGeneratedPreviewPage = false
   let startedPages = 0
   let completedPages = 0
@@ -229,16 +297,37 @@ export async function generatePptdDeck(
       startedPages++
       try {
         const pagePath = pagePathFor(pageIndex)
-        const result = await callModel({
-          stage: 'page',
-          runId: `pptd:page:${pageIndex + 1}`,
-          system: PAGE_SYSTEM_PROMPT,
-          prompt: buildPagePrompt(outline, pageOutline, pageIndex, theme, design, mediaPrompt),
-          maxTokens: PAGE_MAX_TOKENS,
-          pageIndex,
-          images: media.images,
-        })
-        const state = parsePageState(result.text, pageOutline, pageIndex, pagePath, theme)
+        let state = restoredStates[pageIndex]
+        if (!state) {
+          try {
+            const result = await callModel({
+              stage: 'page',
+              runId: `pptd:page:${pageIndex + 1}`,
+              system: PAGE_SYSTEM_PROMPT,
+              prompt: buildPagePrompt(outline, pageOutline, pageIndex, theme, design, mediaPrompt),
+              maxTokens: PAGE_MAX_TOKENS,
+              pageIndex,
+              images: media.images,
+            })
+            state = parsePageState(result.text, pageOutline, pageIndex, pagePath, theme)
+          } catch (error) {
+            if (!isPptdContentFailure(error)) throw error
+            const diagnostic = pageDiagnostic(pagePath, `页面生成调用失败：${errorMessage(error)}`, 'generation-failed')
+            state = {
+              pageIndex,
+              pagePath,
+              outline: pageOutline,
+              raw: '',
+              page: fallbackPage(pageOutline, theme, '页面生成失败，等待自动修复'),
+              parseError: diagnostic,
+              attempts: 1,
+              repaired: false,
+              fallback: false,
+              diagnostics: [diagnostic],
+            }
+          }
+        }
+        await savePageCheckpoint(options.onCheckpoint, checkpointRoot, sourceHash, outline, design, state, !state.parseError)
         previewStates[pageIndex] = state
         hasGeneratedPreviewPage = true
         return state
@@ -248,7 +337,10 @@ export async function generatePptdDeck(
           stage: 'page', current: completedPages, total: outline.pages.length, pageIndex,
           message: `已完成 ${completedPages}/${outline.pages.length} 页`,
         }
-        if (hasGeneratedPreviewPage) {
+        const shouldPublishPreview = completedPages === 1
+          || completedPages === outline.pages.length
+          || completedPages % PREVIEW_INTERVAL === 0
+        if (hasGeneratedPreviewPage && shouldPublishPreview) {
           const previewAssembly = assembleStates(outline.title, theme, previewStates, media.values)
           publishPreview(options.onProgress, input, outline, previewAssembly.project, progress)
         } else {
@@ -261,23 +353,9 @@ export async function generatePptdDeck(
   }
   throwIfAborted(signal)
 
-  const states = generated.map((entry, pageIndex): PageState => {
-    if (entry.status === 'fulfilled') return entry.value
-    const pagePath = pagePathFor(pageIndex)
-    const diagnostic = pageDiagnostic(pagePath, `页面生成调用失败：${errorMessage(entry.reason)}`, 'generation-failed')
-    return {
-      pageIndex,
-      pagePath,
-      outline: outline.pages[pageIndex],
-      raw: '',
-      page: fallbackPage(outline.pages[pageIndex], theme, '页面生成失败，已暂用文本版'),
-      parseError: diagnostic,
-      attempts: 1,
-      repaired: false,
-      fallback: false,
-      diagnostics: [diagnostic],
-    }
-  })
+  const technicalGenerationFailure = generated.find((entry) => entry.status === 'rejected')
+  if (technicalGenerationFailure?.status === 'rejected') throw technicalGenerationFailure.reason
+  const states = generated.map((entry) => (entry as Extract<ScheduledResult<PageState>, { status: 'fulfilled' }>).value)
 
   let assembly = assembleStates(outline.title, theme, states, media.values)
   assertNoProjectErrors(assembly)
@@ -330,15 +408,18 @@ export async function generatePptdDeck(
       clearInterval(repairHeartbeat)
     }
     throwIfAborted(signal)
-    repaired.forEach((entry, index) => {
+    const technicalRepairFailure = repaired.find((entry) => entry.status === 'rejected' && !isPptdContentFailure(entry.reason))
+    if (technicalRepairFailure?.status === 'rejected') throw technicalRepairFailure.reason
+    for (const [index, entry] of repaired.entries()) {
       const target = targets[index]
       if (entry.status === 'fulfilled') {
         states[target.state.pageIndex] = entry.value
+        await savePageCheckpoint(options.onCheckpoint, checkpointRoot, sourceHash, outline, design, entry.value, !entry.value.parseError)
       } else {
         target.state.attempts++
         target.state.diagnostics.push(pageDiagnostic(target.state.pagePath, `页面修复调用失败：${errorMessage(entry.reason)}`, 'repair-failed'))
       }
-    })
+    }
     assembly = assembleStates(outline.title, theme, states, media.values)
     assertNoProjectErrors(assembly)
     publishPreview(options.onProgress, input, outline, assembly.project, {
@@ -351,18 +432,29 @@ export async function generatePptdDeck(
 
   const unresolved = repairTargets(states, assembly)
   if (unresolved.length > 0) {
-    const details = unresolved.map(({ state }) => {
+    const fallbackPageNumbers = unresolved.map(({ state }) => {
       const diagnostics = diagnosticsForState(state, assembly)
       state.diagnostics.push(...diagnostics)
-      return `第 ${state.pageIndex + 1} 页：${formatDiagnostics(diagnostics)}`
-    }).join('\n')
+      state.page = fallbackPage(state.outline, theme, '自动生成未通过质量检查，已使用安全版式')
+      state.raw = dumpYaml(state.page, { noRefs: true, lineWidth: -1 })
+      state.parseError = undefined
+      state.fallback = true
+      return state.pageIndex + 1
+    })
+    assembly = assembleStates(outline.title, theme, states, media.values)
+    assertNoProjectErrors(assembly)
+    if (!assembly.validation.valid) {
+      throw new Error(`PPTD 确定性页面兜底后仍未通过校验：${formatDiagnostics(assembly.validation.errors)}`)
+    }
+    warnings.push(`${unresolved.length} 页在 ${maxRepairRounds} 轮修复后使用安全版式：第 ${fallbackPageNumbers.join('、')} 页`)
+    await Promise.all(unresolved.map(({ state }) =>
+      savePageCheckpoint(options.onCheckpoint, checkpointRoot, sourceHash, outline, design, state, true)))
     publishPreview(options.onProgress, input, outline, assembly.project, {
       stage: 'repair',
       current: unresolved.length,
       total: unresolved.length,
-      message: '复杂页面仍未通过校验，已保留最新预览并停止交付',
-    })
-    throw new Error(`PPTD 有 ${unresolved.length} 页在 ${maxRepairRounds} 轮修复后仍不可交付；已拒绝降级为纯文本页。\n${details}`)
+      message: `${unresolved.length} 页已切换为安全版式，继续交付完整演示文稿`,
+    }, buildQualityReport(states, assembly))
   }
   if (options.visualReview) {
     const visual = await runProductionVisualReview(
@@ -397,14 +489,17 @@ export async function generatePptdDeck(
     warnings.push(`PPTD 工程存在 ${assembly.projectWarnings.length} 条非阻塞 warning：${formatDiagnostics(assembly.projectWarnings)}`)
   }
 
-  const artifact = createDeckArtifact(input, outline, assembly.project)
+  await Promise.all(states.map((state) =>
+    savePageCheckpoint(options.onCheckpoint, checkpointRoot, sourceHash, outline, design, state, true)))
+
   const pageReports = states.map((state) => ({
     pageIndex: state.pageIndex,
     pagePath: state.pagePath,
-    status: state.repaired ? 'repaired' as const : 'generated' as const,
+    status: state.fallback ? 'fallback' as const : state.repaired ? 'repaired' as const : 'generated' as const,
     attempts: state.attempts,
     diagnostics: dedupeDiagnostics(state.diagnostics),
   }))
+  const artifact = createDeckArtifact(input, outline, assembly.project, buildQualityReport(states, assembly))
   return { design, outline, project: assembly.project, assembly, artifact, pageReports, warnings, usage }
 }
 
@@ -414,9 +509,10 @@ function publishPreview(
   outline: DeckOutline,
   project: PptdProject,
   progress: Omit<PptdPipelineProgress, 'preview'>,
+  qualityReport?: PptdArtifactQualityReport,
 ): void {
   if (!onProgress) return
-  const artifact = createDeckArtifact(input, outline, project)
+  const artifact = createDeckArtifact(input, outline, project, qualityReport)
   onProgress({
     ...progress,
     preview: {
@@ -433,8 +529,9 @@ function createDeckArtifact(
   input: PptdDeckPipelineInput,
   outline: DeckOutline,
   project: PptdProject,
+  qualityReport?: PptdArtifactQualityReport,
 ): PptdDeckArtifact {
-  const content = serializePptdArtifactContent(project)
+  const content = serializePptdArtifactContent(project, qualityReport)
   const title = input.title?.trim() || outline.title
   const path = safeArtifactPath(input.artifactPath)
   return {
@@ -481,24 +578,28 @@ export function createPptdModelCaller(ctx: QueryContext): PptdModelCaller {
       stream: true,
       signal,
     }
-    let text = ''
-    let usage: TokenUsage | undefined
-    let stopReason: string | undefined
-    for await (const chunk of provider.stream(completion)) {
-      if (chunk.type === 'content_delta') text += chunk.delta
-      else if (chunk.type === 'message_end') {
-        usage = chunk.usage
-        stopReason = chunk.stopReason
-      } else if (chunk.type === 'error') {
-        if (!chunk.error.recoverable) throw new Error(`PPTD 模型调用失败：${chunk.error.message}`)
-      } else if (chunk.type === 'tool_call_start' || chunk.type === 'tool_call_delta' || chunk.type === 'tool_call_end') {
-        throw new Error('PPTD 管线不接受模型工具调用')
+    let totalUsage: TokenUsage | undefined
+    for (let attempt = 1; attempt <= MAX_EMPTY_OUTPUT_ATTEMPTS; attempt++) {
+      throwIfAborted(signal)
+      let text = ''
+      let usage: TokenUsage | undefined
+      let stopReason: string | undefined
+      for await (const chunk of provider.stream(completion)) {
+        if (chunk.type === 'content_delta') text += chunk.delta
+        else if (chunk.type === 'message_end') {
+          usage = chunk.usage
+          stopReason = chunk.stopReason
+        } else if (chunk.type === 'error') {
+          if (!chunk.error.recoverable) throw new PptdTechnicalModelError(chunk.error)
+        } else if (chunk.type === 'tool_call_start' || chunk.type === 'tool_call_delta' || chunk.type === 'tool_call_end') {
+          throw new PptdContentGenerationError('PPTD 管线不接受模型工具调用')
+        }
       }
+      if (stopReason === 'max_tokens') throw new PptdOutputLimitError(request.stage)
+      totalUsage = mergeTokenUsage(totalUsage, usage ?? estimateUsage(request, text))
+      if (text.trim()) return { text, usage: totalUsage }
     }
-    if (stopReason === 'max_tokens') throw new Error(`PPTD ${request.stage} 输出达到 token 上限`)
-    if (!text.trim()) throw new Error(`PPTD ${request.stage} 模型返回空内容`)
-    const measured = usage ?? estimateUsage(request, text)
-    return { text, usage: measured }
+    throw new PptdEmptyModelOutputError(request.stage, MAX_EMPTY_OUTPUT_ATTEMPTS)
   }
 }
 
@@ -546,21 +647,28 @@ async function runProductionVisualReview(
         imageByPage.set(image.pageIndex, modelImage)
         return modelImage
       })
-      const response = await callModel({
-        stage: 'review',
-        runId: `pptd:review:${reviewRound}`,
-        system: REVIEW_SYSTEM_PROMPT,
-        prompt: [
-          `按图片顺序审阅这套 PPTD 的 ${project.pages.length} 页。${buildPptdReviewPrompt(0, project.pages.length)}`,
-          `<page_element_catalog>\n${JSON.stringify(project.pages.map((page, pageIndex) => ({
-            pageIndex,
-            elements: page.elements.map((element) => ({ elementId: element.elementId, elementType: element.elementType, bounds: element.bounds })),
-          })))}\n</page_element_catalog>`,
-          '只返回 JSON：{"approved":true,"pages":[]}；有问题时 pages 只列问题页，结构为 {"pageIndex":0,"feedback":"包含 elementId 的最小修复建议"}。pageIndex 从 0 开始。不要评价主题内容，不要泛泛评价美观。',
-        ].join('\n'),
-        maxTokens: 2_200,
-        images: modelImages,
-      })
+      let response: PptdModelCallResult
+      try {
+        response = await callModel({
+          stage: 'review',
+          runId: `pptd:review:${reviewRound}`,
+          system: REVIEW_SYSTEM_PROMPT,
+          prompt: [
+            `按图片顺序审阅这套 PPTD 的 ${project.pages.length} 页。${buildPptdReviewPrompt(0, project.pages.length)}`,
+            `<page_element_catalog>\n${JSON.stringify(project.pages.map((page, pageIndex) => ({
+              pageIndex,
+              elements: page.elements.map((element) => ({ elementId: element.elementId, elementType: element.elementType, bounds: element.bounds })),
+            })))}\n</page_element_catalog>`,
+            '只返回 JSON：{"approved":true,"pages":[]}；有问题时 pages 只列问题页，结构为 {"pageIndex":0,"feedback":"包含 elementId 的最小修复建议"}。pageIndex 从 0 开始。不要评价主题内容，不要泛泛评价美观。',
+          ].join('\n'),
+          maxTokens: 2_200,
+          images: modelImages,
+        })
+      } catch (error) {
+        if (!isPptdContentFailure(error)) throw error
+        warnings.push(`视觉审阅未返回可用结果，已保留结构合法版本：${errorMessage(error)}`)
+        return { approved: true, feedback: '' }
+      }
       const text = response.text.trim()
       if (/^APPROVED(?:\s|$)/i.test(text)) return { approved: true, feedback: '' }
       try {
@@ -625,6 +733,8 @@ async function runProductionVisualReview(
         const repaired = parsePageState(response.text, pageOutline, pageIndex, pagePath, theme, previous)
         return repaired.parseError ? undefined : repaired
       }, signal)
+      const technicalRepairFailure = repairedPages.find((entry) => entry.status === 'rejected' && !isPptdContentFailure(entry.reason))
+      if (technicalRepairFailure?.status === 'rejected') throw technicalRepairFailure.reason
       repairedPages.forEach((entry, index) => {
         if (entry.status !== 'fulfilled' || !entry.value) return
         const pageIndex = targets[index]
@@ -677,10 +787,19 @@ async function generateOutline(
         images,
       })
     } catch (error) {
-      // Providers commonly truncate a verbose outline before emitting valid
-      // JSON. Treat that as a recoverable generation failure so the compact
-      // retry and deterministic fallback below can still deliver the deck.
-      if (!isPptdOutputLimitError(error)) throw error
+      // Output ceilings receive a compact structure retry. Empty streams have
+      // already been retried by the provider adapter, so fall back directly.
+      if (isPptdEmptyOutputError(error)) {
+        parseFailure = errorMessage(error)
+        break
+      }
+      if (!isPptdOutputLimitError(error)) {
+        if (isPptdContentFailure(error)) {
+          parseFailure = errorMessage(error)
+          break
+        }
+        throw error
+      }
       parseFailure = errorMessage(error)
       continue
     }
@@ -771,10 +890,19 @@ async function generateDesignSpec(
         images,
       })
     } catch (error) {
-      // A truncated design response is recoverable: the next attempt receives
-      // a compact correction and the deterministic design spec below remains
-      // a valid final fallback. Provider/network failures still surface.
-      if (!isPptdOutputLimitError(error)) throw error
+      // Output ceilings receive a compact structure retry. Empty streams have
+      // already been retried by the provider adapter, so fall back directly.
+      if (isPptdEmptyOutputError(error)) {
+        parseFailure = errorMessage(error)
+        break
+      }
+      if (!isPptdOutputLimitError(error)) {
+        if (isPptdContentFailure(error)) {
+          parseFailure = errorMessage(error)
+          break
+        }
+        throw error
+      }
       parseFailure = errorMessage(error)
       continue
     }
@@ -793,6 +921,16 @@ function isPptdOutputLimitError(error: unknown): boolean {
   return message.includes('输出达到 token 上限')
     || message.includes('max_tokens')
     || message.includes('maximum context length')
+}
+
+function isPptdEmptyOutputError(error: unknown): boolean {
+  return error instanceof PptdEmptyModelOutputError || errorMessage(error).includes('返回空内容')
+}
+
+function isPptdContentFailure(error: unknown): boolean {
+  return error instanceof PptdContentGenerationError
+    || isPptdEmptyOutputError(error)
+    || isPptdOutputLimitError(error)
 }
 
 function buildDesignPrompt(
@@ -995,9 +1133,31 @@ function repairTargets(states: PageState[], assembly: PptdAssemblyResult): Repai
 function diagnosticsForState(state: PageState, assembly: PptdAssemblyResult): PptdDiagnostic[] {
   const validation = assembly.pageResults[state.pageIndex]
   return dedupeDiagnostics([
+    ...state.diagnostics,
     ...(state.parseError ? [state.parseError] : []),
     ...(validation?.errors ?? []),
   ])
+}
+
+function buildQualityReport(states: readonly PageState[], assembly: PptdAssemblyResult): PptdArtifactQualityReport | undefined {
+  const fallbackPages = states.filter((state) => state.fallback).map((state) => ({
+    pageIndex: state.pageIndex,
+    pagePath: state.pagePath,
+    status: 'fallback' as const,
+    reasons: dedupeDiagnostics(state.diagnostics).map((diagnostic) => diagnostic.message),
+  }))
+  const fallbackIndexes = new Set(fallbackPages.map((page) => page.pageIndex))
+  const warningPages = states.flatMap((state) => {
+    if (fallbackIndexes.has(state.pageIndex)) return []
+    const warnings = assembly.pageResults[state.pageIndex]?.warnings ?? []
+    return warnings.length > 0 ? [{
+      pageIndex: state.pageIndex,
+      pagePath: state.pagePath,
+      status: 'warning' as const,
+      reasons: warnings.map((diagnostic) => diagnostic.message),
+    }] : []
+  })
+  return fallbackPages.length > 0 || warningPages.length > 0 ? { fallbackPages, warningPages } : undefined
 }
 
 function assertNoProjectErrors(assembly: PptdAssemblyResult): void {
@@ -1110,6 +1270,160 @@ function buildRepairPrompt(
     `<current_page>\n${state.raw || '(empty)'}\n</current_page>`,
     mediaPrompt,
   ].filter(Boolean).join('\n\n')
+}
+
+const CHECKPOINT_FIELD = 'x-solidify-checkpoint'
+
+function checkpointRootFor(input: PptdDeckPipelineInput): string {
+  return `.solidify/pptd-checkpoints/${checkpointSourceHash(input)}`
+}
+
+function checkpointSourceHash(input: PptdDeckPipelineInput): string {
+  const media = Object.entries(input.media ?? {}).sort(([a], [b]) => a.localeCompare(b)).map(([path, value]) => ({
+    path,
+    size: value instanceof Uint8Array ? value.byteLength : value.length,
+    edge: value instanceof Uint8Array
+      ? [...value.slice(0, 16), ...value.slice(-16)]
+      : `${value.slice(0, 64)}${value.slice(-64)}`,
+  }))
+  return stableHash(JSON.stringify({
+    brief: input.brief,
+    materials: input.materials ?? '',
+    title: input.title ?? '',
+    themeId: input.themeId ?? '',
+    designSystemId: input.designSystemId ?? '',
+    maxPages: input.maxPages ?? DEFAULT_MAX_PAGES,
+    artifactPath: safeArtifactPath(input.artifactPath),
+    media,
+  }))
+}
+
+function checkpointPageHash(outline: DeckOutline, design: PptdDesignSpec, pageIndex: number): string {
+  return stableHash(JSON.stringify({ outline: outline.pages[pageIndex], design }))
+}
+
+function stableHash(value: string): string {
+  let first = 0x811c9dc5
+  let second = 0x9e3779b9
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index)
+    first = Math.imul(first ^ code, 0x01000193)
+    second = Math.imul(second ^ code, 0x85ebca6b)
+  }
+  return `${(first >>> 0).toString(16).padStart(8, '0')}${(second >>> 0).toString(16).padStart(8, '0')}`
+}
+
+async function loadCheckpointMetadata(
+  loadCheckpoint: GeneratePptdDeckOptions['loadCheckpoint'],
+  root: string,
+  sourceHash: string,
+): Promise<PptdCheckpointMetadata | undefined> {
+  if (!loadCheckpoint) return undefined
+  const raw = await loadCheckpoint(`${root}/deck.pptd`)
+  if (!raw) return undefined
+  try {
+    const document = parseYaml(raw)
+    if (!isRecord(document) || !isRecord(document[CHECKPOINT_FIELD])) return undefined
+    const metadata = document[CHECKPOINT_FIELD]
+    if (metadata.schemaVersion !== 1 || metadata.sourceHash !== sourceHash || !isRecord(metadata.design) || !isRecord(metadata.outline)) return undefined
+    return metadata as unknown as PptdCheckpointMetadata
+  } catch {
+    return undefined
+  }
+}
+
+async function saveCheckpointManifest(
+  onCheckpoint: GeneratePptdDeckOptions['onCheckpoint'],
+  root: string,
+  sourceHash: string,
+  design: PptdDesignSpec,
+  outline: DeckOutline,
+  theme: ReturnType<typeof getPptdThemePreset>,
+  states: readonly PageState[],
+  media: Readonly<Record<string, string | Uint8Array>>,
+): Promise<void> {
+  if (!onCheckpoint) return
+  const project = assembleStates(outline.title, theme, states, media).project
+  const content = dumpYaml({
+    version: project.version,
+    title: project.title,
+    size: project.size,
+    theme: project.theme,
+    pages: project.pagePaths,
+    [CHECKPOINT_FIELD]: { schemaVersion: 1, sourceHash, design, outline } satisfies PptdCheckpointMetadata,
+  }, { noRefs: true, lineWidth: -1 })
+  await onCheckpoint({ path: `${root}/deck.pptd`, content, kind: 'manifest' })
+}
+
+async function savePageCheckpoint(
+  onCheckpoint: GeneratePptdDeckOptions['onCheckpoint'],
+  root: string,
+  sourceHash: string,
+  outline: DeckOutline,
+  design: PptdDesignSpec,
+  state: PageState,
+  reusable: boolean,
+): Promise<void> {
+  if (!onCheckpoint) return
+  const content = dumpYaml({
+    ...state.page,
+    [CHECKPOINT_FIELD]: {
+      schemaVersion: 1,
+      sourceHash,
+      pageHash: checkpointPageHash(outline, design, state.pageIndex),
+      status: state.fallback ? 'fallback' : state.repaired ? 'repaired' : 'generated',
+      reusable,
+      attempts: state.attempts,
+      reasons: dedupeDiagnostics(state.diagnostics).map((diagnostic) => diagnostic.message),
+    },
+  }, { noRefs: true, lineWidth: -1 })
+  await onCheckpoint({ path: `${root}/${state.pagePath}`, content, kind: 'page', pageIndex: state.pageIndex })
+}
+
+async function restoreCheckpointPages(
+  loadCheckpoint: GeneratePptdDeckOptions['loadCheckpoint'],
+  root: string,
+  sourceHash: string,
+  outline: DeckOutline,
+  design: PptdDesignSpec,
+  theme: ReturnType<typeof getPptdThemePreset>,
+): Promise<Array<PageState | undefined>> {
+  if (!loadCheckpoint) return outline.pages.map(() => undefined)
+  return Promise.all(outline.pages.map(async (pageOutline, pageIndex) => {
+    const pagePath = pagePathFor(pageIndex)
+    const raw = await loadCheckpoint(`${root}/${pagePath}`)
+    if (!raw) return undefined
+    try {
+      const document = parseYaml(raw)
+      if (!isRecord(document) || !isRecord(document[CHECKPOINT_FIELD])) return undefined
+      const metadata = document[CHECKPOINT_FIELD]
+      if (metadata.schemaVersion !== 1
+        || metadata.sourceHash !== sourceHash
+        || metadata.pageHash !== checkpointPageHash(outline, design, pageIndex)
+        || metadata.reusable !== true) return undefined
+      const cleanDocument = { ...document }
+      delete cleanDocument[CHECKPOINT_FIELD]
+      const cleanRaw = dumpYaml(cleanDocument, { noRefs: true, lineWidth: -1 })
+      const page = parseGeneratedPage(cleanRaw, pagePath, theme)
+      const reasons = Array.isArray(metadata.reasons)
+        ? metadata.reasons.filter((reason): reason is string => typeof reason === 'string' && Boolean(reason.trim()))
+        : []
+      const status = metadata.status === 'fallback' ? 'fallback' : metadata.status === 'repaired' ? 'repaired' : 'generated'
+      return {
+        pageIndex,
+        pagePath,
+        outline: pageOutline,
+        raw: cleanRaw,
+        page,
+        attempts: typeof metadata.attempts === 'number' && Number.isSafeInteger(metadata.attempts) ? metadata.attempts : 1,
+        repaired: status === 'repaired',
+        fallback: status === 'fallback',
+        diagnostics: reasons.map((message) => pageDiagnostic(pagePath, message, 'checkpoint-diagnostic')),
+      }
+    } catch {
+      return undefined
+    }
+  }))
 }
 
 function preparePptdMedia(input: PptdDeckPipelineInput['media']): {
@@ -1353,6 +1667,12 @@ function startProgressHeartbeat(report: () => void): ReturnType<typeof setInterv
 function estimateUsage(request: PptdModelCall, output: string): TokenUsage {
   const inputTokens = estimateTokens(`${request.system}\n${request.prompt}`)
   const outputTokens = estimateTokens(output)
+  return { inputTokens, outputTokens, totalTokens: inputTokens + outputTokens }
+}
+
+function mergeTokenUsage(current: TokenUsage | undefined, next: TokenUsage): TokenUsage {
+  const inputTokens = (current?.inputTokens ?? 0) + next.inputTokens
+  const outputTokens = (current?.outputTokens ?? 0) + next.outputTokens
   return { inputTokens, outputTokens, totalTokens: inputTokens + outputTokens }
 }
 

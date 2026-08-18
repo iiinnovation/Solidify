@@ -400,6 +400,26 @@ describe('output ceiling resumes instead of ending the run', () => {
     expect(last?.content).toBe('page one')
   })
 
+  it('does not replay stale prefill when a continuation has no visible output', async () => {
+    const seen: CompletionRequest[] = []
+    const base = provider([
+      truncated('partial answer'),
+      [{ type: 'message_end', usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, stopReason: 'max_tokens' }],
+    ])
+    const spy: ModelProvider = {
+      ...base,
+      async *stream(request: CompletionRequest) {
+        seen.push(request)
+        yield* base.stream(request)
+      },
+    }
+
+    const events = await collect(runQuery(makeCtx(spy)))
+    expect(seen).toHaveLength(2)
+    expect(events.map(event => event.type)).toContain('run.exhausted')
+    expect(events.map(event => event.type)).not.toContain('run.failed')
+  })
+
   it('still exhausts when the model never stops hitting the ceiling', async () => {
     const ctx = makeCtx(provider([truncated('more')]), {
       limits: { maxTurns: 50, maxTokens: 100_000, maxOutputTokens: 1000, maxToolCalls: 20, toolTimeoutMs: 1000 },

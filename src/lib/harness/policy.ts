@@ -92,6 +92,9 @@ export class PolicyEngine {
     if (tool.name === 'dispatch_agent') {
       return { kind: 'allow', reason: '子 Agent 调度由任务树预算与深度 guard 约束。', source: 'default' }
     }
+    if (tool.name === 'generate_pptd' && !tool.destructive && requiresConfirmation === false) {
+      return { kind: 'allow', reason: 'PPTD 生成仅写入受约束的内部恢复检查点。', source: 'default' }
+    }
     if (
       tool.name === 'materialize_document'
       && call.input?.intent === 'artifact_materialize'
