@@ -10,6 +10,11 @@ export function validatePptdProject(project: PptdProject): PptdValidationResult 
   checkInvalidColors(project, warnings)
   project.pages.forEach((page, pageIndex) => {
     const pagePath = project.pagePaths[pageIndex] ?? `pages/${pageIndex}.page`
+    if (page.background?.type === 'image') {
+      const src = typeof page.background.src === 'string' ? page.background.src : undefined
+      if (!src) errors.push(diagnostic(pagePath, 'image 背景必须提供 src', 'invalid-field'))
+      else if (!project.media[src]) errors.push(diagnostic(pagePath, `缺少背景 media 文件：${src}`, 'missing-media'))
+    }
     const ids = new Set<string>()
     page.elements.forEach((element, index) => {
       const path = `${pagePath}: elements[${index}]`

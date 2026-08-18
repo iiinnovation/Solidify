@@ -96,4 +96,41 @@ describe('PptdRenderer', () => {
     const shape = document.querySelector('[data-artifact-content] > div') as HTMLElement
     expect(shape.style.background).toBe('rgb(255, 255, 255)')
   })
+
+  it('renders Kimi-compatible image backgrounds, nested table cells, and border-based lines', () => {
+    const image = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
+    const compatible: PptdProject = {
+      ...project,
+      media: { 'media/background.png': image },
+      pages: [{
+        background: { type: 'image', src: 'media/background.png', fit: { mode: 'cover' } },
+        elements: [
+          {
+            elementId: 'specs', elementType: 'table', bounds: [40, 80, 500, 220],
+            columnWidths: [0.3, 0.7], rowHeights: [0.5, 0.5],
+            style: { fontSize: 11, bodyColor: '#111111', firstColumnColor: '#666666' },
+            rows: [
+              [{ content: { text: '传感器', align: ['left', 'middle'] } }, { content: { text: '1 英寸 CMOS' } }],
+              [{ content: { text: '视频' } }, { content: { text: '4K/240fps' } }],
+            ],
+          },
+          {
+            elementId: 'divider', elementType: 'line', bounds: [40, 320, 500, 1],
+            viewBox: [500, 1], points: '0,0.5 500,0.5' as unknown as unknown[],
+            border: { color: '#123456', width: 2 },
+          },
+        ],
+      }],
+    }
+
+    render(<PptdRenderer project={compatible} />)
+    const page = document.querySelector('[data-pptd-page="0"]') as HTMLElement
+    expect(page.style.backgroundImage).toContain('data:image/png;base64')
+    expect(screen.getByText('传感器')).toBeTruthy()
+    expect(screen.getByText('1 英寸 CMOS')).toBeTruthy()
+    const columns = document.querySelectorAll('colgroup col')
+    expect((columns[0] as HTMLElement).style.width).toBe('30%')
+    expect(document.querySelector('svg line')?.getAttribute('stroke')).toBe('#123456')
+    expect(document.querySelector('svg line')?.getAttribute('x2')).toBe('500')
+  })
 })

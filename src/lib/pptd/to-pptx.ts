@@ -39,9 +39,9 @@ export async function exportPptdAsPptx(project: PptdProject): Promise<PptdExport
     .map((item) => `校验：${item.path}: ${item.message}`)
   for (const [pageIndex, page] of project.pages.entries()) {
     const slide = presentation.addSlide()
-    applyBackground(slide, page.background, project, pageIndex, degradations)
+    await applyBackground(slide, page.background, project, pageIndex, degradations, width, height)
     if (page.animations !== undefined) degradations.push(`第 ${pageIndex + 1} 页 animations 已丢弃（PPTX 导出不支持）`)
-    for (const element of page.elements) {
+    for (const element of orderedElements(page.elements)) {
       if (element.animation !== undefined || element.animations !== undefined) degradations.push(`第 ${pageIndex + 1} 页 "${element.elementId}" 的动画已丢弃（PPTX 导出不支持）`)
       await renderElement(slide, element, project, presentation, degradations, pageIndex)
     }
@@ -50,12 +50,26 @@ export async function exportPptdAsPptx(project: PptdProject): Promise<PptdExport
   return { blob, degradations, report: createPptdDegradationReport(project.title, degradations) }
 }
 
-function applyBackground(slide: PptxGenJS.Slide, background: Record<string, unknown> | undefined, project: PptdProject, pageIndex: number, degradations: string[]) {
+async function applyBackground(slide: PptxGenJS.Slide, background: Record<string, unknown> | undefined, project: PptdProject, pageIndex: number, degradations: string[], width: number, height: number) {
   const stops = Array.isArray(background?.stops) ? background.stops : []
   const firstStop = stops[0] && typeof stops[0] === 'object' ? (stops[0] as Record<string, unknown>).color : undefined
   const sourceColor = background?.color ?? firstStop ?? project.theme.colors.bg ?? '#ffffff'
   const color = normalizeColor(sourceColor, '#ffffff', (value) => degradations.push(`第 ${pageIndex + 1} 页背景颜色 ${JSON.stringify(value)} 不是受支持的 hex 格式，已回退为 #FFFFFF`))
   slide.background = { color }
+  if (background?.type === 'image') {
+    const path = typeof background.src === 'string' ? background.src : undefined
+    const media = path ? pptdMediaDataUrl(project.media[path], path) : undefined
+    if (!media) {
+      degradations.push(`第 ${pageIndex + 1} 页背景图片不可用，已回退为纯色 #${color}`)
+      return
+    }
+    const fit = record(background.fit)
+    slide.addImage({
+      data: media, x: 0, y: 0, w: width, h: height,
+      sizing: { type: fit.mode === 'contain' ? 'contain' : 'cover', w: width, h: height },
+    })
+    return
+  }
   if (background?.type === 'gradient') degradations.push(`第 ${pageIndex + 1} 页背景渐变已转为纯色 #${color}`)
 }
 
@@ -86,6 +100,7 @@ async function renderElement(slide: PptxGenJS.Slide, element: PptdElement, proje
       valign: pptxVAlign(alignment[1]), margin: 0,
       charSpacing: number(style.letterSpacing, 0), lineSpacing, paraSpaceBefore: 0, paraSpaceAfter: 0, fit: 'shrink',
       shadow: pptxShadow(style.shadow, (value) => degrade(`阴影颜色 ${JSON.stringify(value)} 不是受支持的 hex 格式，已回退为 #000000`)),
+      rotate: elementRotation(element),
     } as never)
     return
   }
@@ -95,19 +110,25 @@ async function renderElement(slide: PptxGenJS.Slide, element: PptdElement, proje
       const crop = cropRect(element)
       const cropped = crop ? await preCropDataUrl(media, crop) : media
       if (crop && cropped === media) degrade('图片裁剪不可用，已使用原图')
-      slide.addImage({ data: cropped, x, y, w, h })
+      const fit = record(element.fit)
+      slide.addImage({
+        data: cropped, x, y, w, h,
+        sizing: { type: fit.mode === 'cover' ? 'cover' : 'contain', w, h },
+        rotate: elementRotation(element), transparency: opacityTransparency(element.opacity),
+      })
     }
     else { degrade('图片源不可用，已使用占位符'); slide.addText('[image]', { x, y, w, h, align: 'center', valign: 'mid', color: '666666' } as never) }
     return
   }
   if (element.elementType === 'line') {
-    const stroke = (element.stroke ?? {}) as Record<string, unknown>
+    const stroke = lineStroke(element)
     const lineColor = normalizeColor(stroke.color ?? '#000000', '#000000', (value) => degrade(`线条颜色 ${JSON.stringify(value)} 不是受支持的 hex 格式，已回退为 #000000`))
-    slide.addShape(presentation.ShapeType.line, { x, y, w, h, line: { color: lineColor, width: number(stroke.width, 1) } } as never)
+    slide.addShape(presentation.ShapeType.line, { x, y, w, h, rotate: elementRotation(element), line: { color: lineColor, width: number(stroke.width, 1), transparency: opacityTransparency(element.opacity) } } as never)
     return
   }
   if (element.elementType === 'table') {
     const rows = Array.isArray(element.rows) ? element.rows : []
+    const tableStyle = record(element.style)
     const tableRows = rows.map((row) => {
       if (!Array.isArray(row)) return [{ text: String(row), options: {} }]
       return row.map((cell) => {
@@ -117,13 +138,22 @@ async function renderElement(slide: PptxGenJS.Slide, element: PptdElement, proje
           text: String(value.text ?? ''),
           options: {
             bold: Boolean(style.bold),
-            color: style.color ? normalizeColor(style.color, '#000000', (invalid) => degrade(`表格文字颜色 ${JSON.stringify(invalid)} 不是受支持的 hex 格式，已回退为 #000000`)) : undefined,
+            color: normalizeColor(style.color ?? tableStyle.bodyColor ?? '#000000', '#000000', (invalid) => degrade(`表格文字颜色 ${JSON.stringify(invalid)} 不是受支持的 hex 格式，已回退为 #000000`)),
             fill: style.backgroundColor ? { color: normalizeColor(style.backgroundColor, '#FFFFFF', (invalid) => degrade(`表格填充颜色 ${JSON.stringify(invalid)} 不是受支持的 hex 格式，已回退为 #FFFFFF`)) } : undefined,
+            align: Array.isArray(style.align) ? style.align[0] : style.align,
+            valign: pptxVAlign(Array.isArray(style.align) ? style.align[1] : undefined),
           },
         }
       })
     })
-    slide.addTable(tableRows as never, { x, y, w, h, border: { type: 'solid', color: '999999', pt: 1 }, fontSize: number(element.fontSize, 12) } as never)
+    const columnWidths = scaledRatios(element.columnWidths, w)
+    const rowHeights = scaledRatios(element.rowHeights, h)
+    slide.addTable(tableRows as never, {
+      x, y, w, h, border: { type: 'solid', color: normalizeColor(tableStyle.borderColor ?? '#999999'), pt: 1 },
+      fontSize: number(tableStyle.fontSize ?? element.fontSize, 12),
+      colW: columnWidths.length > 0 ? columnWidths : undefined,
+      rowH: rowHeights.length > 0 ? rowHeights : undefined,
+    } as never)
     return
   }
   if (element.elementType === 'chart') {
@@ -155,7 +185,7 @@ async function renderElement(slide: PptxGenJS.Slide, element: PptdElement, proje
   const fillColor = normalizeColor(fillValue, '#FFFFFF', (value) => degrade(`填充颜色 ${JSON.stringify(value)} 不是受支持的 hex 格式，已回退为 #FFFFFF`))
   const strokeValue = ((element.stroke ?? {}) as Record<string, unknown>).color ?? '#000000'
   const strokeColor = normalizeColor(strokeValue, '#000000', (value) => degrade(`边框颜色 ${JSON.stringify(value)} 不是受支持的 hex 格式，已回退为 #000000`))
-  slide.addShape(shape, { x, y, w, h, fill: { color: fillColor, transparency: fill.type === 'none' ? 100 : colorTransparency(fillValue) }, line: { color: strokeColor }, shadow: pptxShadow(element.shadow, (value) => degrade(`阴影颜色 ${JSON.stringify(value)} 不是受支持的 hex 格式，已回退为 #000000`)) } as never)
+  slide.addShape(shape, { x, y, w, h, rotate: elementRotation(element), fill: { color: fillColor, transparency: fill.type === 'none' ? 100 : combinedTransparency(fillValue, element.opacity) }, line: { color: strokeColor }, shadow: pptxShadow(element.shadow, (value) => degrade(`阴影颜色 ${JSON.stringify(value)} 不是受支持的 hex 格式，已回退为 #000000`)) } as never)
 }
 
 function resolveStyle(content: Record<string, unknown>, project: PptdProject): Record<string, unknown> {
@@ -244,8 +274,49 @@ function parseInlineStyle(value: string | null, onInvalidColor?: (value: unknown
 }
 
 function cellRecord(value: unknown): { text?: unknown; style?: Record<string, unknown> } {
-  if (value && typeof value === 'object' && !Array.isArray(value)) return value as { text?: unknown; style?: Record<string, unknown> }
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const cell = value as Record<string, unknown>
+    const content = record(cell.content)
+    return { text: content.text ?? cell.text, style: { ...record(cell.style), ...content } }
+  }
   return { text: value }
+}
+
+function lineStroke(element: PptdElement): Record<string, unknown> {
+  return record(element.stroke ?? element.border)
+}
+
+function orderedElements(elements: readonly PptdElement[]): PptdElement[] {
+  if (!elements.some((element) => Number.isFinite(element.zIndex))) return [...elements]
+  return elements.map((element, index) => ({ element, index })).sort((left, right) => {
+    const z = number(left.element.zIndex, 0) - number(right.element.zIndex, 0)
+    return z || left.index - right.index
+  }).map(({ element }) => element)
+}
+
+function scaledRatios(value: unknown, total: number): number[] {
+  if (!Array.isArray(value) || value.length === 0 || value.some((item) => typeof item !== 'number' || !Number.isFinite(item) || item <= 0)) return []
+  const sum = value.reduce((result, item) => result + item, 0)
+  return value.map((item) => total * item / sum)
+}
+
+function elementRotation(element: PptdElement): number | undefined {
+  const value = typeof element.rotation === 'number' ? element.rotation : element.rotate
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+function opacityTransparency(value: unknown): number {
+  const opacity = typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 1
+  return Math.round((1 - opacity) * 100)
+}
+
+function combinedTransparency(color: unknown, opacity: unknown): number {
+  const colorOpacity = 1 - colorTransparency(color) / 100
+  return Math.round((1 - colorOpacity * (1 - opacityTransparency(opacity) / 100)) * 100)
+}
+
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
 }
 
 function pptxShadow(value: unknown, onInvalidColor?: (value: unknown) => void): Record<string, unknown> | undefined {

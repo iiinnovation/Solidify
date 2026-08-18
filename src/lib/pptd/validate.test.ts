@@ -78,4 +78,14 @@ describe('PPTD semantic validation gate', () => {
     expect(result.valid).toBe(true)
     expect(result.warnings.some((item) => item.code === 'low-contrast')).toBe(false)
   })
+
+  it('requires image backgrounds to reference bundled media', () => {
+    const result = validatePptdProject({
+      version: 'v2', title: 'Missing background', size: [960, 540], pagePaths: ['pages/01.page'], media: {},
+      theme: { colors: { bg: '#FFFFFF' }, textStyles: {} },
+      pages: [{ background: { type: 'image', src: 'media/missing.png' }, elements: [] }],
+    })
+
+    expect(result.errors).toContainEqual(expect.objectContaining({ code: 'missing-media' }))
+  })
 })

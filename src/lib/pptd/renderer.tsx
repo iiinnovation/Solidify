@@ -28,13 +28,14 @@ export function PptdRenderer({ project, pageIndex = 0, className, showDiagnostic
   const page = project.pages[Math.max(0, Math.min(pageIndex, project.pages.length - 1))]
   if (!page) return null
   const pageStyle: CSSProperties = {
-    position: 'absolute', left: 0, top: 0, width, height, overflow: 'hidden', background: resolveBackground(page.background, project),
+    position: 'absolute', left: 0, top: 0, width, height, overflow: 'hidden',
+    ...resolvePageBackground(page.background, project),
     transform: `scale(${scale})`, transformOrigin: 'top left',
   }
   return (
     <div ref={frameRef} className={className} data-pptd-project={project.title} style={{ position: 'relative', width: '100%', maxWidth: '100%', minWidth: 0, aspectRatio: `${width} / ${height}`, overflow: 'hidden' }}>
       <div style={pageStyle} data-artifact-content data-pptd-page={pageIndex}>
-        {page.elements.map((element) => (
+        {orderedElements(page.elements).map((element) => (
           <PptdElementView
             key={element.elementId}
             element={element}
@@ -50,7 +51,14 @@ export function PptdRenderer({ project, pageIndex = 0, className, showDiagnostic
 
 function PptdElementView({ element, project, onClick }: { element: PptdElement; project: PptdProject; onClick?: (element: PptdElement) => void }) {
   const [x, y, width, height] = element.bounds
-  const style: CSSProperties = { position: 'absolute', left: x, top: y, width, height, boxSizing: 'border-box', zIndex: 1 }
+  const rotation = finiteNumber(element.rotation) ?? finiteNumber(element.rotate)
+  const style: CSSProperties = {
+    position: 'absolute', left: x, top: y, width, height, boxSizing: 'border-box',
+    zIndex: finiteNumber(element.zIndex) ?? 1,
+    opacity: clampedNumber(element.opacity, 0, 1, 1),
+    transform: rotation === undefined ? undefined : `rotate(${rotation}deg)`,
+    transformOrigin: 'center center',
+  }
   const handleClick = (event?: MouseEvent) => {
     if (!onClick) return
     event?.stopPropagation()
@@ -97,16 +105,17 @@ function ShapeElement({ element, project, style, onClick }: ElementRenderProps) 
 function ImageElement({ element, project, style, onClick }: ElementRenderProps) {
   const sourcePath = typeof element.src === 'string' ? element.src : undefined
   const media = sourcePath ? project.media[sourcePath] : undefined
-  const src = pptdMediaDataUrl(media, sourcePath) ?? sourcePath
+  const src = pptdMediaDataUrl(media, sourcePath)
   if (typeof src !== 'string') return <div style={{ ...style, background: '#e5e7eb' }} onClick={onClick} />
   const fit = element.fit && typeof element.fit.mode === 'string' ? element.fit.mode : 'contain'
   const crop = element.fit as Record<string, unknown> | undefined
-  return <img src={src} alt="" style={{ ...style, objectFit: fit === 'cover' ? 'cover' : 'contain', objectPosition: typeof crop?.position === 'string' ? crop.position : '50% 50%' }} onClick={onClick} />
+  return <img src={src} alt="" style={{ ...style, display: 'block', objectFit: fit === 'cover' ? 'cover' : 'contain', objectPosition: typeof crop?.position === 'string' ? crop.position : '50% 50%' }} onClick={onClick} />
 }
 
 function LineElement({ element, style, onClick }: ElementRenderProps) {
-  const stroke = color((element.stroke as Record<string, unknown> | undefined)?.color, '#000000')
-  return <svg style={style} onClick={onClick} viewBox="0 0 100 100" preserveAspectRatio="none"><line x1="0" y1="0" x2="100" y2="100" stroke={stroke} strokeWidth={number((element.stroke as Record<string, unknown> | undefined)?.width, 1)} vectorEffect="non-scaling-stroke" /></svg>
+  const lineStyle = lineStroke(element)
+  const geometry = lineGeometry(element)
+  return <svg style={style} onClick={onClick} viewBox={geometry.viewBox} preserveAspectRatio="none"><line x1={geometry.x1} y1={geometry.y1} x2={geometry.x2} y2={geometry.y2} stroke={color(lineStyle.color, '#000000')} strokeWidth={number(lineStyle.width, 1)} strokeDasharray={lineStyle.style === 'dashed' || lineStyle.style === 'dash' ? '6 4' : undefined} vectorEffect="non-scaling-stroke" /></svg>
 }
 
 function IconElement({ element, style, onClick }: ElementRenderProps) {
@@ -116,10 +125,16 @@ function IconElement({ element, style, onClick }: ElementRenderProps) {
 
 function TableElement({ element, style, onClick }: ElementRenderProps) {
   const rows = Array.isArray(element.rows) ? element.rows : []
-  return <table style={{ ...style, borderCollapse: 'collapse', color: color(element.color, '#000000'), fontSize: number(element.fontSize, 12) }} onClick={onClick}><tbody>{rows.map((row, rowIndex) => <tr key={rowIndex}>{(Array.isArray(row) ? row : []).map((cell, cellIndex) => {
+  const tableStyle = record(element.style)
+  const columnWidths = normalizedRatios(element.columnWidths, rows.reduce((maximum, row) => Math.max(maximum, Array.isArray(row) ? row.length : 0), 0))
+  const rowHeights = normalizedRatios(element.rowHeights, rows.length)
+  return <table style={{ ...style, tableLayout: 'fixed', borderCollapse: 'collapse', color: color(tableStyle.bodyColor ?? element.color, '#000000'), fontSize: number(tableStyle.fontSize ?? element.fontSize, 12) }} onClick={onClick}>
+    {columnWidths.length > 0 && <colgroup>{columnWidths.map((value, index) => <col key={index} style={{ width: `${value * 100}%` }} />)}</colgroup>}
+    <tbody>{rows.map((row, rowIndex) => <tr key={rowIndex} style={rowHeights[rowIndex] ? { height: `${rowHeights[rowIndex] * 100}%` } : undefined}>{(Array.isArray(row) ? row : []).map((cell, cellIndex) => {
     const cellValue = cellRecord(cell)
     const cellStyle = cellValue.style ?? {}
-    return <td key={cellIndex} style={{ border: '1px solid #999', padding: 4, color: optionalColor(cellStyle.color), background: optionalColor(cellStyle.backgroundColor ?? cellStyle.fill), fontWeight: cellStyle.bold ? 700 : undefined, textAlign: alignment(cellStyle.align, 0) }}>{String(cellValue.text ?? '')}</td>
+    const cellColor = cellStyle.color ?? (cellIndex === 0 ? tableStyle.firstColumnColor : tableStyle.bodyColor)
+    return <td key={cellIndex} style={{ borderBottom: `1px solid ${color(tableStyle.borderColor, '#999999')}`, padding: 4, color: optionalColor(cellColor), background: optionalColor(cellStyle.backgroundColor ?? cellStyle.fill), fontWeight: cellStyle.bold ? 700 : undefined, textAlign: alignment(cellStyle.align, 0), verticalAlign: tableVerticalAlignment(cellStyle.align) }}>{String(cellValue.text ?? '')}</td>
   })}</tr>)}</tbody></table>
 }
 
@@ -138,11 +153,25 @@ function resolveTextStyle(content: Record<string, unknown>, project: PptdProject
   return { ...(named ?? {}), ...content } as PptdTextStyle
 }
 
-function resolveBackground(background: Record<string, unknown> | undefined, project: PptdProject): string {
-  if (!background) return color(project.theme.colors.bg, '#ffffff')
-  if (background.type === 'solid') return color(background.color, color(project.theme.colors.bg, '#ffffff'))
-  if (background.type === 'gradient') return `linear-gradient(${number(background.angle, 180)}deg, ${gradientStops(background.stops)})`
-  return color(project.theme.colors.bg, '#ffffff')
+function resolvePageBackground(background: Record<string, unknown> | undefined, project: PptdProject): CSSProperties {
+  const fallback = color(project.theme.colors.bg, '#ffffff')
+  if (!background) return { background: fallback }
+  if (background.type === 'solid') return { background: color(background.color, fallback) }
+  if (background.type === 'gradient') return { background: `linear-gradient(${number(background.angle, 180)}deg, ${gradientStops(background.stops)})` }
+  if (background.type === 'image' && typeof background.src === 'string') {
+    const source = pptdMediaDataUrl(project.media[background.src], background.src)
+    if (source) {
+      const fit = record(background.fit)
+      return {
+        backgroundColor: fallback,
+        backgroundImage: `url("${source}")`,
+        backgroundRepeat: 'no-repeat',
+        backgroundSize: fit.mode === 'contain' ? 'contain' : 'cover',
+        backgroundPosition: typeof fit.position === 'string' ? fit.position : '50% 50%',
+      }
+    }
+  }
+  return { background: fallback }
 }
 
 function resolveFill(fill: Record<string, unknown> | undefined, project: PptdProject): string {
@@ -173,8 +202,58 @@ function resolveShadow(value: unknown): string | undefined {
 }
 
 function cellRecord(value: unknown): { text?: unknown; style?: Record<string, unknown> } {
-  if (value && typeof value === 'object' && !Array.isArray(value)) return value as { text?: unknown; style?: Record<string, unknown> }
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const cell = value as Record<string, unknown>
+    const content = record(cell.content)
+    return {
+      text: content.text ?? cell.text,
+      style: { ...record(cell.style), ...content },
+    }
+  }
   return { text: value }
+}
+
+function lineStroke(element: PptdElement): Record<string, unknown> {
+  return record(element.stroke ?? element.border)
+}
+
+function lineGeometry(element: PptdElement): { viewBox: string; x1: number; y1: number; x2: number; y2: number } {
+  const viewBox = Array.isArray(element.viewBox) && element.viewBox.length === 2
+    ? [number(element.viewBox[0], element.bounds[2]), number(element.viewBox[1], element.bounds[3])]
+    : [100, 100]
+  const rawPoints = (element as unknown as Record<string, unknown>).points
+  if (typeof rawPoints === 'string') {
+    const points = rawPoints.trim().split(/\s+/).map((point: string) => point.split(',').map(Number))
+    const first = points[0]
+    const last = points.at(-1)
+    if (first?.length === 2 && last?.length === 2 && [...first, ...last].every(Number.isFinite)) {
+      return { viewBox: `0 0 ${viewBox[0]} ${viewBox[1]}`, x1: first[0], y1: first[1], x2: last[0], y2: last[1] }
+    }
+  }
+  return { viewBox: `0 0 ${viewBox[0]} ${viewBox[1]}`, x1: 0, y1: 0, x2: viewBox[0], y2: viewBox[1] }
+}
+
+function normalizedRatios(value: unknown, expected: number): number[] {
+  if (!Array.isArray(value) || value.length !== expected || value.some((item) => typeof item !== 'number' || !Number.isFinite(item) || item <= 0)) return []
+  const total = value.reduce((sum, item) => sum + item, 0)
+  return value.map((item) => item / total)
+}
+
+function tableVerticalAlignment(value: unknown): CSSProperties['verticalAlign'] {
+  const vertical = Array.isArray(value) ? value[1] : undefined
+  return vertical === 'bottom' ? 'bottom' : vertical === 'middle' || vertical === 'mid' || vertical === 'center' ? 'middle' : 'top'
+}
+
+function orderedElements(elements: readonly PptdElement[]): PptdElement[] {
+  if (!elements.some((element) => finiteNumber(element.zIndex) !== undefined)) return [...elements]
+  return elements.map((element, index) => ({ element, index })).sort((left, right) => {
+    const z = number(left.element.zIndex, 0) - number(right.element.zIndex, 0)
+    return z || left.index - right.index
+  }).map(({ element }) => element)
+}
+
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
 }
 
 function gradientStops(value: unknown): string {
@@ -199,6 +278,7 @@ function whiteSpace(value: unknown): CSSProperties['whiteSpace'] {
 
 function number(value: unknown, fallback: number): number { return typeof value === 'number' && Number.isFinite(value) ? value : fallback }
 function finiteNumber(value: unknown): number | undefined { return typeof value === 'number' && Number.isFinite(value) ? value : undefined }
+function clampedNumber(value: unknown, minimum: number, maximum: number, fallback: number): number { return Math.max(minimum, Math.min(maximum, number(value, fallback))) }
 function color(value: unknown, fallback: string): string { return typeof value === 'string' && isHexColor(value) ? value.trim() : fallback }
 function optionalColor(value: unknown): string | undefined { return typeof value === 'string' && isHexColor(value) ? value.trim() : undefined }
 function isHexColor(value: string): boolean { return /^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(value.trim()) }

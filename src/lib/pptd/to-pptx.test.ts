@@ -118,6 +118,36 @@ describe('PPTD export', () => {
     expect(result.degradations.some((message) => message.includes('文本元素重叠'))).toBe(true)
     expect(result.report.count).toBeGreaterThan(0)
   })
+
+  it('embeds image backgrounds and preserves Kimi-style nested table content', async () => {
+    const image = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
+    const result = await exportPptdAsPptx({
+      ...project,
+      media: { 'media/background.png': image, 'media/product.png': image },
+      pages: [{
+        background: { type: 'image', src: 'media/background.png', fit: { mode: 'cover' } },
+        elements: [
+          { elementId: 'product', elementType: 'image', bounds: [620, 80, 280, 180], src: 'media/product.png', fit: { mode: 'cover' } },
+          {
+            elementId: 'specs', elementType: 'table', bounds: [40, 80, 520, 300],
+            columnWidths: [0.3, 0.7], rowHeights: [0.5, 0.5], style: { fontSize: 11 },
+            rows: [
+              [{ content: { text: '传感器' } }, { content: { text: '1 英寸 CMOS' } }],
+              [{ content: { text: '视频' } }, { content: { text: '4K/240fps' } }],
+            ],
+          },
+        ],
+      }],
+    })
+    const zip = await JSZip.loadAsync(await result.blob.arrayBuffer())
+    const slide = await zip.file('ppt/slides/slide1.xml')?.async('string') ?? ''
+
+    expect(Object.keys(zip.files).filter((path) => path.startsWith('ppt/media/')).length).toBeGreaterThanOrEqual(2)
+    expect(slide).toContain('传感器')
+    expect(slide).toContain('1 英寸 CMOS')
+    expect(slide).toContain('<a:srcRect')
+    expect(result.degradations).toEqual([])
+  })
 })
 
 function chartProject(chartType: string): PptdProject {
