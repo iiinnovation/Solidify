@@ -174,7 +174,11 @@ export function prepareCall(
   const tool = tools.find((t) => t.name === call.name)
   if (!tool) {
     const available = tools.map((t) => t.name)
-    const message = `Tool '${call.name}' does not exist. Available tools: ${available.join(', ') || '(none)'}`
+    // Do not echo the internal registry here. Some runtime-only tools (for
+    // example read_handle) are intentionally hidden from the model until a
+    // valid handle exists; listing them in an error invites a second invalid
+    // call. The model already has the authoritative tool schemas in context.
+    const message = `Tool '${call.name}' does not exist. Use only tools provided in the current tool definitions.`
     return {
       ok: false,
       result: {

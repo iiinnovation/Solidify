@@ -76,6 +76,22 @@ describe('PPTD pipeline context', () => {
     expect(enabled.skill?.metadata.allowedTools).not.toContain('capture_preview')
   })
 
+  it('keeps read_file for bundled Skill resources without exposing workspace search tools', () => {
+    const original: QueryContext = {
+      ...context('pptd-deck', ['read_file', 'list_dir', 'search_files', 'generate_pptd']),
+      skillResources: {
+        virtualRoot: '.solidify/skills/pptd-deck',
+        canRead: (path) => path.startsWith('.solidify/skills/pptd-deck/'),
+        read: async () => ({ content: 'reference', bytes: 9, truncated: false }),
+      },
+      tools: ['read_file', 'list_dir', 'search_files'].map(toolNamed),
+    }
+
+    const enabled = enablePptdPipeline(original)
+
+    expect(enabled.tools.map((tool) => tool.name)).toEqual(['read_file', 'generate_pptd'])
+  })
+
   it('hides capture_preview during initial generation even with a workspace or pre-attached generator', () => {
     const generator = toolNamed('generate_pptd')
     const original: QueryContext = {

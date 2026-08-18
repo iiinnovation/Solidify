@@ -92,14 +92,14 @@ describe('read_handle', () => {
 
   it('keeps multibyte chunks below the handleization byte threshold', async () => {
     const memory = new InMemoryState()
-    const handle = await memory.store('甲'.repeat(8000))
+    const handle = await memory.store('甲'.repeat(9000))
     const result = await readHandleTool.execute(
       { handle },
       context(memory),
       new AbortController().signal,
     )
 
-    expect(new TextEncoder().encode(result.content).byteLength).toBeLessThanOrEqual(8000)
-    expect(result.data).toMatchObject({ offset: 0, nextOffset: 2666, total: 8000 })
+    expect(new TextEncoder().encode(result.content).byteLength).toBeLessThanOrEqual(24_000)
+    expect(result.data).toMatchObject({ offset: 0, nextOffset: 8000, total: 9000 })
   })
 })

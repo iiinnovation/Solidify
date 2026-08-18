@@ -136,6 +136,32 @@ describe('context budget accounting', () => {
     expect(estimateTokens('数'.repeat(100))).toBeGreaterThanOrEqual(100)
     expect(estimateTokens('a'.repeat(100))).toBeLessThanOrEqual(30)
   })
+
+  it('does not exhaust on repeated history input when generated output stays within budget', async () => {
+    const turns = [22_000, 24_000, 26_000, 29_000].map((inputTokens, index) => [
+      { type: 'tool_call_start' as const, id: `read-${index}`, name: 'reader' },
+      { type: 'tool_call_end' as const, id: `read-${index}`, input: {} },
+      {
+        type: 'message_end' as const,
+        usage: { inputTokens, outputTokens: 100, totalTokens: inputTokens + 100 },
+        stopReason: 'tool_use' as const,
+      },
+    ])
+    const reader: Tool = {
+      name: 'reader', description: 'reader', inputSchema: { type: 'object' },
+      readOnly: true, concurrencySafe: true, destructive: false,
+      requiresConfirmation: false, availability: 'always', permissions: [],
+      async execute() { return { success: true, content: 'ok' } },
+      renderCall: () => 'reader',
+    }
+    const events = await collect(runQuery(makeCtx(provider([...turns, doneTurn]), {
+      tools: [reader],
+      limits: { maxTurns: 8, maxTokens: 100_000, maxOutputTokens: 1000, maxToolCalls: 20, toolTimeoutMs: 1000 },
+    })))
+
+    expect(events.filter((event) => event.type === 'run.exhausted' && event.reason === 'max_tokens')).toHaveLength(0)
+    expect(events.at(-1)?.type).toBe('run.completed')
+  })
 })
 
 describe('oversized results degrade instead of throwing', () => {
@@ -146,7 +172,7 @@ describe('oversized results degrade instead of throwing', () => {
       search: async () => [],
       clear: async () => undefined,
     }
-    const result = await handleizeLargeResult('y'.repeat(20_000), failing)
+    const result = await handleizeLargeResult('y'.repeat(30_000), failing)
     expect(result.isHandleized).toBe(true)
     expect(result.handle).toBeUndefined()
     expect(result.content).toContain('Storage was unavailable')

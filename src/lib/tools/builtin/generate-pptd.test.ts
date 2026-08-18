@@ -93,4 +93,31 @@ describe('generate_pptd workspace media', () => {
     )).rejects.toThrow('已选择工作区')
     expect(mocks.readWorkspaceBytes).not.toHaveBeenCalled()
   })
+
+  it('does not restart the whole deck when the caller retries after a timeout', async () => {
+    const context = parent()
+    const tool = createGeneratePptdTool(() => context)
+    const execute = () => tool.execute({ brief: 'deck' }, toolContext(context), new AbortController().signal)
+
+    await execute()
+    await expect(execute()).rejects.toThrow('已启动过 generate_pptd')
+    expect(mocks.runPptdDeckPipeline).toHaveBeenCalledTimes(1)
+  })
+
+  it('unlocks the one-shot guard after a failed pipeline so a corrected call can retry', async () => {
+    const context = parent()
+    mocks.runPptdDeckPipeline
+      .mockRejectedValueOnce(new Error('PPTD design 输出达到 token 上限'))
+      .mockResolvedValueOnce({
+        artifact: { title: 'Deck', type: 'slides', path: '03-交付物/deck.pptd', content: '{}', envelope: '<artifact />' },
+        project: { pages: [{}] }, pageReports: [], warnings: [],
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, calls: 1 },
+      })
+    const tool = createGeneratePptdTool(() => context)
+    const execute = () => tool.execute({ brief: 'deck' }, toolContext(context), new AbortController().signal)
+
+    await expect(execute()).rejects.toThrow('PPTD design 输出达到 token 上限')
+    await expect(execute()).resolves.toMatchObject({ success: true })
+    expect(mocks.runPptdDeckPipeline).toHaveBeenCalledTimes(2)
+  })
 })

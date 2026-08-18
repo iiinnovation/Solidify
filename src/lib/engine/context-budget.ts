@@ -105,9 +105,10 @@ export function calculateBudget(ctx: QueryContext, systemPrompt = ''): ContextBu
 }
 
 /**
- * Handle threshold for large tool results (8KB)
+ * Handle threshold for large tool results (24KB). This matches the maximum
+ * read_handle chunk so a retrieved chunk is not immediately handleized again.
  */
-export const HANDLE_THRESHOLD = 8192
+export const HANDLE_THRESHOLD = 24_000
 
 /**
  * Handleize large tool result.

@@ -44,6 +44,11 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
   let completed = false
   let continuations = 0
   let prefill = ''
+  // `usage.totalTokens` remains the provider-reported cost for telemetry. The
+  // run budget deliberately does not charge the same history input again on
+  // every turn: only the first input plus all generated output counts toward
+  // the progress budget.
+  let budgetTokens = 0
   const usage: UsageStats = {
     inputTokens: 0,
     outputTokens: 0,
@@ -114,6 +119,10 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
           isFirstTurn = turn === 0
           currentMessages = [...snapshot.messages]
           Object.assign(usage, snapshot.usage)
+          // New snapshots persist the de-duplicated progress charge. Older
+          // snapshots predate that field, so use their provider total as a
+          // conservative fallback instead of silently resetting the budget.
+          budgetTokens = snapshot.budgetTokens ?? snapshot.usage.totalTokens
           totalToolCalls = snapshot.usage.toolCalls
           logger.log('snapshot.restored', { turn, messageCount: currentMessages.length })
         }
@@ -174,7 +183,9 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
         usage.inputTokens += response.usage.inputTokens
         usage.outputTokens += response.usage.outputTokens
         usage.totalTokens += response.usage.totalTokens
-        if (runCtx.taskTree && !runCtx.taskTree.budget.consume(runCtx.runId, response.usage.totalTokens)) {
+        const charge = response.usage.outputTokens + (turn === 1 ? response.usage.inputTokens : 0)
+        budgetTokens += charge
+        if (runCtx.taskTree && !runCtx.taskTree.budget.consume(runCtx.runId, charge)) {
           harness?.ledger.append('run.exhausted', {
             reason: 'max_tokens',
             scope: 'task_tree',
@@ -215,7 +226,9 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       }
 
       // Check token budget
-      if (usage.totalTokens > ctx.limits.maxTokens) {
+      // Let a tool call already emitted by the model run once so a deliverable
+      // is not discarded merely because the preceding input was large.
+      if (budgetTokens > ctx.limits.maxTokens && response.toolCalls.length === 0) {
         harness?.ledger.append('run.exhausted', { reason: 'max_tokens', usage })
         yield { type: 'run.exhausted', reason: 'max_tokens', usage: { ...usage } }
         logger.log('run.exhausted', { reason: 'max_tokens', usage })
@@ -251,18 +264,44 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
 
       // Some deterministic generators own their final artifact contract. Their
       // tool result stores the complete assistant payload behind a memory
-      // handle so it bypasses another lossy model round and the normal 8KB tool
+      // handle so it bypasses another lossy model round and the normal 24KB tool
       // result clipping boundary.
       const directAssistant = await readDirectAssistantContent(results, runCtx)
       if (directAssistant) {
         usage.inputTokens += directAssistant.usage.inputTokens
         usage.outputTokens += directAssistant.usage.outputTokens
         usage.totalTokens += directAssistant.usage.totalTokens
+        budgetTokens += directAssistant.usage.outputTokens
         yield { type: 'message.delta', text: directAssistant.content }
         yield { type: 'message.completed', content: directAssistant.content }
         harness?.ledger.append('artifact.created', { id: directAssistant.callId, ...directAssistant.artifact })
         completed = true
         break
+      }
+
+      // generate_pptd owns a stateful, one-shot pipeline. If it fails after
+      // starting, feeding the error back to the model invites a second call
+      // that can never succeed and only produces the misleading "already
+      // started" guard error. Preserve the original pipeline failure and end
+      // this run; the user can start a fresh run after adjusting the brief.
+      const failedPptd = results.find((result) =>
+        !result.success
+        && response.toolCalls.some((call) => call.id === result.callId && call.name === 'generate_pptd'),
+      )
+      if (failedPptd) {
+        const message = failedPptd.error?.message || failedPptd.content || 'generate_pptd 执行失败'
+        const error: RunError = { kind: 'internal', message }
+        appendTerminalFact(harness, logger, 'run.failed', { ...error, usage })
+        yield { type: 'run.failed', error, usage: { ...usage } }
+        logger.error('run.failed', error)
+        return
+      }
+
+      if (budgetTokens > ctx.limits.maxTokens) {
+        harness?.ledger.append('run.exhausted', { reason: 'max_tokens', usage })
+        yield { type: 'run.exhausted', reason: 'max_tokens', usage: { ...usage } }
+        logger.log('run.exhausted', { reason: 'progress_budget', usage, budgetTokens })
+        return
       }
 
       // Append assistant message with tool calls
@@ -304,6 +343,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
             turn,
             messages: currentMessages,
             usage: { ...usage },
+            budgetTokens,
             ts: new Date().toISOString(),
           })
           logger.log('snapshot.written', { turn })

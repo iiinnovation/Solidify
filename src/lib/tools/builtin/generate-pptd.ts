@@ -30,11 +30,16 @@ export const GENERATE_PPTD_TIMEOUT_MS = 30 * 60_000
 
 /** Dynamic because the pipeline must use the active run's provider and budget. */
 export function createGeneratePptdTool(getParent: () => QueryContext): Tool<GeneratePptdInput, GeneratePptdOutput> {
+  // A deck generation owns a large, stateful model pipeline. Retrying the
+  // whole tool after a timeout would silently start all pages from scratch;
+  // keep the Skill's "call exactly once" contract enforceable at runtime.
+  let started = false
   return {
     name: 'generate_pptd',
     description: [
       'Generate one complete PPTD deck from a prepared brief and source materials.',
       'Use this exactly once after reading all relevant workspace files and references.',
+      'When no workspace is selected, use the user attachments and conversation content already present in context; do not try to read attachment filenames with read_file or read_handle.',
       'The tool performs outline generation, bounded parallel page generation, validation, targeted repair, and emits the final slides artifact directly.',
       'It includes an art-direction stage backed by the bundled open-kimi-ppt scenario guides, design systems, and reference pages.',
       'Do not generate page YAML yourself before or after calling it.',
@@ -67,46 +72,56 @@ export function createGeneratePptdTool(getParent: () => QueryContext): Tool<Gene
     permissions: [],
     timeoutMs: GENERATE_PPTD_TIMEOUT_MS,
     async execute(input, ctx, signal, onProgress) {
-      const parent = getParent()
-      const workspaceMedia = await loadWorkspaceMedia(input.mediaPaths, parent, signal)
-      const result = await runPptdDeckPipeline(parent, {
-        ...input,
-        media: { ...(parent.pptdMedia ?? {}), ...workspaceMedia },
-      }, {
-        signal,
-        onProgress(progress) {
-          onProgress?.({
-            phase: `pptd_${progress.stage}`,
-            current: progress.current,
-            total: progress.total,
-            message: progress.message,
-            detail: progress,
-          })
-        },
-      })
-      const contentHandle = await ctx.memory.store(result.artifact.envelope)
-      const output: GeneratePptdOutput = {
-        directAssistantContent: true,
-        contentHandle,
-        artifact: {
-          title: result.artifact.title,
-          type: result.artifact.type,
-          path: result.artifact.path,
-        },
-        pageReports: result.pageReports.map(({ pageIndex, status, attempts }) => ({ pageIndex, status, attempts })),
-        warnings: result.warnings,
-        usage: result.usage,
-      }
-      return {
-        success: true,
-        content: JSON.stringify({
-          summary: `PPTD deck generated: ${result.project.pages.length} pages`,
-          artifact: output.artifact,
-          pageReports: output.pageReports,
-          warnings: output.warnings,
+      if (started) throw new Error('本次运行已启动过 generate_pptd；请等待已有生成结束，不要从头重复生成。')
+      started = true
+      try {
+        const parent = getParent()
+        const workspaceMedia = await loadWorkspaceMedia(input.mediaPaths, parent, signal)
+        const result = await runPptdDeckPipeline(parent, {
+          ...input,
+          media: { ...(parent.pptdMedia ?? {}), ...workspaceMedia },
+        }, {
+          signal,
+          onProgress(progress) {
+            onProgress?.({
+              phase: `pptd_${progress.stage}`,
+              current: progress.current,
+              total: progress.total,
+              message: progress.message,
+              detail: progress,
+            })
+          },
+        })
+        const contentHandle = await ctx.memory.store(result.artifact.envelope)
+        const output: GeneratePptdOutput = {
+          directAssistantContent: true,
           contentHandle,
-        }),
-        data: output,
+          artifact: {
+            title: result.artifact.title,
+            type: result.artifact.type,
+            path: result.artifact.path,
+          },
+          pageReports: result.pageReports.map(({ pageIndex, status, attempts }) => ({ pageIndex, status, attempts })),
+          warnings: result.warnings,
+          usage: result.usage,
+        }
+        return {
+          success: true,
+          content: JSON.stringify({
+            summary: `PPTD deck generated: ${result.project.pages.length} pages`,
+            artifact: output.artifact,
+            pageReports: output.pageReports,
+            warnings: output.warnings,
+            contentHandle,
+          }),
+          data: output,
+        }
+      } catch (error) {
+        // A failed pipeline did not produce a deliverable. Allow a fresh call
+        // on this tool instance so a caller can adjust the brief and retry;
+        // successful generation remains one-shot and stays locked.
+        started = false
+        throw error
       }
     },
     renderCall(input) {

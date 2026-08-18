@@ -146,6 +146,37 @@ describe('runQuery tool execution (M1-14/15)', () => {
     })
   })
 
+  it('terminates after a one-shot PPTD generator fails instead of retrying it', async () => {
+    let providerCalls = 0
+    const provider: ModelProvider = {
+      ...makeMockProvider([]),
+      async *stream(): AsyncGenerator<CompletionChunk> {
+        providerCalls++
+        yield { type: 'tool_call_start', id: `deck-${providerCalls}`, name: 'generate_pptd' }
+        yield { type: 'tool_call_end', id: `deck-${providerCalls}`, input: { brief: 'deck' } }
+        yield { type: 'message_end', stopReason: 'tool_use' }
+      },
+    }
+    const generator: Tool = {
+      name: 'generate_pptd', description: 'generate', inputSchema: { type: 'object' },
+      readOnly: true, concurrencySafe: false, destructive: false,
+      requiresConfirmation: false, availability: 'always', permissions: [],
+      async execute(): Promise<ToolResult> {
+        throw new Error('PPTD page 输出达到 token 上限')
+      },
+      renderCall: () => 'generate',
+    }
+    const events: QueryEvent[] = []
+    for await (const event of runQuery({ ...makeCtx(provider, [generator]) })) events.push(event)
+
+    expect(providerCalls).toBe(1)
+    expect(events.filter((event) => event.type === 'tool.requested')).toHaveLength(1)
+    expect(events.at(-1)).toMatchObject({
+      type: 'run.failed',
+      error: { kind: 'internal', message: 'PPTD page 输出达到 token 上限' },
+    })
+  })
+
   it('feeds capture results back as an image in the next model turn', async () => {
     const requests: CompletionRequest[] = []
     let turn = 0
@@ -254,7 +285,8 @@ describe('runQuery tool execution (M1-14/15)', () => {
     expect(completed).toHaveLength(2)
     const unknown = completed.find((c) => c.callId === 't1')!
     expect(unknown.result.success).toBe(false)
-    expect(unknown.result.content).toContain('reader') // lists available tools
+    expect(unknown.result.content).not.toContain('reader')
+    expect(unknown.result.content).toContain('current tool definitions')
 
     const executed = completed.find((c) => c.callId === 't2')!
     expect(executed.result.success).toBe(true)

@@ -8,7 +8,7 @@ interface ReadHandleInput {
 }
 
 const DEFAULT_LIMIT = 8000
-const MAX_CHUNK_BYTES = 8000
+const MAX_CHUNK_BYTES = 24_000
 
 export const readHandleTool: Tool<ReadHandleInput> = {
   name: 'read_handle',

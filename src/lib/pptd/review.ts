@@ -48,7 +48,7 @@ export interface PptdReviewResult {
 
 /** Stable self-check prompt used by model adapters that support vision. */
 export function buildPptdReviewPrompt(pageIndex: number, pageCount: number): string {
-  return `请审阅 PPTD 第 ${pageIndex + 1}/${pageCount} 页截图。只报告可观察到的排版问题：文本重叠或溢出、元素越界、对比度不足、对齐/留白失衡、图片裁切异常和层级遮挡。若没有问题，返回 APPROVED；若有问题，按 elementId 给出最小可执行修复建议。`
+  return `请审阅 PPTD 第 ${pageIndex + 1}/${pageCount} 页截图。只报告可观察到的排版问题：文本重叠或溢出、元素越界、对比度不足、对齐/留白失衡、图片裁切异常、层级遮挡、图表是否只有坐标轴/空数据，以及图形是否错误表达了本应使用节点和连线的架构关系。若没有问题，返回 APPROVED；若有问题，按 elementId 给出最小可执行修复建议。`
 }
 
 /**

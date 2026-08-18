@@ -118,6 +118,8 @@ export interface TurnSnapshot {
   turn: number
   messages: Message[]
   usage: UsageStats
+  /** Progress-budget charge (first-turn input plus generated output). */
+  budgetTokens?: number
   ts: string
 }
 
@@ -234,7 +236,8 @@ export interface ContextBudget {
 }
 
 /**
- * Large result handleization threshold
+ * Large result handleization threshold. Keep this aligned with the context
+ * budget and read_handle chunk ceiling.
  * Results larger than this are stored with a handle
  */
-export const HANDLE_THRESHOLD = 8192  // 8KB
+export const HANDLE_THRESHOLD = 24_000  // 24KB

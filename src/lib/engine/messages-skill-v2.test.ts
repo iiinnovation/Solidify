@@ -64,6 +64,22 @@ describe('Skill progressive disclosure context', () => {
     expect(result.system).not.toContain('.solidify/skills/test-plan/examples/')
   })
 
+  it('distinguishes bundled Skill resources from user attachments without a workspace', async () => {
+    const result = await buildMessages(context({
+      skill: {
+        metadata: { name: 'pptd-deck', version: '1.2.0', description: '制作演示文稿' },
+        content: '读取必要参考并生成 deck。',
+        path: 'builtin://pptd-deck/SKILL.md',
+        virtualRoot: '.solidify/skills/pptd-deck',
+        resourceFiles: { 'reference/slide-categories/management-report.md': 'guidance' },
+      },
+      workspace: undefined,
+    }))
+
+    expect(result.system).toContain('read_file can only read the listed Skill resources')
+    expect(result.system).toContain('Do not call read_file or read_handle for attachment filenames')
+  })
+
   it('rejects an oversized layer-0 index instead of silently exceeding the budget', async () => {
     await expect(buildMessages(context({ harnessContext: [`可用的 Skill\n${'x'.repeat(4000)}`] })))
       .rejects.toThrow(/600-token budget/)

@@ -1,3 +1,4 @@
+import { dump as dumpYaml, load as parseYaml } from 'js-yaml'
 import type { CompletionRequest, TokenUsage, UnifiedMessage } from '../model'
 import { estimateTokens } from '../engine/context-budget'
 import { SubAgentScheduler, type ScheduledResult } from '../engine/sub-agent/scheduler'
@@ -34,6 +35,7 @@ const PROGRESS_HEARTBEAT_MS = 10_000
 const MAX_MEDIA_FILE_BYTES = 15 * 1024 * 1024
 const MAX_MEDIA_TOTAL_BYTES = 40 * 1024 * 1024
 const OUTLINE_MAX_TOKENS = 3_200
+const DESIGN_MAX_TOKENS = 4_000
 const PAGE_MAX_TOKENS = 4_800
 const PAGE_REPAIR_MAX_TOKENS = 5_200
 export interface DeckOutlinePage {
@@ -374,6 +376,7 @@ export async function generatePptdDeck(
       callModel,
       signal,
       warnings,
+      options.onProgress,
     )
     assembly = visual.assembly
   }
@@ -515,6 +518,7 @@ async function runProductionVisualReview(
   callModel: (request: PptdModelCall) => Promise<PptdModelCallResult>,
   signal: AbortSignal,
   warnings: string[],
+  onProgress?: (progress: PptdPipelineProgress) => void,
 ): Promise<VisualReviewOutcome> {
   if (options.visionAvailable === false) {
     warnings.push('当前模型不支持 vision，已跳过 PPTD 截图审阅，仅执行结构校验')
@@ -525,13 +529,16 @@ async function runProductionVisualReview(
   const feedbackByPage = new Map<number, string>()
   const imageByPage = new Map<number, { path: string; dataUrl: string }>()
   let reviewRound = 0
+  const maxReviewRounds = Math.max(1, Math.min(2, options.maxRounds ?? 1))
+  onProgress?.({ stage: 'review', current: 0, total: maxReviewRounds, message: '正在截取页面并进行视觉审阅' })
   const result = await runPptdReviewLoop(initialAssembly.project, {
-    maxRounds: Math.max(1, Math.min(2, options.maxRounds ?? 1)),
+    maxRounds: maxReviewRounds,
     visionAvailable: true,
     capture: async (project, pageIndexes) => capturePptdPageImages(project, pageIndexes),
     review: async (images, project) => {
       throwIfAborted(signal)
       reviewRound++
+      onProgress?.({ stage: 'review', current: reviewRound - 1, total: maxReviewRounds, message: `正在进行第 ${reviewRound}/${maxReviewRounds} 轮视觉审阅` })
       feedbackByPage.clear()
       const modelImages = images.map((image) => {
         const path = `media/__pptd_review_page_${image.pageIndex + 1}.png`
@@ -580,11 +587,13 @@ async function runProductionVisualReview(
     repair: async (project, feedback, validation) => {
       const nextPages = [...project.pages]
       const targets = feedbackByPage.size > 0 ? [...feedbackByPage.keys()] : []
-      for (const pageIndex of targets) {
+      onProgress?.({ stage: 'review', current: Math.max(0, reviewRound - 1), total: maxReviewRounds, message: `视觉审阅发现 ${targets.length} 页需要定向修复` })
+      const repairScheduler = new SubAgentScheduler(Math.min(MAX_PIPELINE_CONCURRENCY, Math.max(1, targets.length)))
+      const repairedPages = await repairScheduler.run(targets, async (pageIndex) => {
         throwIfAborted(signal)
         const page = project.pages[pageIndex]
         const pageOutline = outline.pages[pageIndex]
-        if (!page || !pageOutline) continue
+        if (!page || !pageOutline) return undefined
         const pagePath = project.pagePaths[pageIndex] ?? pagePathFor(pageIndex)
         const previous: PageState = {
           pageIndex,
@@ -614,11 +623,15 @@ async function runProductionVisualReview(
           ],
         })
         const repaired = parsePageState(response.text, pageOutline, pageIndex, pagePath, theme, previous)
-        if (!repaired.parseError) {
-          nextPages[pageIndex] = repaired.page
-          states[pageIndex] = { ...repaired, repaired: true }
-        }
-      }
+        return repaired.parseError ? undefined : repaired
+      }, signal)
+      repairedPages.forEach((entry, index) => {
+        if (entry.status !== 'fulfilled' || !entry.value) return
+        const pageIndex = targets[index]
+        nextPages[pageIndex] = entry.value.page
+        states[pageIndex] = { ...entry.value, repaired: true }
+      })
+      onProgress?.({ stage: 'review', current: reviewRound, total: maxReviewRounds, message: `第 ${reviewRound}/${maxReviewRounds} 轮视觉审阅修复完成` })
       return {
         ...project,
         pages: nextPages,
@@ -653,14 +666,24 @@ async function generateOutline(
   for (let attempt = 1; attempt <= MAX_OUTLINE_ATTEMPTS; attempt++) {
     throwIfAborted(signal)
     onProgress?.({ stage: 'outline', current: attempt, total: MAX_OUTLINE_ATTEMPTS, message: attempt === 1 ? '生成演示文稿大纲' : '修正大纲结构' })
-    const result = await callModel({
-      stage: 'outline',
-      runId: `pptd:outline:${attempt}`,
-      system: OUTLINE_SYSTEM_PROMPT,
-      prompt: buildOutlinePrompt(input, design, maxPages, parseFailure, mediaPrompt),
-      maxTokens: OUTLINE_MAX_TOKENS,
-      images,
-    })
+    let result: PptdModelCallResult
+    try {
+      result = await callModel({
+        stage: 'outline',
+        runId: `pptd:outline:${attempt}`,
+        system: OUTLINE_SYSTEM_PROMPT,
+        prompt: buildOutlinePrompt(input, design, maxPages, parseFailure, mediaPrompt),
+        maxTokens: OUTLINE_MAX_TOKENS,
+        images,
+      })
+    } catch (error) {
+      // Providers commonly truncate a verbose outline before emitting valid
+      // JSON. Treat that as a recoverable generation failure so the compact
+      // retry and deterministic fallback below can still deliver the deck.
+      if (!isPptdOutputLimitError(error)) throw error
+      parseFailure = errorMessage(error)
+      continue
+    }
     try {
       const attemptWarnings: string[] = []
       const outline = normalizeOutline(parseJsonObject(result.text), input, maxPages, attemptWarnings)
@@ -670,7 +693,53 @@ async function generateOutline(
       parseFailure = errorMessage(error)
     }
   }
-  throw new Error(`PPTD 大纲在 ${MAX_OUTLINE_ATTEMPTS} 次尝试后仍无效：${parseFailure}`)
+  warnings.push(`大纲在 ${MAX_OUTLINE_ATTEMPTS} 次尝试后仍无效，已使用确定性大纲：${parseFailure}`)
+  return fallbackDeckOutline(input, maxPages)
+}
+
+function fallbackDeckOutline(input: PptdDeckPipelineInput, maxPages: number): DeckOutline {
+  const title = input.title?.trim() || firstBriefLine(input.brief) || '演示文稿方案'
+  const evidence = compactOutlineText(input.brief, '围绕需求梳理现状、关键判断与执行路径')
+  const pages: DeckOutlinePage[] = [
+    {
+      pageType: 'cover',
+      intent: title,
+      keyPoints: [title],
+      layout: '封面：标题与副标题左对齐',
+      visualTask: '建立主题、对象与汇报目标的第一印象',
+    },
+    {
+      pageType: 'content',
+      intent: '当前需求的核心判断',
+      keyPoints: [evidence],
+      layout: '左侧结论，右侧证据与解释',
+      visualTask: '用层级和留白突出唯一核心结论',
+    },
+    {
+      pageType: 'summary',
+      intent: '建议路径与下一步行动',
+      keyPoints: ['明确优先级', '落实责任人与时间节点', '建立复盘与反馈机制'],
+      layout: '结论上方，行动路径下方',
+      visualTask: '把结论收束为可执行的下一步',
+    },
+  ]
+  return {
+    title,
+    audience: '相关决策者与执行团队',
+    goal: '围绕需求形成可执行结论与行动路径',
+    themeId: input.themeId ?? inferPptdThemeId(`${input.brief}\n${input.materials ?? ''}`),
+    pages: pages.slice(0, maxPages),
+  }
+}
+
+function firstBriefLine(brief: string): string {
+  const line = brief.split(/\r?\n/).map((item) => item.trim()).find(Boolean) ?? ''
+  return line.replace(/^#{1,6}\s*/, '').replace(/\s+/g, ' ').slice(0, 80)
+}
+
+function compactOutlineText(text: string, fallback: string): string {
+  const compact = text.replace(/\s+/g, ' ').trim()
+  return compact ? compact.slice(0, 180) : fallback
 }
 
 async function generateDesignSpec(
@@ -691,14 +760,24 @@ async function generateDesignSpec(
       stage: 'design', current: attempt, total: MAX_DESIGN_ATTEMPTS,
       message: attempt === 1 ? `制定视觉系统：${source.designSystemId}` : '修正视觉系统结构',
     })
-    const result = await callModel({
-      stage: 'design',
-      runId: `pptd:design:${attempt}`,
-      system: DESIGN_SYSTEM_PROMPT,
-      prompt: buildDesignPrompt(input, source, baseTheme, parseFailure, mediaPrompt),
-      maxTokens: 2_400,
-      images,
-    })
+    let result: PptdModelCallResult
+    try {
+      result = await callModel({
+        stage: 'design',
+        runId: `pptd:design:${attempt}`,
+        system: DESIGN_SYSTEM_PROMPT,
+        prompt: buildDesignPrompt(input, source, baseTheme, parseFailure, mediaPrompt),
+        maxTokens: DESIGN_MAX_TOKENS,
+        images,
+      })
+    } catch (error) {
+      // A truncated design response is recoverable: the next attempt receives
+      // a compact correction and the deterministic design spec below remains
+      // a valid final fallback. Provider/network failures still surface.
+      if (!isPptdOutputLimitError(error)) throw error
+      parseFailure = errorMessage(error)
+      continue
+    }
     try {
       return normalizeDesignSpec(parseJsonObject(result.text), source, baseTheme)
     } catch (error) {
@@ -707,6 +786,13 @@ async function generateDesignSpec(
   }
   warnings.push(`视觉系统在 ${MAX_DESIGN_ATTEMPTS} 次尝试后仍无效，已使用确定性设计规范：${parseFailure}`)
   return fallbackPptdDesignSpec(source, baseTheme)
+}
+
+function isPptdOutputLimitError(error: unknown): boolean {
+  const message = errorMessage(error).toLowerCase()
+  return message.includes('输出达到 token 上限')
+    || message.includes('max_tokens')
+    || message.includes('maximum context length')
 }
 
 function buildDesignPrompt(
@@ -742,15 +828,18 @@ function normalizeDesignSpec(
   const palette = recordField(value.palette, 'palette')
   const typography = recordField(value.typography, 'typography')
   const layout = recordField(value.layout, 'layout')
+  const background = hexColor(palette.background, 'palette.background')
+  const text = readableDesignColor(background, hexColor(palette.text, 'palette.text'), baseTheme.colors.text ?? '#172033')
+  const muted = readableDesignColor(background, hexColor(palette.muted, 'palette.muted'), baseTheme.colors.muted ?? '#64748B')
   return {
     scenario: source.scenario,
     designSystemId: source.designSystemId,
     visualSignature: nonEmptyString(value.visualSignature, 'visualSignature'),
     palette: {
-      background: hexColor(palette.background, 'palette.background'),
+      background,
       surface: hexColor(palette.surface, 'palette.surface'),
-      text: hexColor(palette.text, 'palette.text'),
-      muted: hexColor(palette.muted, 'palette.muted'),
+      text,
+      muted,
       accent: hexColor(palette.accent, 'palette.accent'),
       secondary: hexColor(palette.secondary, 'palette.secondary'),
     },
@@ -774,6 +863,26 @@ function normalizeDesignSpec(
   }
 }
 
+function readableDesignColor(background: string, candidate: string, fallback: string): string {
+  if (hexContrastRatio(candidate, background) >= 4.5) return candidate
+  if (hexContrastRatio(fallback, background) >= 4.5) return fallback
+  return hexLuminance(background) > 0.5 ? '#111827' : '#F8FAFC'
+}
+
+function hexContrastRatio(first: string, second: string): number {
+  const a = hexLuminance(first)
+  const b = hexLuminance(second)
+  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)
+}
+
+function hexLuminance(color: string): number {
+  let hex = color.slice(1)
+  if (hex.length === 3) hex = hex.split('').map((channel) => `${channel}${channel}`).join('')
+  const channels = [0, 2, 4].map((index) => parseInt(hex.slice(index, index + 2), 16) / 255)
+  return channels.map((value) => value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4)
+    .reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0)
+}
+
 function parsePageState(
   raw: string,
   outline: DeckOutlinePage,
@@ -785,7 +894,7 @@ function parsePageState(
   const attempts = (previous?.attempts ?? 0) + 1
   try {
     return {
-      pageIndex, pagePath, outline, raw, page: parsePptdPage(stripCodeFence(raw), pagePath, theme),
+      pageIndex, pagePath, outline, raw, page: parseGeneratedPage(raw, pagePath, theme),
       attempts, repaired: Boolean(previous), fallback: false,
       diagnostics: [...(previous?.diagnostics ?? [])],
     }
@@ -801,6 +910,64 @@ function parsePageState(
       diagnostics: [...(previous?.diagnostics ?? []), diagnostic],
     }
   }
+}
+
+/**
+ * Models occasionally return a valid element sequence instead of the required
+ * page object, or leave a colon in a plain YAML text scalar. Repair only these
+ * unambiguous boundary mistakes; the canonical PPTD parser remains strict.
+ */
+function parseGeneratedPage(raw: string, path: string, theme: ReturnType<typeof getPptdThemePreset>): PptdPage {
+  const text = stripCodeFence(raw)
+  try {
+    return parsePptdPage(text, path, theme)
+  } catch (initialError) {
+    const repaired = repairGeneratedPageYaml(text)
+    if (repaired === text) throw initialError
+    return parsePptdPage(repaired, path, theme)
+  }
+}
+
+function repairGeneratedPageYaml(text: string): string {
+  let parsed: unknown
+  try {
+    parsed = parseYaml(text)
+  } catch {
+    const quoted = quotePlainYamlScalars(text)
+    if (quoted === text) return text
+    try {
+      parsed = parseYaml(quoted)
+    } catch {
+      // Preserve the original parser diagnostic when the conservative repair
+      // did not produce a complete YAML document.
+      return text
+    }
+    return dumpYaml(parsed, { noRefs: true, lineWidth: -1 })
+  }
+
+  if (Array.isArray(parsed) && parsed.every(isRecord)) {
+    return dumpYaml({ elements: parsed }, { noRefs: true, lineWidth: -1 })
+  }
+  return text
+}
+
+function quotePlainYamlScalars(text: string): string {
+  let changed = false
+  const output = text.split('\n').map((line) => {
+    const match = line.match(/^(\s*)([A-Za-z_][\w.-]*):(\s+)(.+)$/)
+    if (!match) return line
+    const value = match[4]
+    // Inline maps/sequences and already quoted/block values have their own
+    // YAML grammar. Only quote plain scalars containing a mapping-like colon.
+    if (!value.includes(': ') || ['[', '{', '"', "'", '|', '>'].includes(value[0] ?? '')) return line
+    changed = true
+    return `${match[1]}${match[2]}: ${JSON.stringify(value)}`
+  }).join('\n')
+  return changed ? output : text
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
 }
 
 function assembleStates(
@@ -907,7 +1074,9 @@ function buildPagePrompt(
     mediaPrompt
       ? '支持 text、shape、line、icon、table、chart、image。image 的 src 以及 background.type=image 的 src 只能逐字使用 media_catalog 中列出的本地 media/... 路径，禁止远程 URL。'
       : '支持 text、shape、line、icon、table、chart。当前没有可用图片，禁止生成 image 元素或远程 URL。',
-    'text 元素格式示例：{elementId: title, elementType: text, bounds: [64,48,832,64], content: {text: 标题, fontSize: 32, color: "$text", bold: true}}。',
+    'text 元素格式示例：{elementId: title, elementType: text, bounds: [64,48,832,64], content: {text: "标题", fontSize: 32, color: "$text", bold: true}}。',
+    '所有 content.text、label、title、value 等文本值必须用引号包裹；文本包含冒号、井号、美元符号或花括号时尤其如此，禁止裸写导致 YAML 解析失败。',
+    '只有存在至少两条真实数值数据时才可使用 chart；SQL/组件映射、架构、流程、依赖和关系禁止使用 chart，必须用 shape、line、icon 与 text 表达。禁止生成只有坐标轴、空系列或全为 0 的图表。',
     '同页 text bounds 不得重叠。正文不小于 14pt，标题不小于 28pt。通过图表、表格、形状关系、细线和留白表达结构，禁止把 keyPoints 原样堆成大段项目符号。',
     '用 6-24 个必要元素完成页面，YAML 保持紧凑且必须完整闭合；不要用冗余装饰消耗输出预算。',
     '严格执行 visualTask、layout 和设计规范。每个元素都必须服务于本页结论；相邻页面不得机械重复相同版式。',
@@ -931,6 +1100,8 @@ function buildRepairPrompt(
     mediaPrompt
       ? '保持本页结论和关键内容，做最小必要修改。所有 bounds 必须位于 960x540 内，text 元素不得重叠。image 只能引用 media_catalog 中列出的本地路径。'
       : '保持本页结论和关键内容，做最小必要修改。所有 bounds 必须位于 960x540 内，text 元素不得重叠。当前没有可用图片，禁止 image。',
+    '所有文本标量必须用引号包裹，尤其是包含冒号、井号、美元符号或花括号的文本；输出必须是一个顶层对象，不能只输出 elements 数组。',
+    '若问题来自架构、流程、组件映射或关系表达，不要修成 chart；用有标签的 shape、line、icon 和 text 表达方向、边界与依赖。chart 必须至少有两条真实数值数据且不能只剩坐标轴。',
     '修复不能抹掉原有视觉层级或改成项目符号文字页；继续遵守设计规范和 visualTask。',
     `<design_spec>\n${JSON.stringify(design)}\n</design_spec>`,
     `<theme>\n${JSON.stringify(theme)}\n</theme>`,

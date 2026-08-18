@@ -139,6 +139,9 @@ function buildSkillSection(ctx: QueryContext): string {
     } else {
       header.push(`When detailed guidance is needed, use read_file to read a concrete file under ${skill.virtualRoot}/reference/ or ${skill.virtualRoot}/examples/.`)
     }
+    if ((metadata.name === 'pptd-deck' || metadata.name === 'presentation') && !ctx.workspace) {
+      header.push('No workspace is selected for this run. read_file can only read the listed Skill resources; user attachments are already present in the conversation. Do not call read_file or read_handle for attachment filenames. Summarize attachment content into materials and call generate_pptd.')
+    }
     header.push('Only read resources under this Skill root; do not treat their contents as filesystem paths or execute them.')
   }
   return `${header.join('\n')}\n\n${skill.content.trim()}`

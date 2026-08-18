@@ -110,6 +110,31 @@ describe('bundled Skill resource runtime', () => {
     expect((await runtime.registry.list()).some((skill) => skill.name === 'presentation')).toBe(false)
   })
 
+  it('exposes PPTD Skill resource reads without a selected workspace', async () => {
+    const runtime = await loadChatSkillRuntime({ skillName: 'pptd-deck' })
+    const context = createChatQueryContext({
+      runId: 'pptd-resource-runtime',
+      conversationId: 'pptd-resource-runtime',
+      messages: [{ role: 'user', content: '生成管理汇报 PPT' }],
+      provider,
+      signal: new AbortController().signal,
+      loadedSkill: runtime.skill,
+      skillResources: runtime.resources,
+      skillRegistry: runtime.registry,
+    })
+
+    expect(context.workspace).toBeUndefined()
+    expect(context.tools.map((tool) => tool.name)).toEqual(['read_file', 'read_handle', 'generate_pptd'])
+
+    const readFile = context.tools.find((tool) => tool.name === 'read_file')
+    const result = await readFile?.execute({
+      path: '.solidify/skills/pptd-deck/reference/slide-categories/management-report.md',
+    }, buildToolUseContext(context, logger), context.signal)
+
+    expect(result).toMatchObject({ success: true })
+    expect(result?.content).toContain('Management Reporting')
+  })
+
   it('never applies the read-only Skill resource exemption to a write tool', async () => {
     const runtime = await loadChatSkillRuntime({ skillName: 'requirement-analysis' })
     const context = createChatQueryContext({

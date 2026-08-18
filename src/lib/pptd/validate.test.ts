@@ -20,7 +20,7 @@ describe('PPTD semantic validation gate', () => {
     const result = validatePptdProject(project)
     const errors = result.errors.map((item) => item.code)
     const warnings = result.warnings.map((item) => item.code)
-    expect(errors).toEqual(expect.arrayContaining(['out-of-bounds', 'text-overlap', 'missing-media']))
+    expect(errors).toEqual(expect.arrayContaining(['out-of-bounds', 'text-overlap', 'missing-media', 'illegible-contrast']))
     expect(warnings).toEqual(expect.arrayContaining(['hidden-element', 'small-font', 'low-contrast', 'text-overflow', 'undefined-token']))
   })
 
@@ -87,5 +87,19 @@ describe('PPTD semantic validation gate', () => {
     })
 
     expect(result.errors).toContainEqual(expect.objectContaining({ code: 'missing-media' }))
+  })
+
+  it('blocks charts that cannot render meaningful data', () => {
+    const result = validatePptdProject({
+      version: 'v2', title: 'Chart quality', size: [960, 540], pagePaths: ['pages/01.page'], media: {},
+      theme: { colors: { bg: '#FFFFFF' }, textStyles: {} },
+      pages: [{ elements: [{
+        elementId: 'architecture-chart', elementType: 'chart', bounds: [40, 40, 880, 400],
+        chartType: 'line', data: [{ name: 'SQL 解析' }],
+      }] }],
+    })
+
+    expect(result.valid).toBe(false)
+    expect(result.errors.map((item) => item.code)).toEqual(expect.arrayContaining(['chart-insufficient-data', 'chart-no-visible-data']))
   })
 })

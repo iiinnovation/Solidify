@@ -21,10 +21,14 @@ export function enablePptdPipeline(base: QueryContext): QueryContext {
   // run completes. capture_preview therefore cannot succeed in this model turn.
   // Enforce that lifecycle structurally, including for stale workspace Skills.
   const allowedTools = base.skill?.metadata.allowedTools?.filter((name) => !INITIAL_PPTD_BLOCKED_TOOLS.has(name))
-  const tools = base.tools.filter((candidate) =>
-    !INITIAL_PPTD_BLOCKED_TOOLS.has(candidate.name)
-    && (base.workspace || !WORKSPACE_READ_TOOLS.has(candidate.name)),
-  )
+  const tools = base.tools.filter((candidate) => {
+    if (INITIAL_PPTD_BLOCKED_TOOLS.has(candidate.name)) return false
+    // A bundled Skill can expose read_file without a selected workspace. Keep
+    // that narrow virtual-resource capability, but continue hiding tools that
+    // would access the user's filesystem outside an explicit workspace.
+    if (candidate.name === 'read_file' && base.skillResources) return true
+    return Boolean(base.workspace) || !WORKSPACE_READ_TOOLS.has(candidate.name)
+  })
   const sanitized: QueryContext = tools.length === base.tools.length
     && allowedTools?.length === base.skill?.metadata.allowedTools?.length
     ? base

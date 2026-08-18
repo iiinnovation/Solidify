@@ -67,7 +67,15 @@ function checkElement(element: PptdElement, page: PptdPage, project: PptdProject
     const color = typeof content?.color === 'string' ? content.color : undefined
     const actualBackground = page.background?.color ?? project.theme.colors.bg
     const background = typeof actualBackground === 'string' ? actualBackground : undefined
-    if (color && background && contrastRatio(color, background) < 4.5) warnings.push(diagnostic(path, '文字与背景对比度低于 WCAG AA 建议值', 'low-contrast', 'warning'))
+    if (color && background) {
+      const ratio = contrastRatio(color, background)
+      if (ratio < 4.5) warnings.push(diagnostic(path, '文字与背景对比度低于 WCAG AA 建议值', 'low-contrast', 'warning'))
+      // A ratio this low is not merely a style preference: the text is
+      // effectively unreadable and must be repaired before delivery. Keep the
+      // gate below the large-display threshold so existing branded accent
+      // covers (for example white on warm orange) remain export-compatible.
+      if (ratio < 2) errors.push(diagnostic(path, '文字与背景对比度过低，无法可靠阅读', 'illegible-contrast'))
+    }
     const rawText = typeof content?.text === 'string' ? content.text : ''
     const text = rawText.replace(/<\/p\s*>/gi, '\n').replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]*>/g, '')
     const fontSize = Math.max(1, number(content?.fontSize, 18))
@@ -84,6 +92,11 @@ function checkElement(element: PptdElement, page: PptdPage, project: PptdProject
     const chart = getPptdChartSpec(element)
     if (!isNativePptdChartType(chart.chartType) && !isImagePptdChartType(chart.chartType)) errors.push(diagnostic(path, `不支持的 chartType：${chart.chartType}`, 'invalid-field'))
     if (chart.data.length === 0) errors.push(diagnostic(path, 'chart.data 必须包含至少一条数据', 'invalid-field'))
+    if (chart.data.length < 2) errors.push(diagnostic(path, 'chart.data 至少需要两条数据；单个指标请使用 text 或 shape', 'chart-insufficient-data'))
+    const values = chart.data.flatMap((row) => chart.series.map((series) => Number(row[series.key])))
+    if (values.length === 0 || values.every((value) => !Number.isFinite(value) || value === 0)) {
+      errors.push(diagnostic(path, '图表没有可见的数值数据；架构/流程关系请使用 shape、line 和 text', 'chart-no-visible-data'))
+    }
   }
 }
 

@@ -55,6 +55,45 @@ elements:
 `
 
 describe('PPTD layered generation pipeline', () => {
+  it('normalizes common model YAML boundary mistakes before validation', async () => {
+    const arrayPage = `- elementId: title
+  elementType: text
+  bounds: [64, 48, 832, 64]
+  content:
+    text: "数组形式的页面"
+    fontSize: 32
+    color: '$text'
+`
+    const colonPage = `pageType: content
+elements:
+  - elementId: title
+    elementType: text
+    bounds: [64, 48, 832, 64]
+    content:
+      text: Synthesis: The PDF correction AI scenario
+      fontSize: 32
+      color: '$text'
+`
+    const result = await generatePptdDeck({ brief: '修复模型页面格式' }, {
+      callModel: async (call) => {
+        if (call.stage === 'design') return { text: DESIGN }
+        if (call.stage === 'outline') return { text: JSON.stringify({
+          title: '格式修复', audience: '客户', goal: '交付', themeId: 'business-light',
+          pages: [
+            { pageType: 'content', intent: '数组页面', keyPoints: ['页面'] },
+            { pageType: 'content', intent: '冒号文本', keyPoints: ['页面'] },
+          ],
+        }) }
+        return { text: call.pageIndex === 0 ? arrayPage : colonPage }
+      },
+    })
+
+    expect(result.assembly.validation.valid).toBe(true)
+    expect(result.project.pages[0].elements[0].content?.text).toBe('数组形式的页面')
+    expect(result.project.pages[1].elements[0].content?.text).toBe('Synthesis: The PDF correction AI scenario')
+    expect(result.pageReports.map((page) => page.status)).toEqual(['generated', 'generated'])
+  })
+
   it('batch-reviews rendered pages and repairs only pages reported by vision', async () => {
     const calls: PptdModelCall[] = []
     let reviewCalls = 0
@@ -185,6 +224,47 @@ describe('PPTD layered generation pipeline', () => {
     expect(calls.filter((call) => call.stage === 'repair').map((call) => call.pageIndex)).toEqual([1])
     expect(pageCalls.every((call) => call.maxTokens === 4_800)).toBe(true)
     expect(calls.find((call) => call.stage === 'repair')?.maxTokens).toBe(5_200)
+  })
+
+  it('falls back to the deterministic design when both design responses hit the output ceiling', async () => {
+    const calls: PptdModelCall[] = []
+    const result = await generatePptdDeck({ brief: '设计阶段输出过长时仍交付一页方案' }, {
+      callModel: async (call) => {
+        calls.push(call)
+        if (call.stage === 'design') throw new Error('PPTD design 输出达到 token 上限')
+        if (call.stage === 'outline') {
+          return { text: JSON.stringify({
+            title: '方案', audience: '客户', goal: '确认', themeId: 'business-light',
+            pages: [{ pageType: 'content', intent: '推荐方案', keyPoints: ['证据'] }],
+          }) }
+        }
+        return { text: validPage('推荐方案') }
+      },
+    })
+
+    expect(calls.filter((call) => call.stage === 'design')).toHaveLength(2)
+    expect(calls.filter((call) => call.stage === 'design').every((call) => call.maxTokens === 4_000)).toBe(true)
+    expect(result.design.designSystemId).toBe('work/warm-jade-annual-report')
+    expect(result.warnings.some((warning) => warning.includes('确定性设计规范'))).toBe(true)
+    expect(result.assembly.validation.valid).toBe(true)
+  })
+
+  it('falls back to a deterministic outline when both outline responses hit the output ceiling', async () => {
+    const calls: PptdModelCall[] = []
+    const result = await generatePptdDeck({ brief: '# 技术方案\n建设统一审计平台', maxPages: 3 }, {
+      callModel: async (call) => {
+        calls.push(call)
+        if (call.stage === 'design') return { text: DESIGN }
+        if (call.stage === 'outline') throw new Error('PPTD outline 输出达到 token 上限')
+        return { text: validPage(call.pageIndex === 0 ? '技术方案' : `第 ${call.pageIndex + 1} 页`) }
+      },
+    })
+
+    expect(calls.filter((call) => call.stage === 'outline')).toHaveLength(2)
+    expect(result.outline.pages).toHaveLength(3)
+    expect(result.outline.title).toBe('技术方案')
+    expect(result.warnings.some((warning) => warning.includes('确定性大纲'))).toBe(true)
+    expect(result.assembly.validation.valid).toBe(true)
   })
 
   it('fails explicitly instead of silently delivering a text fallback after repair exhaustion', async () => {
