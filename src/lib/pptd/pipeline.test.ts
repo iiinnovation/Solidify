@@ -3,7 +3,7 @@ import { ProviderRegistry, type CompletionRequest, type ModelProvider } from '..
 import { SharedTaskTreeBudget } from '../engine/sub-agent/budget'
 import type { QueryContext } from '../engine/types'
 import { parsePptdArtifactContent } from './artifact'
-import { createPptdModelCaller, generatePptdDeck, type PptdModelCall } from './pipeline'
+import { createPptdModelCaller, generatePptdDeck, runPptdDeckPipeline, type PptdModelCall } from './pipeline'
 
 const OUTLINE = JSON.stringify({
   title: '经营复盘',
@@ -314,6 +314,43 @@ elements:
 })
 
 describe('PPTD QueryContext model adapter', () => {
+  it('enables one batch visual review in the production QueryContext pipeline', async () => {
+    const requests: CompletionRequest[] = []
+    const provider: ModelProvider = {
+      name: 'production-vision',
+      metadata: {
+        name: 'production-vision', displayName: 'Production Vision', supportsVision: true, supportsTools: true,
+        supportsStreaming: true, defaultMaxTokens: 8_192, models: ['vision-model'],
+      },
+      async *stream(request) {
+        requests.push(request)
+        let text: string
+        if (request.system?.includes('艺术指导')) text = DESIGN
+        else if (request.system?.includes('信息架构师')) text = OUTLINE
+        else if (request.system?.includes('视觉质量审查器')) text = JSON.stringify({ approved: true, pages: [] })
+        else text = validPage('生产页')
+        yield { type: 'content_delta', delta: text }
+        yield { type: 'message_end', stopReason: 'end_turn' }
+      },
+    }
+    const registry = new ProviderRegistry()
+    registry.register('production-vision', provider)
+    const ctx = {
+      runId: 'root', model: { provider: 'production-vision', model: 'vision-model' }, providerRegistry: registry,
+      signal: new AbortController().signal,
+    } as unknown as QueryContext
+
+    const result = await runPptdDeckPipeline(ctx, { brief: '生产视觉管线' })
+    const reviewRequests = requests.filter((request) => request.system?.includes('视觉质量审查器'))
+
+    expect(result.project.pages).toHaveLength(2)
+    expect(reviewRequests).toHaveLength(1)
+    expect(reviewRequests[0].messages[0].content).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'image' }),
+    ]))
+    expect(result.warnings.some((warning) => warning.includes('跳过 PPTD 截图审阅'))).toBe(false)
+  })
+
   it('streams through the active provider without charging the generic Agent task budget', async () => {
     const requests: CompletionRequest[] = []
     const provider: ModelProvider = {
