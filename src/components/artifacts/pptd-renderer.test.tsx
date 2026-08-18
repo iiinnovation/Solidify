@@ -56,6 +56,23 @@ describe('PresentationArtifactRenderer', () => {
     expect(screen.getByText('第 1 页：页面输出达到 token 上限')).toBeTruthy()
   })
 
+  it('shows a visible notice when visual QA could not run', () => {
+    const bundle = JSON.stringify({
+      manifest: 'version: v2\ntitle: Review notice\nsize: [960, 540]\ntheme: {colors: {}, textStyles: {}}\npages: [pages/01.page]\n',
+      pages: { 'pages/01.page': 'elements: []\n' },
+      qualityReport: {
+        fallbackPages: [],
+        warningPages: [],
+        notices: ['当前模型不支持 vision，已跳过 PPTD 截图审阅，仅执行结构校验'],
+      },
+    })
+    render(<PresentationArtifactRenderer content={bundle} />)
+
+    expect(screen.getByText('视觉质量检查未完整执行')).toBeTruthy()
+    fireEvent.click(screen.getByText('视觉质量检查未完整执行'))
+    expect(screen.getByText('当前模型不支持 vision，已跳过 PPTD 截图审阅，仅执行结构校验')).toBeTruthy()
+  })
+
   it('migrates legacy slides onto the PPTD renderer', () => {
     render(<PresentationArtifactRenderer content={JSON.stringify({ slides: [{ layout: 'title', title: 'Legacy title' }] })} />)
     expect(screen.getByText('Legacy title')).toBeTruthy()

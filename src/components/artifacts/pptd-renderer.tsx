@@ -120,10 +120,13 @@ function PptdDeckView({
 
 function QualityReport({ report }: { report: PptdArtifactQualityReport }) {
   const affected = [...report.fallbackPages, ...report.warningPages]
+  const notices = report.notices ?? []
   const fallbackNumbers = report.fallbackPages.map((page) => page.pageIndex + 1)
   const summary = report.fallbackPages.length > 0
     ? `${report.fallbackPages.length} 页使用安全版式：第 ${fallbackNumbers.join('、')} 页`
-    : `${report.warningPages.length} 页存在非阻塞质量提示`
+    : report.warningPages.length > 0
+      ? `${report.warningPages.length} 页存在非阻塞质量提示`
+      : '视觉质量检查未完整执行'
   return (
     <details className="shrink-0 border-b border-warning/30 bg-warning/10 px-4 py-2 text-xs text-text-primary" data-pptd-quality-report>
       <summary className="flex cursor-pointer list-none items-center gap-2 font-medium">
@@ -131,6 +134,7 @@ function QualityReport({ report }: { report: PptdArtifactQualityReport }) {
         <span>{summary}</span>
       </summary>
       <div className="mt-2 max-h-28 space-y-1 overflow-auto pl-6 text-text-secondary">
+        {notices.map((notice) => <p key={notice}>{notice}</p>)}
         {affected.map((page) => (
           <p key={`${page.status}-${page.pagePath}`}>
             第 {page.pageIndex + 1} 页：{page.reasons.join('；') || (page.status === 'fallback' ? '模型页面未通过质量检查' : '存在非阻塞提示')}

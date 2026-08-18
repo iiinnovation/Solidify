@@ -27,6 +27,22 @@ describe('PPTD export', () => {
     expect(result.degradations).toEqual([])
   })
 
+  it('exports parser-expanded theme style tokens with their typography', async () => {
+    const result = await exportPptdAsPptx({
+      ...project,
+      theme: { ...project.theme, textStyles: { title: { fontSize: 40, fontFamily: 'Georgia', color: '#123456', bold: true } } },
+      pages: [{ elements: [{
+        elementId: 'styled', elementType: 'text', bounds: [20, 20, 400, 80],
+        content: { text: 'Styled', style: { fontSize: 40, fontFamily: 'Georgia', color: '#123456', bold: true } },
+      }] }],
+    })
+    const zip = await JSZip.loadAsync(await result.blob.arrayBuffer())
+    const slide = await zip.file('ppt/slides/slide1.xml')?.async('string') ?? ''
+    expect(slide).toContain('sz="4000"')
+    expect(slide).toContain('123456')
+    expect(slide).toContain('b="1"')
+  })
+
   it('writes one slide per PPTD page with geometry in the PPTX package', async () => {
     const result = await exportPptdAsPptx(project)
     const zip = await JSZip.loadAsync(await result.blob.arrayBuffer())

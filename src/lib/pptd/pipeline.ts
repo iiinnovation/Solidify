@@ -237,6 +237,7 @@ export async function generatePptdDeck(
   const maxPages = boundedInteger(input.maxPages ?? DEFAULT_MAX_PAGES, 1, DEFAULT_MAX_PAGES, 'maxPages')
   const usage: PptdDeckPipelineUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0, calls: 0 }
   const warnings: string[] = []
+  const qualityNotices: string[] = []
   const media = preparePptdMedia(input.media)
   const mediaPrompt = buildMediaPrompt(media.images)
 
@@ -304,7 +305,7 @@ export async function generatePptdDeck(
               stage: 'page',
               runId: `pptd:page:${pageIndex + 1}`,
               system: PAGE_SYSTEM_PROMPT,
-              prompt: buildPagePrompt(outline, pageOutline, pageIndex, theme, design, mediaPrompt),
+              prompt: buildPagePrompt(outline, pageOutline, pageIndex, theme, design, mediaPrompt, designSource.examplePage),
               maxTokens: PAGE_MAX_TOKENS,
               pageIndex,
               images: media.images,
@@ -386,7 +387,7 @@ export async function generatePptdDeck(
             stage: 'repair',
             runId: `pptd:repair:${target.state.pageIndex + 1}:${round}`,
             system: PAGE_SYSTEM_PROMPT,
-            prompt: buildRepairPrompt(outline, target.state, diagnostics, theme, design, mediaPrompt),
+            prompt: buildRepairPrompt(outline, target.state, diagnostics, theme, design, mediaPrompt, designSource.examplePage),
             maxTokens: PAGE_REPAIR_MAX_TOKENS,
             pageIndex: target.state.pageIndex,
             images: media.images,
@@ -431,8 +432,12 @@ export async function generatePptdDeck(
   }
 
   const unresolved = repairTargets(states, assembly)
-  if (unresolved.length > 0) {
-    const fallbackPageNumbers = unresolved.map(({ state }) => {
+  const fallbackTargets = unresolved.filter(({ state }) => {
+    const validation = assembly.pageResults[state.pageIndex]
+    return Boolean(state.parseError || validation?.errors.length)
+  })
+  if (fallbackTargets.length > 0) {
+    const fallbackPageNumbers = fallbackTargets.map(({ state }) => {
       const diagnostics = diagnosticsForState(state, assembly)
       state.diagnostics.push(...diagnostics)
       state.page = fallbackPage(state.outline, theme, '自动生成未通过质量检查，已使用安全版式')
@@ -446,14 +451,14 @@ export async function generatePptdDeck(
     if (!assembly.validation.valid) {
       throw new Error(`PPTD 确定性页面兜底后仍未通过校验：${formatDiagnostics(assembly.validation.errors)}`)
     }
-    warnings.push(`${unresolved.length} 页在 ${maxRepairRounds} 轮修复后使用安全版式：第 ${fallbackPageNumbers.join('、')} 页`)
-    await Promise.all(unresolved.map(({ state }) =>
+    warnings.push(`${fallbackTargets.length} 页在 ${maxRepairRounds} 轮修复后使用安全版式：第 ${fallbackPageNumbers.join('、')} 页`)
+    await Promise.all(fallbackTargets.map(({ state }) =>
       savePageCheckpoint(options.onCheckpoint, checkpointRoot, sourceHash, outline, design, state, true)))
     publishPreview(options.onProgress, input, outline, assembly.project, {
       stage: 'repair',
-      current: unresolved.length,
-      total: unresolved.length,
-      message: `${unresolved.length} 页已切换为安全版式，继续交付完整演示文稿`,
+      current: fallbackTargets.length,
+      total: fallbackTargets.length,
+      message: `${fallbackTargets.length} 页已切换为安全版式，继续交付完整演示文稿`,
     }, buildQualityReport(states, assembly))
   }
   if (options.visualReview) {
@@ -469,8 +474,10 @@ export async function generatePptdDeck(
       signal,
       warnings,
       options.onProgress,
+      designSource.examplePage,
     )
     assembly = visual.assembly
+    qualityNotices.push(...visual.notices)
   }
   if (!assembly.validation.valid) {
     throw new Error(`PPTD 最终装配仍未通过校验：${formatDiagnostics(assembly.validation.errors)}`)
@@ -499,7 +506,7 @@ export async function generatePptdDeck(
     attempts: state.attempts,
     diagnostics: dedupeDiagnostics(state.diagnostics),
   }))
-  const artifact = createDeckArtifact(input, outline, assembly.project, buildQualityReport(states, assembly))
+  const artifact = createDeckArtifact(input, outline, assembly.project, buildQualityReport(states, assembly, qualityNotices))
   return { design, outline, project: assembly.project, assembly, artifact, pageReports, warnings, usage }
 }
 
@@ -605,6 +612,7 @@ export function createPptdModelCaller(ctx: QueryContext): PptdModelCaller {
 
 interface VisualReviewOutcome {
   assembly: PptdAssemblyResult
+  notices: string[]
 }
 
 /** Runs the bounded production visual pass using the same local page model. */
@@ -620,13 +628,16 @@ async function runProductionVisualReview(
   signal: AbortSignal,
   warnings: string[],
   onProgress?: (progress: PptdPipelineProgress) => void,
+  referencePage?: string,
 ): Promise<VisualReviewOutcome> {
   if (options.visionAvailable === false) {
-    warnings.push('当前模型不支持 vision，已跳过 PPTD 截图审阅，仅执行结构校验')
-    return { assembly: initialAssembly }
+    const notice = '当前模型不支持 vision，已跳过 PPTD 截图审阅，仅执行结构校验'
+    warnings.push(notice)
+    return { assembly: initialAssembly, notices: [notice] }
   }
 
   const reviewMedia = preparePptdMedia(media).images
+  const notices: string[] = []
   const feedbackByPage = new Map<number, string>()
   const imageByPage = new Map<number, { path: string; dataUrl: string }>()
   let reviewRound = 0
@@ -655,6 +666,7 @@ async function runProductionVisualReview(
           system: REVIEW_SYSTEM_PROMPT,
           prompt: [
             `按图片顺序审阅这套 PPTD 的 ${project.pages.length} 页。${buildPptdReviewPrompt(0, project.pages.length)}`,
+            `<page_outline_catalog>\n${JSON.stringify(outline.pages.map((page, pageIndex) => ({ pageIndex, pageType: page.pageType, intent: page.intent, layout: page.layout, visualTask: page.visualTask, keyPoints: page.keyPoints })))}\n</page_outline_catalog>`,
             `<page_element_catalog>\n${JSON.stringify(project.pages.map((page, pageIndex) => ({
               pageIndex,
               elements: page.elements.map((element) => ({ elementId: element.elementId, elementType: element.elementType, bounds: element.bounds })),
@@ -666,7 +678,9 @@ async function runProductionVisualReview(
         })
       } catch (error) {
         if (!isPptdContentFailure(error)) throw error
-        warnings.push(`视觉审阅未返回可用结果，已保留结构合法版本：${errorMessage(error)}`)
+        const notice = `视觉审阅未返回可用结果，已保留结构合法版本：${errorMessage(error)}`
+        warnings.push(notice)
+        notices.push(notice)
         return { approved: true, feedback: '' }
       }
       const text = response.text.trim()
@@ -722,7 +736,7 @@ async function runProductionVisualReview(
           stage: 'repair',
           runId: `pptd:visual-repair:${pageIndex + 1}`,
           system: PAGE_SYSTEM_PROMPT,
-          prompt: buildRepairPrompt(outline, previous, diagnostics, theme, design, buildMediaPrompt(reviewMedia)),
+          prompt: buildRepairPrompt(outline, previous, diagnostics, theme, design, buildMediaPrompt(reviewMedia), referencePage),
           maxTokens: PAGE_REPAIR_MAX_TOKENS,
           pageIndex,
           images: [
@@ -750,7 +764,11 @@ async function runProductionVisualReview(
     },
   })
 
-  if (!result.approved) warnings.push(`PPTD 视觉审阅在 ${result.rounds} 轮后仍有问题，已保留结构合法版本：${result.feedback.at(-1) ?? '无具体反馈'}`)
+  if (!result.approved) {
+    const notice = `PPTD 视觉审阅在 ${result.rounds} 轮后仍有问题，已保留结构合法版本：${result.feedback.at(-1) ?? '无具体反馈'}`
+    warnings.push(notice)
+    notices.push(notice)
+  }
   const assembly = assemblePptdProject({
     title: result.project.title,
     theme,
@@ -758,7 +776,7 @@ async function runProductionVisualReview(
     pagePaths: result.project.pagePaths,
     media,
   })
-  return { assembly }
+  return { assembly, notices }
 }
 
 async function generateOutline(
@@ -1057,10 +1075,11 @@ function parsePageState(
  */
 function parseGeneratedPage(raw: string, path: string, theme: ReturnType<typeof getPptdThemePreset>): PptdPage {
   const text = stripCodeFence(raw)
+  const normalized = repairGeneratedPageYaml(text)
   try {
-    return parsePptdPage(text, path, theme)
+    return parsePptdPage(normalized, path, theme)
   } catch (initialError) {
-    const repaired = repairGeneratedPageYaml(text)
+    const repaired = normalized === text ? repairGeneratedPageYaml(text) : normalized
     if (repaired === text) throw initialError
     return parsePptdPage(repaired, path, theme)
   }
@@ -1083,7 +1102,10 @@ function repairGeneratedPageYaml(text: string): string {
     return dumpYaml(parsed, { noRefs: true, lineWidth: -1 })
   }
 
-  if (Array.isArray(parsed) && parsed.every(isRecord)) {
+  if (isRecord(parsed) && isRecord(parsed.page) && Array.isArray(parsed.page.elements)) {
+    return dumpYaml(parsed.page, { noRefs: true, lineWidth: -1 })
+  }
+  if (Array.isArray(parsed) && parsed.every(isPptdElementRecord)) {
     return dumpYaml({ elements: parsed }, { noRefs: true, lineWidth: -1 })
   }
   return text
@@ -1108,6 +1130,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value))
 }
 
+function isPptdElementRecord(value: unknown): value is Record<string, unknown> {
+  return isRecord(value)
+    && typeof value.elementId === 'string'
+    && typeof value.elementType === 'string'
+    && Array.isArray(value.bounds)
+}
+
 function assembleStates(
   title: string,
   theme: ReturnType<typeof getPptdThemePreset>,
@@ -1126,8 +1155,13 @@ function assembleStates(
 function repairTargets(states: PageState[], assembly: PptdAssemblyResult): RepairTarget[] {
   return states.flatMap((state) => {
     const validation = assembly.pageResults[state.pageIndex]
-    return state.parseError || !validation?.valid ? [{ state }] : []
+    const qualityWarning = validation?.warnings.some((diagnostic) => isRepairablePageWarning(diagnostic.code))
+    return state.parseError || !validation?.valid || qualityWarning ? [{ state }] : []
   })
+}
+
+function isRepairablePageWarning(code: string | undefined): boolean {
+  return code === 'composition-sparse' || code === 'hidden-element'
 }
 
 function diagnosticsForState(state: PageState, assembly: PptdAssemblyResult): PptdDiagnostic[] {
@@ -1136,10 +1170,11 @@ function diagnosticsForState(state: PageState, assembly: PptdAssemblyResult): Pp
     ...state.diagnostics,
     ...(state.parseError ? [state.parseError] : []),
     ...(validation?.errors ?? []),
+    ...(validation?.warnings.filter((diagnostic) => isRepairablePageWarning(diagnostic.code)) ?? []),
   ])
 }
 
-function buildQualityReport(states: readonly PageState[], assembly: PptdAssemblyResult): PptdArtifactQualityReport | undefined {
+function buildQualityReport(states: readonly PageState[], assembly: PptdAssemblyResult, notices: readonly string[] = []): PptdArtifactQualityReport | undefined {
   const fallbackPages = states.filter((state) => state.fallback).map((state) => ({
     pageIndex: state.pageIndex,
     pagePath: state.pagePath,
@@ -1157,7 +1192,10 @@ function buildQualityReport(states: readonly PageState[], assembly: PptdAssembly
       reasons: warnings.map((diagnostic) => diagnostic.message),
     }] : []
   })
-  return fallbackPages.length > 0 || warningPages.length > 0 ? { fallbackPages, warningPages } : undefined
+  const uniqueNotices = [...new Set(notices.filter(Boolean))]
+  return fallbackPages.length > 0 || warningPages.length > 0 || uniqueNotices.length > 0
+    ? { fallbackPages, warningPages, ...(uniqueNotices.length > 0 ? { notices: uniqueNotices } : {}) }
+    : undefined
 }
 
 function assertNoProjectErrors(assembly: PptdAssemblyResult): void {
@@ -1226,11 +1264,14 @@ function buildPagePrompt(
   theme: ReturnType<typeof getPptdThemePreset>,
   design: PptdDesignSpec,
   mediaPrompt: string,
+  referencePage?: string,
 ): string {
   return [
     `生成第 ${pageIndex + 1}/${outline.pages.length} 页。只返回一个 .page YAML 文档，不要代码围栏，不要解释。`,
     '页面尺寸固定为 960x540。安全边距至少 48。所有 bounds 必须是 [x,y,width,height] 且位于画布内。',
     '顶层只能包含 pageType、可选 background、elements。每个 elementId 在本页唯一。',
+    'YAML 采用 Kimi PPTD 示例的紧凑风格：优先使用内联 map/数组，能使用 theme token 就不要重复写 fontSize、fontFamily 和 color；不要写注释、空字段或冗余装饰。',
+    '常用文字样式使用 style: "$title"、style: "$subtitle"、style: "$body"、style: "$caption"；颜色优先使用 "$bg"、"$text"、"$muted"、"$accent" 等 token。',
     mediaPrompt
       ? '支持 text、shape、line、icon、table、chart、image。image 的 src 以及 background.type=image 的 src 只能逐字使用 media_catalog 中列出的本地 media/... 路径，禁止远程 URL。'
       : '支持 text、shape、line、icon、table、chart。当前没有可用图片，禁止生成 image 元素或远程 URL。',
@@ -1238,11 +1279,17 @@ function buildPagePrompt(
     '所有 content.text、label、title、value 等文本值必须用引号包裹；文本包含冒号、井号、美元符号或花括号时尤其如此，禁止裸写导致 YAML 解析失败。',
     '只有存在至少两条真实数值数据时才可使用 chart；SQL/组件映射、架构、流程、依赖和关系禁止使用 chart，必须用 shape、line、icon 与 text 表达。禁止生成只有坐标轴、空系列或全为 0 的图表。',
     '同页 text bounds 不得重叠。正文不小于 14pt，标题不小于 28pt。通过图表、表格、形状关系、细线和留白表达结构，禁止把 keyPoints 原样堆成大段项目符号。',
-    '用 6-24 个必要元素完成页面，YAML 保持紧凑且必须完整闭合；不要用冗余装饰消耗输出预算。',
+    '用页面结论所需的全部元素完成页面（通常 6-24 个）；不要删除表达层级、关系或证据所需的元素，也不要用冗余装饰消耗输出预算。',
+    ['content', 'comparison', 'timeline', 'chart', 'table', 'summary'].includes(page.pageType)
+      ? '正文类页面必须至少包含 6 个元素和至少 1 个非文本元素；标题、栏目名不能代替证据。page_outline 中每个 keyPoint 都要落为可读的解释、数值、表格、图表、节点关系或带标签的形状，不要只输出几个并列标题。'
+      : '',
     '严格执行 visualTask、layout 和设计规范。每个元素都必须服务于本页结论；相邻页面不得机械重复相同版式。',
-    `<design_spec>\n${JSON.stringify(design)}\n</design_spec>`,
-    `<theme>\n${JSON.stringify(theme)}\n</theme>`,
+    `<design_spec>\n${JSON.stringify(compactDesignSpec(design))}\n</design_spec>`,
+    `<theme>\n${JSON.stringify(compactTheme(theme))}\n</theme>`,
     `<page_outline>\n${JSON.stringify(page)}\n</page_outline>`,
+    referencePage
+      ? `<layout_reference_page>\n${clipReferencePage(referencePage)}\n</layout_reference_page>\n只借鉴该示例的构图密度、层级、网格和元素组合；不要复制示例中的产品名称、数字、来源、链接、媒体路径或事实。`
+      : '',
     mediaPrompt,
   ].filter(Boolean).join('\n\n')
 }
@@ -1254,22 +1301,73 @@ function buildRepairPrompt(
   theme: ReturnType<typeof getPptdThemePreset>,
   design: PptdDesignSpec,
   mediaPrompt: string,
+  referencePage?: string,
 ): string {
+  const compositionRepair = diagnostics.some((diagnostic) => diagnostic.code === 'composition-sparse')
   return [
     `修复第 ${state.pageIndex + 1}/${outline.pages.length} 页。只返回完整替换用的 .page YAML，不要代码围栏，不要解释。`,
+    '沿用 Kimi PPTD 示例的紧凑 YAML：除 composition-sparse 之外，保留 current_page_snapshot 中全部 elementId、元素类型和视觉层级，只做诊断指出的最小修改；优先使用 style/token、内联 map/数组，不要把页面改写成简单项目符号页。',
+    compositionRepair
+      ? '本轮诊断是 composition-sparse，允许并且必须新增、删除、重排元素，重构为有证据结构的页面；不要为了保留全部 elementId 而维持原来的裸文本布局。正文页至少使用 6 个元素，并包含至少 1 个非文本元素。'
+      : '',
     mediaPrompt
       ? '保持本页结论和关键内容，做最小必要修改。所有 bounds 必须位于 960x540 内，text 元素不得重叠。image 只能引用 media_catalog 中列出的本地路径。'
       : '保持本页结论和关键内容，做最小必要修改。所有 bounds 必须位于 960x540 内，text 元素不得重叠。当前没有可用图片，禁止 image。',
     '所有文本标量必须用引号包裹，尤其是包含冒号、井号、美元符号或花括号的文本；输出必须是一个顶层对象，不能只输出 elements 数组。',
     '若问题来自架构、流程、组件映射或关系表达，不要修成 chart；用有标签的 shape、line、icon 和 text 表达方向、边界与依赖。chart 必须至少有两条真实数值数据且不能只剩坐标轴。',
     '修复不能抹掉原有视觉层级或改成项目符号文字页；继续遵守设计规范和 visualTask。',
-    `<design_spec>\n${JSON.stringify(design)}\n</design_spec>`,
-    `<theme>\n${JSON.stringify(theme)}\n</theme>`,
+    `<design_spec>\n${JSON.stringify(compactDesignSpec(design))}\n</design_spec>`,
+    `<theme>\n${JSON.stringify(compactTheme(theme))}\n</theme>`,
     `<page_outline>\n${JSON.stringify(state.outline)}\n</page_outline>`,
-    `<diagnostics>\n${formatDiagnostics(diagnostics)}\n</diagnostics>`,
-    `<current_page>\n${state.raw || '(empty)'}\n</current_page>`,
+    `<diagnostics>\n${formatDiagnostics(dedupeDiagnostics(diagnostics))}\n</diagnostics>`,
+    `<current_page_snapshot>\n${repairPageSnapshot(state)}\n</current_page_snapshot>`,
+    referencePage
+      ? `<layout_reference_page>\n${clipReferencePage(referencePage)}\n</layout_reference_page>\n只借鉴构图密度、层级、网格和元素组合，不复制示例事实。`
+      : '',
     mediaPrompt,
   ].filter(Boolean).join('\n\n')
+}
+
+function clipReferencePage(value: string): string {
+  const text = value.trim()
+  return text.length <= 12_000 ? text : `${text.slice(0, 12_000)}\n[...示例页面已截断，仅保留构图参考...]`
+}
+
+function compactDesignSpec(design: PptdDesignSpec): Pick<PptdDesignSpec, 'visualSignature' | 'palette' | 'typography' | 'layout' | 'compositionRules' | 'componentRules' | 'prohibited' | 'imageryStyle'> {
+  const clip = (value: string, limit: number) => value.length <= limit ? value : `${value.slice(0, limit)}...`
+  const rules = (values: readonly string[]) => values.map((value) => clip(value, 180))
+  return {
+    visualSignature: clip(design.visualSignature, 240),
+    palette: design.palette,
+    typography: design.typography,
+    layout: design.layout,
+    compositionRules: rules(design.compositionRules),
+    componentRules: rules(design.componentRules),
+    prohibited: rules(design.prohibited),
+    imageryStyle: clip(design.imageryStyle, 240),
+  }
+}
+
+function compactTheme(theme: ReturnType<typeof getPptdThemePreset>): Pick<ReturnType<typeof getPptdThemePreset>, 'colors' | 'textStyles'> {
+  return { colors: theme.colors, textStyles: theme.textStyles }
+}
+
+function repairPageSnapshot(state: PageState): string {
+  if (state.parseError && state.raw.trim()) {
+    const raw = state.raw.trim()
+    return raw.length <= 16_000 ? raw : `${raw.slice(0, 16_000)}\n[...原始页面输出已截断，仅供定位...]`
+  }
+  const page = {
+    ...state.page,
+    elements: state.page.elements.map((element) => {
+      if (!element.content || typeof element.content.text !== 'string') return element
+      const content = { ...element.content }
+      const text = content.text as string
+      if (text.length > 1_200) content.text = `${text.slice(0, 1_200)}\n[...文本已截断，保持原意...]`
+      return { ...element, content }
+    }),
+  }
+  return JSON.stringify(page)
 }
 
 const CHECKPOINT_FIELD = 'x-solidify-checkpoint'

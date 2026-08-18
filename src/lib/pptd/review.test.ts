@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { parsePptdProject } from './parse'
-import { buildPptdReviewPrompt, runPptdReviewLoop } from './review'
+import { buildPptdPageSvgDataUrl, buildPptdReviewPrompt, runPptdReviewLoop } from './review'
 
 const project = parsePptdProject({
   manifest: 'version: v2\ntitle: demo\nsize: [960, 540]\npages: [pages/01.page]\n',
@@ -11,6 +11,60 @@ describe('PPTD visual review loop', () => {
   it('provides a deterministic page self-check prompt', () => {
     expect(buildPptdReviewPrompt(1, 3)).toContain('第 2/3 页')
     expect(buildPptdReviewPrompt(1, 3)).toContain('elementId')
+    expect(buildPptdReviewPrompt(1, 3)).toContain('只有标题和少量裸文本')
+  })
+
+  it('renders parser-expanded theme styles in visual-review screenshots', () => {
+    const styled = parsePptdProject({
+      manifest: `version: v2
+title: styled
+size: [960, 540]
+theme:
+  colors: {bg: "#ffffff", text: "#123456"}
+  textStyles:
+    title: {fontSize: 40, color: "$text", bold: true, fontFamily: "Georgia"}
+pages: [pages/01.page]
+`,
+      pages: { 'pages/01.page': `elements:
+  - elementId: title
+    elementType: text
+    bounds: [40, 40, 600, 70]
+    content: {text: "Styled title", style: "$title"}
+` },
+    })
+    const svg = decodeURIComponent(buildPptdPageSvgDataUrl(styled, 0).split(',')[1])
+    expect(svg).toContain('font-size="40"')
+    expect(svg).toContain('font-family="Georgia"')
+    expect(svg).toContain('fill="#123456"')
+    expect(svg).toContain('font-weight="700"')
+  })
+
+  it('renders charts, tables, icons, wrapping, and alignment into review screenshots', () => {
+    const visualProject = {
+      ...project,
+      pages: [{ elements: [
+        {
+          elementId: 'chart', elementType: 'chart' as const, bounds: [40, 40, 320, 180] as const,
+          chartType: 'bar', data: [{ name: 'Q1', value: 10 }, { name: 'Q2', value: 20 }],
+          series: [{ key: 'value', color: '#2563EB' }],
+        },
+        {
+          elementId: 'table', elementType: 'table' as const, bounds: [400, 40, 300, 160] as const,
+          rows: [['指标', '结果'], ['收入', '增长']], columnWidths: [1, 2],
+        },
+        { elementId: 'icon', elementType: 'icon' as const, bounds: [720, 40, 60, 60] as const, icon: '★', color: '#D97706' },
+        {
+          elementId: 'wrapped', elementType: 'text' as const, bounds: [400, 240, 140, 100] as const,
+          content: { text: '这是一段需要自动换行的审阅文本', fontSize: 20, align: 'center' },
+        },
+      ] }],
+    }
+    const svg = decodeURIComponent(buildPptdPageSvgDataUrl(visualProject, 0).split(',')[1])
+    expect(svg).toContain('Q1')
+    expect(svg).toContain('指标')
+    expect(svg).toContain('★')
+    expect(svg).toContain('text-anchor="middle"')
+    expect(svg.match(/<tspan/g)?.length).toBeGreaterThan(2)
   })
 
   it('repairs validation errors before capture and stops when approved', async () => {

@@ -31,4 +31,16 @@ describe('PPTD design resources', () => {
       .toBe('finance/black-gold-ledger')
     expect(() => resolvePptdDesignSource('季度汇报', 'unknown/theme')).toThrow(/未知 PPTD 设计系统/)
   })
+
+  it.each([
+    '战略决策分析',
+    '商业计划书',
+    '季度经营复盘',
+    '博士论文答辩',
+    '新员工培训课程',
+    '技术架构评审',
+    '品牌创意提案',
+  ])('provides a concrete layout example for %s', (brief) => {
+    expect(resolvePptdDesignSource(brief).examplePage).toMatch(/pageType:/)
+  })
 })

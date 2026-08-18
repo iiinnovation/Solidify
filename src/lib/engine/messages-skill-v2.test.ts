@@ -43,6 +43,8 @@ describe('Skill progressive disclosure context', () => {
     expect(result.skillTokens.indexTokens).toBeGreaterThan(0)
     expect(result.skillTokens.bodyTokens).toBeGreaterThan(0)
     expect(result.system).toContain('Skill resource root: .solidify/skills/pptd-deck')
+    expect(result.system).toContain('already loads the bundled PPTD reference guides')
+    expect(result.system).not.toContain('Available Skill resource files')
     expect(result.system).toContain('read_file')
   })
 
@@ -76,7 +78,7 @@ describe('Skill progressive disclosure context', () => {
       workspace: undefined,
     }))
 
-    expect(result.system).toContain('read_file can only read the listed Skill resources')
+    expect(result.system).toContain('bundled PPTD resources are already loaded')
     expect(result.system).toContain('Do not call read_file or read_handle for attachment filenames')
   })
 

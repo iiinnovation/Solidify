@@ -32,6 +32,7 @@ export interface PptdArtifactQualityPage {
 export interface PptdArtifactQualityReport {
   fallbackPages: PptdArtifactQualityPage[]
   warningPages: PptdArtifactQualityPage[]
+  notices?: string[]
 }
 
 /**
@@ -145,8 +146,11 @@ function parseQualityReport(value: unknown): PptdArtifactQualityReport | undefin
   if (!isRecord(value)) return undefined
   const fallbackPages = parseQualityPages(value.fallbackPages, 'fallback')
   const warningPages = parseQualityPages(value.warningPages, 'warning')
-  if (fallbackPages.length === 0 && warningPages.length === 0) return undefined
-  return { fallbackPages, warningPages }
+  const notices = Array.isArray(value.notices)
+    ? value.notices.filter((notice): notice is string => typeof notice === 'string' && Boolean(notice.trim())).map((notice) => notice.trim())
+    : []
+  if (fallbackPages.length === 0 && warningPages.length === 0 && notices.length === 0) return undefined
+  return { fallbackPages, warningPages, ...(notices.length > 0 ? { notices } : {}) }
 }
 
 function parseQualityPages(value: unknown, status: PptdArtifactQualityPage['status']): PptdArtifactQualityPage[] {

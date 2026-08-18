@@ -37,6 +37,40 @@ describe('PPTD semantic validation gate', () => {
     expect(validatePptdProject({ ...base, pages: [{ elements: [...base.pages[0].elements].reverse() }] }).warnings.some((item) => item.code === 'hidden-element')).toBe(true)
   })
 
+  it('flags content pages with fewer than six elements or no non-text evidence structure', () => {
+    const sparseText = validatePptdProject({
+      version: 'v2', title: 'Sparse', size: [960, 540], pagePaths: ['pages/01.page'], media: {},
+      theme: { colors: { bg: '#ffffff' }, textStyles: {} },
+      pages: [{ pageType: 'content', elements: [
+        { elementId: 'title', elementType: 'text', bounds: [40, 40, 800, 50], content: { text: '结论' } },
+      ] }],
+    })
+    const decorativeShape = validatePptdProject({
+      version: 'v2', title: 'Sparse', size: [960, 540], pagePaths: ['pages/01.page'], media: {},
+      theme: { colors: { bg: '#ffffff' }, textStyles: {} },
+      pages: [{ pageType: 'content', elements: [
+        { elementId: 'title', elementType: 'text', bounds: [40, 40, 800, 50], content: { text: '结论' } },
+        { elementId: 'accent', elementType: 'shape', bounds: [40, 120, 8, 100], fill: { type: 'solid', color: '#2563EB' } },
+      ] }],
+    })
+    const structured = validatePptdProject({
+      version: 'v2', title: 'Structured', size: [960, 540], pagePaths: ['pages/01.page'], media: {},
+      theme: { colors: { bg: '#ffffff' }, textStyles: {} },
+      pages: [{ pageType: 'content', elements: [
+        { elementId: 'accent', elementType: 'shape', bounds: [40, 120, 8, 100], fill: { type: 'solid', color: '#2563EB' } },
+        ...Array.from({ length: 5 }, (_, index) => ({
+          elementId: `text-${index}`, elementType: 'text' as const,
+          bounds: [80 + index * 150, 40 + (index % 2) * 100, 120, 50] as const,
+          content: { text: String(index) },
+        })),
+      ] }],
+    })
+    expect(sparseText.valid).toBe(true)
+    expect(sparseText.warnings).toContainEqual(expect.objectContaining({ code: 'composition-sparse' }))
+    expect(decorativeShape.warnings).toContainEqual(expect.objectContaining({ code: 'composition-sparse' }))
+    expect(structured.warnings).not.toContainEqual(expect.objectContaining({ code: 'composition-sparse' }))
+  })
+
   it('never infers a token from parsed text and uses a realistic text capacity', () => {
     // Token detection belongs to the parser, which alone can tell `$$USD`
     // (a literal) from `$missing` (a real reference); see parse.test.ts.

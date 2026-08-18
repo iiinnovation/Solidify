@@ -76,9 +76,12 @@ describe('PPTD artifact bundle', () => {
       qualityReport: {
         fallbackPages: [{ pageIndex: 0, pagePath: 'pages/01.page', status: 'fallback', reasons: ['输出达到 token 上限'] }],
         warningPages: [],
+        notices: ['当前模型不支持 vision'],
       },
     })
-    expect(parsePptdArtifactContentDetailed(raw).qualityReport?.fallbackPages[0].reasons)
+    const report = parsePptdArtifactContentDetailed(raw).qualityReport
+    expect(report?.fallbackPages[0].reasons)
       .toEqual(['输出达到 token 上限'])
+    expect(report?.notices).toEqual(['当前模型不支持 vision'])
   })
 })

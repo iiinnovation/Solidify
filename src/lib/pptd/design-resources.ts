@@ -173,6 +173,7 @@ function keyedModules(modules: Record<string, string>, pattern: RegExp): Record<
 function exampleForScenario(scenario: PptdScenario): string | undefined {
   if (scenario === 'brand-creative' || scenario === 'business-plan') return EXAMPLE_PAGES['product-cover']
   if (scenario === 'analysis-decision' || scenario === 'management-report') return EXAMPLE_PAGES['product-overview']
-  if (scenario === 'tech-engineering') return EXAMPLE_PAGES['product-specs']
+  if (scenario === 'education-training') return EXAMPLE_PAGES['product-overview']
+  if (scenario === 'academic-research' || scenario === 'tech-engineering') return EXAMPLE_PAGES['product-specs']
   return undefined
 }

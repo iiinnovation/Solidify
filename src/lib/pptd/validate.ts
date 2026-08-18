@@ -23,6 +23,14 @@ export function validatePptdProject(project: PptdProject): PptdValidationResult 
       checkBounds(element, width, height, path, errors)
       checkElement(element, page, project, path, errors, warnings)
     })
+    // Content pages need enough structure to carry evidence, not just a title
+    // and a row of labels. Keep this as a warning so the repair model can add
+    // structure without turning a quality problem into a hard pipeline error.
+    const contentPageTypes = new Set(['content', 'comparison', 'timeline', 'chart', 'table', 'summary'])
+    const hasNonTextElement = page.elements.some((element) => element.elementType !== 'text')
+    if (contentPageTypes.has(page.pageType ?? '') && (page.elements.length < 6 || !hasNonTextElement)) {
+      warnings.push(diagnostic(pagePath, '页面只包含少量文本标签，缺少证据或视觉结构', 'composition-sparse', 'warning'))
+    }
     for (let i = 0; i < page.elements.length; i++) {
       for (let j = i + 1; j < page.elements.length; j++) {
         const a = page.elements[i]

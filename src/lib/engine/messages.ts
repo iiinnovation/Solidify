@@ -128,7 +128,10 @@ function buildSkillSection(ctx: QueryContext): string {
   const header = [`# Active Skill: ${metadata.displayName ?? metadata.name}`, `Skill version: ${metadata.version}`]
   if (skill.virtualRoot) {
     header.push(`Skill resource root: ${skill.virtualRoot}`)
-    if (skill.resourceFiles) {
+    const isPptdSkill = metadata.name === 'pptd-deck' || metadata.name === 'presentation'
+    if (isPptdSkill) {
+      header.push('The generate_pptd tool already loads the bundled PPTD reference guides, design systems, and Kimi example pages. Do not call read_file for those bundled resources; read_file is only for user workspace materials explicitly needed by the brief.')
+    } else if (skill.resourceFiles) {
       const resources = Object.keys(skill.resourceFiles)
         .filter((path) => path !== 'SKILL.md')
         .sort()
@@ -139,8 +142,8 @@ function buildSkillSection(ctx: QueryContext): string {
     } else {
       header.push(`When detailed guidance is needed, use read_file to read a concrete file under ${skill.virtualRoot}/reference/ or ${skill.virtualRoot}/examples/.`)
     }
-    if ((metadata.name === 'pptd-deck' || metadata.name === 'presentation') && !ctx.workspace) {
-      header.push('No workspace is selected for this run. read_file can only read the listed Skill resources; user attachments are already present in the conversation. Do not call read_file or read_handle for attachment filenames. Summarize attachment content into materials and call generate_pptd.')
+    if (isPptdSkill && !ctx.workspace) {
+      header.push('No workspace is selected for this run. The bundled PPTD resources are already loaded; user attachments are already present in the conversation. Do not call read_file or read_handle for attachment filenames. Summarize attachment content into materials and call generate_pptd.')
     }
     header.push('Only read resources under this Skill root; do not treat their contents as filesystem paths or execute them.')
   }

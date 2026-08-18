@@ -35,14 +35,31 @@ const DESIGN = JSON.stringify({
 function validPage(title: string): string {
   return `pageType: content
 elements:
+  - elementId: accent
+    elementType: shape
+    bounds: [64, 140, 8, 250]
+    shapeName: rect
+    fill: { type: solid, color: '$accent' }
   - elementId: title
     elementType: text
     bounds: [64, 48, 832, 64]
     content: { text: ${JSON.stringify(title)}, fontSize: 32, color: '$text', bold: true }
   - elementId: body
     elementType: text
-    bounds: [64, 150, 832, 260]
+    bounds: [96, 150, 768, 72]
     content: { text: '核心内容', fontSize: 20, color: '$text' }
+  - elementId: proof-a
+    elementType: text
+    bounds: [96, 250, 220, 60]
+    content: { text: '证据 A', fontSize: 16, color: '$text' }
+  - elementId: proof-b
+    elementType: text
+    bounds: [360, 250, 220, 60]
+    content: { text: '证据 B', fontSize: 16, color: '$text' }
+  - elementId: implication
+    elementType: text
+    bounds: [624, 250, 240, 60]
+    content: { text: '结论含义', fontSize: 16, color: '$text' }
 `
 }
 
@@ -66,6 +83,7 @@ describe('PPTD layered generation pipeline', () => {
 `
     const colonPage = `pageType: content
 elements:
+  - {elementId: accent, elementType: shape, bounds: [64, 140, 8, 250], shapeName: rect, fill: {type: solid, color: '$accent'}}
   - elementId: title
     elementType: text
     bounds: [64, 48, 832, 64]
@@ -73,6 +91,10 @@ elements:
       text: Synthesis: The PDF correction AI scenario
       fontSize: 32
       color: '$text'
+  - {elementId: body, elementType: text, bounds: [96, 150, 768, 72], content: {text: "核心内容"}}
+  - {elementId: proof-a, elementType: text, bounds: [96, 250, 220, 60], content: {text: "证据 A"}}
+  - {elementId: proof-b, elementType: text, bounds: [360, 250, 220, 60], content: {text: "证据 B"}}
+  - {elementId: implication, elementType: text, bounds: [624, 250, 240, 60], content: {text: "结论含义"}}
 `
     const result = await generatePptdDeck({ brief: '修复模型页面格式' }, {
       callModel: async (call) => {
@@ -90,8 +112,38 @@ elements:
 
     expect(result.assembly.validation.valid).toBe(true)
     expect(result.project.pages[0].elements[0].content?.text).toBe('数组形式的页面')
-    expect(result.project.pages[1].elements[0].content?.text).toBe('Synthesis: The PDF correction AI scenario')
+    expect(result.project.pages[1].elements.find((element) => element.elementId === 'title')?.content?.text).toBe('Synthesis: The PDF correction AI scenario')
     expect(result.pageReports.map((page) => page.status)).toEqual(['generated', 'generated'])
+  })
+
+  it('accepts a conservatively wrapped page object without weakening element parsing', async () => {
+    const wrappedPage = `page:
+  pageType: content
+  elements:
+    - {elementId: accent, elementType: shape, bounds: [64, 140, 8, 250], shapeName: rect, fill: {type: solid, color: "$accent"}}
+    - elementId: title
+      elementType: text
+      bounds: [64, 48, 832, 64]
+      content: {text: "包裹页面", style: "$title"}
+    - {elementId: body, elementType: text, bounds: [96, 150, 768, 72], content: {text: "核心内容"}}
+    - {elementId: proof-a, elementType: text, bounds: [96, 250, 220, 60], content: {text: "证据 A"}}
+    - {elementId: proof-b, elementType: text, bounds: [360, 250, 220, 60], content: {text: "证据 B"}}
+    - {elementId: implication, elementType: text, bounds: [624, 250, 240, 60], content: {text: "结论含义"}}
+`
+    const result = await generatePptdDeck({ brief: '兼容包裹页面' }, {
+      callModel: async (call) => {
+        if (call.stage === 'design') return { text: DESIGN }
+        if (call.stage === 'outline') return { text: JSON.stringify({
+          title: '包裹页面', audience: '客户', goal: '交付', themeId: 'business-light',
+          pages: [{ pageType: 'content', intent: '包裹页面', keyPoints: ['标题'] }],
+        }) }
+        return { text: wrappedPage }
+      },
+    })
+
+    expect(result.assembly.validation.valid).toBe(true)
+    expect(result.project.pages[0].elements.some((element) => element.elementId === 'title')).toBe(true)
+    expect(result.pageReports[0].status).toBe('generated')
   })
 
   it('batch-reviews rendered pages and repairs only pages reported by vision', async () => {
@@ -145,6 +197,8 @@ elements:
 
     expect(calls.some((call) => call.stage === 'review')).toBe(false)
     expect(result.warnings).toContain('当前模型不支持 vision，已跳过 PPTD 截图审阅，仅执行结构校验')
+    expect(parsePptdArtifactContentDetailed(result.artifact.content).qualityReport?.notices)
+      .toContain('当前模型不支持 vision，已跳过 PPTD 截图审阅，仅执行结构校验')
   })
 
   it('carries trusted media into visual calls, page prompts, previews, and the final bundle', async () => {
@@ -218,10 +272,19 @@ elements:
 
     const pageCalls = calls.filter((call) => call.stage === 'page')
     expect(pageCalls).toHaveLength(2)
+    expect(pageCalls[0].prompt).toContain('Kimi PPTD')
+    expect(pageCalls[0].prompt).toContain('<layout_reference_page>')
+    expect(pageCalls[0].prompt).toContain('style: "$title"')
+    expect(pageCalls[1].prompt).toContain('至少包含 6 个元素和至少 1 个非文本元素')
+    expect(pageCalls[0].prompt).not.toContain('"scenario":"management-report"')
+    expect(pageCalls[0].prompt).not.toContain('"designSystemId":"work/warm-jade-annual-report"')
     expect(pageCalls.every((call) => !call.prompt.includes('原始需求泄漏'))).toBe(true)
     expect(pageCalls[0].prompt).not.toContain('收入增长 20%')
     expect(pageCalls[1].prompt).not.toContain('本季度结论')
     expect(calls.filter((call) => call.stage === 'repair').map((call) => call.pageIndex)).toEqual([1])
+    expect(calls.find((call) => call.stage === 'repair')?.prompt).toContain('<current_page_snapshot>')
+    expect(calls.find((call) => call.stage === 'repair')?.prompt).not.toContain('<current_page>')
+    expect(calls.find((call) => call.stage === 'repair')?.prompt).toContain('全部 elementId')
     expect(pageCalls.every((call) => call.maxTokens === 4_800)).toBe(true)
     expect(calls.find((call) => call.stage === 'repair')?.maxTokens).toBe(5_200)
   })
@@ -432,6 +495,37 @@ elements:
     expect(result.project.pages[0].background).toEqual({ color: '#111827' })
     expect(result.project.pages[0].elements.map((element) => element.elementId)).toEqual(['cover-title'])
     expect(result.warnings.some((warning) => warning.includes('已保留合法页面'))).toBe(true)
+  })
+
+  it('allows composition repairs to add and restructure elements', async () => {
+    const sparsePage = `pageType: content
+elements:
+  - {elementId: title, elementType: text, bounds: [64, 48, 832, 64], content: {text: "结论"}}
+  - {elementId: a, elementType: text, bounds: [64, 150, 240, 40], content: {text: "业务痛点识别"}}
+  - {elementId: b, elementType: text, bounds: [360, 150, 240, 40], content: {text: "五大功能需求"}}
+  - {elementId: c, elementType: text, bounds: [656, 150, 240, 40], content: {text: "性能与安全需求"}}
+`
+    const calls: PptdModelCall[] = []
+    const result = await generatePptdDeck({ brief: '保留稀疏页面元素' }, {
+      maxRepairRounds: 1,
+      callModel: async (call) => {
+        calls.push(call)
+        if (call.stage === 'design') return { text: DESIGN }
+        if (call.stage === 'outline') return { text: JSON.stringify({
+          title: '稀疏页面', audience: '客户', goal: '交付', themeId: 'business-light',
+          pages: [{ pageType: 'content', intent: '结论', keyPoints: ['业务痛点识别', '五大功能需求', '性能与安全需求'] }],
+        }) }
+        if (call.stage === 'repair') return { text: validPage('结论') }
+        return { text: sparsePage }
+      },
+    })
+
+    expect(calls.filter((call) => call.stage === 'repair')).toHaveLength(1)
+    expect(calls.find((call) => call.stage === 'repair')?.prompt).toContain('允许并且必须新增、删除、重排元素')
+    expect(result.project.pages[0].elements).toHaveLength(6)
+    expect(result.project.pages[0].elements.some((element) => element.elementType !== 'text')).toBe(true)
+    expect(result.pageReports[0].status).toBe('repaired')
+    expect(result.artifact.content).not.toContain('页面只包含少量文本标签')
   })
 
   it('does not retain warnings produced by a rejected outline attempt', async () => {

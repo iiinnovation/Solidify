@@ -149,7 +149,11 @@ function ChartElement({ element, style, onClick }: ElementRenderProps) {
 interface ElementRenderProps { element: PptdElement; project: PptdProject; style: CSSProperties; onClick: (event?: MouseEvent) => void }
 
 function resolveTextStyle(content: Record<string, unknown>, project: PptdProject): PptdTextStyle {
-  const named = typeof content.style === 'string' ? project.theme.textStyles[content.style] : undefined
+  // The parser expands an exact `$title` token to the style object itself,
+  // while hand-authored pages may keep `style: title` as a string name.
+  const named = typeof content.style === 'string'
+    ? project.theme.textStyles[content.style]
+    : record(content.style) as PptdTextStyle
   return { ...(named ?? {}), ...content } as PptdTextStyle
 }
 

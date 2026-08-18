@@ -189,7 +189,9 @@ async function renderElement(slide: PptxGenJS.Slide, element: PptdElement, proje
 }
 
 function resolveStyle(content: Record<string, unknown>, project: PptdProject): Record<string, unknown> {
-  const named = typeof content.style === 'string' ? project.theme.textStyles[content.style] : undefined
+  // Exact `$title` tokens are expanded by the parser into style objects;
+  // direct PPTD files may still use a string style name.
+  const named = typeof content.style === 'string' ? project.theme.textStyles[content.style] : record(content.style)
   return { ...(named ?? {}), ...content }
 }
 

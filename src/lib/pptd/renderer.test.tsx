@@ -26,6 +26,21 @@ describe('PptdRenderer', () => {
     expect(page.matches('[data-artifact-content]')).toBe(true)
   })
 
+  it('renders parser-expanded theme style tokens', () => {
+    const tokenProject: PptdProject = {
+      ...project,
+      pages: [{ elements: [{
+        elementId: 'token-title', elementType: 'text', bounds: [40, 30, 400, 60],
+        content: { text: 'Token title', style: { fontSize: 40, color: '#123456', bold: true } },
+      }] }],
+    }
+    render(<PptdRenderer project={tokenProject} />)
+    const title = screen.getByText('Token title') as HTMLElement
+    expect(title.style.fontSize).toBe('40px')
+    expect(title.style.color).toBe('rgb(18, 52, 86)')
+    expect(title.style.fontWeight).toBe('700')
+  })
+
   it('reports selected elements without rebuilding the project', () => {
     const onSelect = vi.fn()
     render(<PptdRenderer project={project} onSelectElement={onSelect} />)
