@@ -4,6 +4,7 @@ import { readHandleTool } from './builtin/read-handle'
 import { readFileTool } from './builtin/read-file'
 import { listDirTool } from './builtin/list-dir'
 import { writeFileTool } from './builtin/write-file'
+import { readAttachmentTool, searchAttachmentsTool } from './builtin/attachments'
 import type { Tool } from './types'
 
 describe('ToolRegistry runtime tools', () => {
@@ -36,6 +37,24 @@ describe('ToolRegistry runtime tools', () => {
     })
 
     expect(tools.map((tool) => tool.name)).toEqual(['read_file', 'list_dir'])
+  })
+
+  it('keeps attachment tools under Skill and user policy', () => {
+    const registry = new ToolRegistry()
+    registry.register(searchAttachmentsTool as Tool)
+    registry.register(readAttachmentTool as Tool)
+
+    const allowed = registry.resolve({
+      platform: 'web', skillActive: true,
+      skillAllowedTools: ['search_attachments', 'read_attachment'], userDisabledTools: [], isOnline: true,
+    })
+    expect(allowed.map((tool) => tool.name)).toEqual(['search_attachments', 'read_attachment'])
+
+    const denied = registry.resolve({
+      platform: 'web', skillActive: true,
+      skillAllowedTools: ['search_attachments', 'read_attachment'], userDisabledTools: ['read_attachment'], isOnline: true,
+    })
+    expect(denied.map((tool) => tool.name)).toEqual(['search_attachments'])
   })
 
   it('exposes read_file on Web only when a selected Skill resource resolver exists', () => {

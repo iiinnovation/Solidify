@@ -128,7 +128,7 @@ export const useUIStore = create<UIState>()(
                 size: att.size,
                 mimeType: att.mimeType,
                 mediaId: att.mediaId,
-                recoverable: att.mediaId ? true : att.mediaUrl ? false : att.recoverable,
+                recoverable: att.mediaId || att.attachmentId ? true : att.mediaUrl ? false : att.recoverable,
               })),
             skill: draft.skill,
           }]),

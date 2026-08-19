@@ -110,6 +110,33 @@ describe('PPTD layered generation pipeline', () => {
     expect(calls.find((call) => call.stage === 'page')?.prompt).toContain('Revenue increased by 20%')
   })
 
+  it('retrieves brief-relevant evidence from the tail of a long attachment', async () => {
+    const calls: PptdModelCall[] = []
+    await generatePptdDeck({
+      brief: '汇报稀有尾部证据',
+      attachmentSources: [{ id: 'att-long', name: 'long.md', text: `${'无关材料'.repeat(20_000)}稀有尾部证据：验收通过率为 97%。` }],
+    }, {
+      callModel: async (call) => {
+        calls.push(call)
+        if (call.stage === 'source') return { text: JSON.stringify({ summary: '验收结论', sections: [] }) }
+        if (call.stage === 'design') return { text: DESIGN }
+        if (call.stage === 'outline') return { text: JSON.stringify({
+          title: '验收汇报', audience: '管理层', goal: '说明验收结果', themeId: 'business-light',
+          pages: [{ pageType: 'content', intent: '验收通过率', keyPoints: ['验收通过率为97%'] }],
+        }) }
+        return { text: validPage('验收通过率') }
+      },
+    })
+
+    const sourcePrompt = calls.find((call) => call.stage === 'source')?.prompt ?? ''
+    expect(sourcePrompt.length).toBeLessThan(30_000)
+    expect(sourcePrompt).toContain('稀有尾部证据')
+    const pagePrompt = calls.find((call) => call.stage === 'page')?.prompt ?? ''
+    const pageEvidence = pagePrompt.match(/<page_evidence>\n([\s\S]*?)\n<\/page_evidence>/)?.[1] ?? ''
+    expect(pageEvidence.length).toBeLessThan(4_000)
+    expect(pageEvidence).toContain('稀有尾部证据')
+  })
+
   it('adds a planning draft before page YAML generation', async () => {
     const calls: PptdModelCall[] = []
     const planning = JSON.stringify({
@@ -264,7 +291,10 @@ elements:
 
   it('records a deterministic skip instead of calling review on non-vision models', async () => {
     const calls: PptdModelCall[] = []
-    const result = await generatePptdDeck({ brief: '生成一页方案' }, {
+    const result = await generatePptdDeck({
+      brief: '生成一页图片方案',
+      media: { 'media/diagram.png': 'data:image/png;base64,iVBORw0KGgo=' },
+    }, {
       visualReview: { visionAvailable: false },
       callModel: async (call) => {
         calls.push(call)
@@ -272,7 +302,7 @@ elements:
         if (call.stage === 'outline') {
           return { text: JSON.stringify({
             title: '方案', audience: '客户', goal: '确认', themeId: 'business-light',
-            pages: [{ pageType: 'content', intent: '推荐方案', keyPoints: ['证据'] }],
+            pages: [{ pageType: 'content', intent: '推荐图片方案', keyPoints: ['证据'], assetBrief: '使用图片' }],
           }) }
         }
         return { text: validPage('推荐方案') }
@@ -280,6 +310,8 @@ elements:
     })
 
     expect(calls.some((call) => call.stage === 'review')).toBe(false)
+    expect(calls.every((call) => !call.images?.length)).toBe(true)
+    expect(calls.find((call) => call.stage === 'page')?.prompt).not.toContain('media/diagram.png')
     expect(result.warnings).toContain('当前模型不支持 vision，已跳过 PPTD 截图审阅，仅执行结构校验')
     expect(parsePptdArtifactContentDetailed(result.artifact.content).qualityReport?.notices)
       .toContain('当前模型不支持 vision，已跳过 PPTD 截图审阅，仅执行结构校验')
@@ -547,6 +579,7 @@ elements:
 
     expect(retryCalls).toBe(0)
     expect(retry.project.pages).toEqual(first.project.pages)
+    expect(retry.warnings).toContain('已从工作区检查点恢复材料来源索引')
     expect(retry.warnings).toContain('已从工作区检查点恢复视觉系统和大纲')
     expect(retry.warnings).toContain('已从工作区检查点恢复 1/1 页')
   })

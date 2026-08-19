@@ -4,7 +4,7 @@ import type { QueryEvent } from '@/lib/engine/types'
 import type { RunState, ExecutionMetrics } from '@/lib/engine/run-state'
 import { createQuotaResilientStateStorage } from '@/lib/storage-quota'
 import { createAttachmentResourceId, type AttachmentResource } from '@/lib/attachments/types'
-import { deleteAttachmentResource, saveAttachmentResource } from '@/lib/attachments/store'
+import { saveAttachmentResource } from '@/lib/attachments/store'
 
 /* ── 共享类型 ── */
 
@@ -157,19 +157,6 @@ export const useChatStore = create<ChatState>()(
 
       deleteConversation: (id) =>
         set((state) => {
-          const removed = state.conversations.find((conversation) => conversation.id === id)
-          const retainedAttachmentIds = new Set(state.conversations
-            .filter((conversation) => conversation.id !== id)
-            .flatMap((conversation) => conversation.messages)
-            .flatMap((message) => message.attachments ?? [])
-            .map((attachment) => attachment.attachmentId)
-            .filter((attachmentId): attachmentId is string => Boolean(attachmentId)))
-          for (const attachmentId of removed?.messages
-            .flatMap((message) => message.attachments ?? [])
-            .map((attachment) => attachment.attachmentId)
-            .filter((attachmentId): attachmentId is string => Boolean(attachmentId)) ?? []) {
-            if (!retainedAttachmentIds.has(attachmentId)) void deleteAttachmentResource(attachmentId)
-          }
           const filtered = state.conversations.filter((c) => c.id !== id)
           return {
             conversations: filtered,
@@ -279,7 +266,7 @@ export const useChatStore = create<ChatState>()(
             ...message,
             attachments: message.attachments?.map(({ mediaUrl, extractedText: _extractedText, ...attachment }) => ({
               ...attachment,
-              recoverable: mediaUrl && !attachment.mediaId ? false : attachment.recoverable,
+              recoverable: mediaUrl && !attachment.mediaId && !attachment.attachmentId ? false : attachment.recoverable,
             })),
           })),
         })),

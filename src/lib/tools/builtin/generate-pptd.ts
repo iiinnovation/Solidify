@@ -4,6 +4,7 @@ import { pptdMediaDataUrl } from '../../pptd/media'
 import { runPptdDeckPipeline, type PptdDeckPipelineResult } from '../../pptd/pipeline'
 import { PPTD_THEME_IDS, type PptdThemeId } from '../../pptd/theme-presets'
 import { readWorkspaceBytes, readWorkspaceFile, writeWorkspaceFile } from '@/lib/tauri'
+import { attachmentMediaPath } from '@/lib/attachment-media'
 import type { Tool } from '../types'
 
 export interface GeneratePptdInput {
@@ -88,6 +89,13 @@ export function createGeneratePptdTool(getParent: () => QueryContext): Tool<Gene
           throw new Error(`附件不存在或不属于当前运行：${missingAttachmentIds.join(', ')}`)
         }
         const workspaceMedia = await loadWorkspaceMedia(input.mediaPaths, parent, signal)
+        const selectedAttachmentMediaPaths = new Set((parent.attachments ?? [])
+          .filter((attachment) => requestedAttachmentIds.includes(attachment.id))
+          .flatMap((attachment) => attachment.mediaId ? [attachmentMediaPath(attachment.mediaId, attachment.name)] : []))
+        const attachmentMedia = Object.fromEntries(Object.entries(parent.pptdMedia ?? {}).filter(([path]) =>
+          (parent.attachments?.length ?? 0) === 0
+            || selectedAttachmentMediaPaths.has(path),
+        ))
         const checkpointIO = parent.workspace ? {
           async onCheckpoint(checkpoint: { path: string; content: string }) {
             parent.workspace!.resolve(checkpoint.path)
@@ -110,7 +118,7 @@ export function createGeneratePptdTool(getParent: () => QueryContext): Tool<Gene
             .filter((attachment) => requestedAttachmentIds.includes(attachment.id))
             .filter((attachment): attachment is typeof attachment & { text: string } => typeof attachment.text === 'string')
             .map((attachment) => ({ id: attachment.id, name: attachment.name, text: attachment.text })),
-          media: { ...(parent.pptdMedia ?? {}), ...workspaceMedia },
+          media: { ...attachmentMedia, ...workspaceMedia },
         }, {
           signal,
           ...checkpointIO,

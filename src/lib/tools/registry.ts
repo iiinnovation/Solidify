@@ -35,7 +35,10 @@ export class ToolRegistry implements IToolRegistry {
     const available: Tool[] = []
 
     for (const tool of this.tools.values()) {
-      const runtimeRequired = tool.name === 'read_handle' || tool.name === 'search_attachments' || tool.name === 'read_attachment'
+      // read_handle is a continuation capability that must remain reachable
+      // even when a prior tool result is temporarily hidden. Attachment tools
+      // are ordinary read-only capabilities and still honor Skill/user policy.
+      const runtimeRequired = tool.name === 'read_handle'
 
       // Layer 1: Environment filter
       if (tool.availability === 'tauri-only' && ctx.platform === 'web') {
@@ -92,7 +95,9 @@ export class ToolRegistry implements IToolRegistry {
 }
 
 /** Tools available to a Skill that omits `allowed-tools`; never a write/network set. */
-const DEFAULT_SKILL_TOOLS: ReadonlySet<string> = new Set(['read_file', 'list_dir', 'search_files'])
+const DEFAULT_SKILL_TOOLS: ReadonlySet<string> = new Set([
+  'read_file', 'list_dir', 'search_files', 'search_attachments', 'read_attachment',
+])
 
 /**
  * Global tool registry instance

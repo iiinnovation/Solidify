@@ -97,6 +97,27 @@ describe('generate_pptd workspace media', () => {
     ])
   })
 
+  it('passes only selected attachment media to PPTD', async () => {
+    const context = parent({
+      attachments: [
+        { id: 'att-a', name: 'a.png', size: 3, mediaId: 'media-a' },
+        { id: 'att-b', name: 'b.png', size: 3, mediaId: 'media-b' },
+      ],
+      pptdMedia: {
+        'media/attachment-media-a-a.png': 'data:image/png;base64,a',
+        'media/attachment-media-b-b.png': 'data:image/png;base64,b',
+        'media/attachment-media-a-long-other.png': 'data:image/png;base64,c',
+      },
+    })
+    await createGeneratePptdTool(() => context).execute(
+      { brief: 'deck', attachmentIds: ['att-a'] },
+      toolContext(context), new AbortController().signal,
+    )
+    expect(mocks.runPptdDeckPipeline.mock.calls[0][1].media).toEqual({
+      'media/attachment-media-a-a.png': 'data:image/png;base64,a',
+    })
+  })
+
   it('rejects attachment IDs outside the current run', async () => {
     const context = parent({ attachments: [{ id: 'att-a', name: 'a.md', size: 3, text: 'A' }] })
     await expect(createGeneratePptdTool(() => context).execute(

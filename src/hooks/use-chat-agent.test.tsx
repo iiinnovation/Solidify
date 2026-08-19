@@ -724,9 +724,9 @@ describe('useChat agent loop switch', () => {
     expect(queryContext.messages[0].content).toContain('id: ')
     expect(queryContext.messages[0].content).not.toContain('## 附件内容')
     expect(queryContext.messages[0].content).toContain('[图片文件: recalled-image.png，需要 AI 视觉分析]')
-    expect(queryContext.pptdMedia).toMatchObject({
-      'media/attachment-01-recalled-image.png': 'data:image/png;base64,fakeimagedata',
-    })
+    expect(Object.entries(queryContext.pptdMedia ?? {})).toEqual([
+      [expect.stringMatching(/^media\/attachment-media-.*-recalled-image\.png$/), 'data:image/png;base64,fakeimagedata'],
+    ])
 
     const savedUserMsg = useChatStore.getState().conversations[0].messages.find((m) => m.role === 'user')
     expect(savedUserMsg?.attachments?.[0]).toMatchObject({
@@ -767,9 +767,9 @@ describe('useChat agent loop switch', () => {
       }])
     })
 
-    expect(mocks.runQuery.mock.calls[0][0].pptdMedia).toEqual({
-      'media/attachment-01-persisted.png': mediaUrl,
-    })
+    expect(Object.entries(mocks.runQuery.mock.calls[0][0].pptdMedia ?? {})).toEqual([
+      [expect.stringMatching(/^media\/attachment-media-.*-persisted\.png$/), mediaUrl],
+    ])
   })
 
   it('rejects an attachment whose original content is no longer recoverable', async () => {

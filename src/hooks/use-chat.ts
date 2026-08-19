@@ -15,7 +15,7 @@ import type { QueryEvent } from '@/lib/engine/types'
 import { useWorkspaceStore } from '@/stores/workspace-store'
 import { useDocumentStore } from '@/stores/document-store'
 import { isComposerAttachmentRecoverable, useUIStore, type ComposerAttachment } from '@/stores/ui-store'
-import { loadAttachmentMedia, saveAttachmentMedia } from '@/lib/attachment-media'
+import { attachmentMediaPath, loadAttachmentMedia, saveAttachmentMedia } from '@/lib/attachment-media'
 import { useSkillStore } from '@/stores/skill-store'
 import { deriveArtifactPath, materializeArtifact, normalizeArtifactPath, normalizeArtifactType } from '@/lib/workspace/materialize'
 import { isTauri } from '@/lib/tauri'
@@ -555,7 +555,6 @@ ${result.content}
         }
         return
       }
-      const pptdMedia = attachmentResult.pptdMedia
       const historicalAttachmentIds = messages.flatMap((message) =>
         message.attachments?.map((attachment) => attachment.attachmentId).filter((id): id is string => Boolean(id)) ?? [],
       )
@@ -563,9 +562,11 @@ ${result.content}
       const attachmentResources = [...new Map(
         [...historicalResources, ...attachmentResult.attachmentResources].map((resource) => [resource.id, resource]),
       ).values()]
+      const pptdMedia = await rebuildPptdAttachmentMedia(attachmentResources, attachmentResult.pptdMedia)
       const knowledgeSources = knowledgeResult.sources
+      const canReadAttachments = isEnabled('agentLoop') && activeProvider.supportsTools !== false
       const attachmentContext = attachmentResources.length > 0
-        ? `\n\n${formatAttachmentManifest(attachmentResources)}\n\n${isEnabled('agentLoop')
+        ? `\n\n${formatAttachmentManifest(attachmentResources)}\n\n${canReadAttachments
           ? '附件正文不会自动展开；需要时请使用 search_attachments 和 read_attachment 按需读取。'
           : '当前为兼容聊天模式，只提供附件的有限预览；如需分段读取，请启用 Agent 模式。'}`
         : ''
@@ -1417,12 +1418,30 @@ async function collectPptdAttachmentMedia(
       const mediaId = att.mediaId ?? await saveAttachmentMedia(mediaUrl)
       mediaUrls[i] = mediaUrl
       mediaIds[i] = mediaId
-      const safeName = att.name.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || `image-${i + 1}`
-      attachmentMedia[`media/attachment-${String(i + 1).padStart(2, '0')}-${safeName}`] = mediaUrl
+      attachmentMedia[attachmentMediaPath(mediaId, att.name)] = mediaUrl
+    } else if (isImageAttachment(att)) {
+      throw new Error(`图片附件无法恢复：${att.name}`)
     }
   }
 
   return { attachmentMedia, mediaUrls, mediaIds }
+}
+
+async function rebuildPptdAttachmentMedia(
+  resources: readonly AttachmentResource[],
+  current?: Readonly<Record<string, string | Uint8Array>>,
+): Promise<Record<string, string | Uint8Array> | undefined> {
+  const media: Record<string, string | Uint8Array> = { ...(current ?? {}) }
+  await Promise.all(resources.map(async (resource) => {
+    if (!resource.mediaId) return
+    const path = attachmentMediaPath(resource.mediaId, resource.name)
+    const existing = Object.hasOwn(media, path)
+    if (existing) return
+    const mediaUrl = resource.mediaUrl ?? await loadAttachmentMedia(resource.mediaId)
+    if (!mediaUrl) return
+    media[path] = mediaUrl
+  }))
+  return Object.keys(media).length > 0 ? media : undefined
 }
 
 async function restoreComposerAttachments(attachments?: readonly MessageAttachment[]): Promise<ComposerAttachment[]> {
