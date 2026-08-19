@@ -114,6 +114,22 @@ describe('PPTD export', () => {
     expect(slide).toContain('val="1800"')
   })
 
+  it('normalizes reverse connector segments to non-negative OOXML extents', async () => {
+    const result = await exportPptdAsPptx({
+      ...project,
+      pages: [{ pageType: 'diagram', elements: [{
+        elementId: 'reverse-flow', elementType: 'line', bounds: [100, 100, 400, 240],
+        viewBox: [400, 240], points: '400,240 200,240 200,0 0,0' as unknown as unknown[],
+        endArrow: 'triangle', stroke: { color: '#334155', width: 2 },
+      }] }],
+    })
+    const zip = await JSZip.loadAsync(await result.blob.arrayBuffer())
+    const slide = await zip.file('ppt/slides/slide1.xml')?.async('string') ?? ''
+    expect(slide).not.toMatch(/<a:ext cx="-/)
+    expect(slide).not.toMatch(/<a:ext [^>]*cy="-/)
+    expect(slide).toContain('<a:headEnd type="triangle"')
+  })
+
   it('blocks the export only when there is nothing worth writing', async () => {
     await expect(exportPptdAsPptx({ ...project, pages: [], pagePaths: [] }))
       .rejects.toThrow('PPTD 校验失败')

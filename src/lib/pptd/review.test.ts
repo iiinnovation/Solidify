@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { parsePptdProject } from './parse'
 import { buildPptdPageSvgDataUrl, buildPptdReviewPrompt, runPptdReviewLoop } from './review'
+import type { PptdProject } from './types'
 
 const project = parsePptdProject({
   manifest: 'version: v2\ntitle: demo\nsize: [960, 540]\npages: [pages/01.page]\n',
@@ -65,6 +66,24 @@ pages: [pages/01.page]
     expect(svg).toContain('★')
     expect(svg).toContain('text-anchor="middle"')
     expect(svg.match(/<tspan/g)?.length).toBeGreaterThan(2)
+  })
+
+  it('places line geometry at absolute page coordinates in review screenshots', () => {
+    const lineProject: PptdProject = {
+      version: 'v2', title: 'lines', size: [960, 540], pagePaths: ['pages/01.page'], media: {},
+      theme: { colors: { bg: '#ffffff' }, textStyles: {} },
+      pages: [{ pageType: 'diagram', elements: [
+        {
+          elementId: 'edge', elementType: 'line', bounds: [400, 300, 300, 100],
+          viewBox: [300, 100], points: '0,50 150,50 150,0 300,0' as unknown as unknown[],
+          endArrow: 'triangle', stroke: { color: '#334155', width: 2 },
+        },
+        { elementId: 'separator', elementType: 'line', bounds: [64, 500, 832, 2], stroke: { color: '#CBD5E1', width: 1 } },
+      ] }],
+    }
+    const svg = decodeURIComponent(buildPptdPageSvgDataUrl(lineProject, 0).split(',')[1])
+    expect(svg).toContain('points="400,350 550,350 550,300 700,300"')
+    expect(svg).toMatch(/x1="64" y1="501" x2="896" y2="501"/)
   })
 
   it('repairs validation errors before capture and stops when approved', async () => {

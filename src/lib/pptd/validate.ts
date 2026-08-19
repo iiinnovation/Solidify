@@ -27,7 +27,7 @@ export function validatePptdProject(project: PptdProject): PptdValidationResult 
     // Content pages need enough structure to carry evidence, not just a title
     // and a row of labels. Keep this as a warning so the repair model can add
     // structure without turning a quality problem into a hard pipeline error.
-    const contentPageTypes = new Set(['content', 'comparison', 'timeline', 'chart', 'table', 'summary'])
+    const contentPageTypes = new Set(['content', 'comparison', 'timeline', 'diagram', 'chart', 'table', 'summary'])
     const hasNonTextElement = page.elements.some((element) => element.elementType !== 'text')
     if (contentPageTypes.has(page.pageType ?? '') && (page.elements.length < 6 || !hasNonTextElement)) {
       warnings.push(diagnostic(pagePath, '页面只包含少量文本标签，缺少证据或视觉结构', 'composition-sparse', 'warning'))
@@ -59,7 +59,11 @@ function checkDiagramGeometry(page: PptdPage, pagePath: string, warnings: PptdDi
   const pageType = String(page.pageType ?? '').toLowerCase()
   const diagramPage = /diagram|flow|process|architecture|sequence|dependency|pipeline|架构|流程|依赖|链路/.test(pageType)
     || (lines.length >= 2 && nodes.length >= 3)
-  if (!diagramPage || lines.length === 0 || nodes.length < 2) return
+  if (!diagramPage) return
+  if (lines.length < 1 || nodes.length < 2) {
+    warnings.push(diagnostic(pagePath, '关系图缺少必要结构，至少需要 2 个节点和 1 条连接线', 'diagram-missing-structure', 'warning'))
+    return
+  }
 
   const nodeOverlap = nodes.some((left, index) => nodes.slice(index + 1).some((right) => overlapArea(left, right) > Math.min(area(left), area(right)) * 0.08))
   if (nodeOverlap) warnings.push(diagnostic(pagePath, '关系图节点互相重叠，阅读顺序和边界不可判定', 'diagram-node-overlap', 'warning'))
@@ -69,7 +73,7 @@ function checkDiagramGeometry(page: PptdPage, pagePath: string, warnings: PptdDi
   if (!allHaveArrows) warnings.push(diagnostic(pagePath, '关系图连线缺少方向箭头，依赖或流程关系不可判定', 'diagram-missing-arrow', 'warning'))
 
   for (const { line, points } of absoluteLines) {
-    if (!pprdLineIsOrthogonalSafe(line)) warnings.push(diagnostic(pagePath, `关系图连线 ${line.elementId} 使用斜线，容易穿过节点；请改为水平/垂直折线`, 'diagram-diagonal-connector', 'warning'))
+    if (!pptdLineIsOrthogonalSafe(line)) warnings.push(diagnostic(pagePath, `关系图连线 ${line.elementId} 使用斜线，容易穿过节点；请改为水平/垂直折线`, 'diagram-diagonal-connector', 'warning'))
     const endpointNodes = nodes.filter((node) => pointInRect(points[0], node.bounds) || pointInRect(points.at(-1) ?? points[0], node.bounds))
     const crossed = nodes.some((node) => !endpointNodes.includes(node) && polylineHitsRect(points, node.bounds))
     if (crossed) warnings.push(diagnostic(pagePath, `关系图连线 ${line.elementId} 穿过其他节点`, 'diagram-line-through-node', 'warning'))
@@ -91,17 +95,8 @@ function isDiagramNode(element: PptdElement): boolean {
   return width >= 72 && height >= 28 && width * height < 500_000
 }
 
-function pprdLineIsOrthogonalSafe(element: PptdElement): boolean {
-  const points = (element as Record<string, unknown>).points
-  if (Array.isArray(points)) {
-    const normalized = points.flatMap((point) => Array.isArray(point) && point.length >= 2 ? [[Number(point[0]), Number(point[1])] as const] : [])
-    return normalized.length < 2 || pptdLineIsOrthogonal(normalized)
-  }
-  if (typeof points === 'string') {
-    const normalized = points.trim().split(/\s+/).map((point) => point.split(',').map(Number) as [number, number]).filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y))
-    return normalized.length < 2 || pptdLineIsOrthogonal(normalized)
-  }
-  return false
+function pptdLineIsOrthogonalSafe(element: PptdElement): boolean {
+  return pptdLineIsOrthogonal(pptdAbsoluteLinePoints(element))
 }
 
 function polylineHitsRect(points: readonly (readonly [number, number])[], rect: readonly [number, number, number, number]): boolean {

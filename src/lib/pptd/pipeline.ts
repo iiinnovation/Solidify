@@ -610,7 +610,10 @@ export function createPptdModelCaller(ctx: QueryContext): PptdModelCaller {
           throw new PptdContentGenerationError('PPTD 管线不接受模型工具调用')
         }
       }
-      if (streamError) continue
+      if (streamError) {
+        totalUsage = mergeTokenUsage(totalUsage, usage ?? estimateUsage(request, text))
+        continue
+      }
       if (stopReason === 'max_tokens') throw new PptdOutputLimitError(request.stage)
       totalUsage = mergeTokenUsage(totalUsage, usage ?? estimateUsage(request, text))
       if (text.trim()) return { text, usage: totalUsage }
@@ -957,10 +960,10 @@ function isPptdEmptyOutputError(error: unknown): boolean {
 function isRetryablePptdStreamError(error: ModelError): boolean {
   const message = error.message.toLowerCase()
   return error.kind === 'parse'
+    || error.code.toLowerCase().includes('sse_parse')
     || message.includes('json parse')
     || message.includes('unterminated string')
     || message.includes('unexpected end of json')
-    || message.includes('sse')
 }
 
 function isPptdContentFailure(error: unknown): boolean {
@@ -1531,7 +1534,8 @@ async function restoreCheckpointPages(
       const cleanDocument = { ...document }
       delete cleanDocument[CHECKPOINT_FIELD]
       const cleanRaw = dumpYaml(cleanDocument, { noRefs: true, lineWidth: -1 })
-      const page = parseGeneratedPage(cleanRaw, pagePath, theme)
+      const parsedPage = parseGeneratedPage(cleanRaw, pagePath, theme)
+      const page = isDiagramOutlinePage(pageOutline) ? { ...parsedPage, pageType: 'diagram' } : parsedPage
       const reasons = Array.isArray(metadata.reasons)
         ? metadata.reasons.filter((reason): reason is string => typeof reason === 'string' && Boolean(reason.trim()))
         : []

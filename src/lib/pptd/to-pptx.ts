@@ -132,13 +132,18 @@ async function renderElement(slide: PptxGenJS.Slide, element: PptdElement, proje
     for (let index = 1; index < points.length; index++) {
       const [startX, startY] = points[index - 1]
       const [endX, endY] = points[index]
+      const segment = normalizePptxLineSegment(startX, startY, endX, endY)
+      const firstArrow = index === 1 ? beginArrowType : undefined
+      const lastArrow = index === points.length - 1 ? endArrowType : undefined
       slide.addShape(presentation.ShapeType.line, {
-        x: startX / 96, y: startY / 96, w: (endX - startX) / 96, h: (endY - startY) / 96,
+        x: segment.x / 96, y: segment.y / 96, w: segment.width / 96, h: segment.height / 96,
+        flipH: segment.flipH || undefined,
+        flipV: segment.flipV || undefined,
         rotate: hasExplicitPoints ? undefined : elementRotation(element),
         line: {
           color: lineColor, width: number(stroke.width, 1), transparency: opacityTransparency(element.opacity),
-          beginArrowType: index === 1 ? beginArrowType : undefined,
-          endArrowType: index === points.length - 1 ? endArrowType : undefined,
+          beginArrowType: segment.reverseArrows ? lastArrow : firstArrow,
+          endArrowType: segment.reverseArrows ? firstArrow : lastArrow,
         },
       } as never)
     }
@@ -311,6 +316,29 @@ function pptxArrowType(value: string | undefined): 'none' | 'arrow' | 'diamond' 
   return ['arrow', 'diamond', 'oval', 'stealth', 'triangle'].includes(value)
     ? value as 'arrow' | 'diamond' | 'oval' | 'stealth' | 'triangle'
     : 'triangle'
+}
+
+function normalizePptxLineSegment(startX: number, startY: number, endX: number, endY: number): {
+  x: number
+  y: number
+  width: number
+  height: number
+  flipH: boolean
+  flipV: boolean
+  reverseArrows: boolean
+} {
+  const deltaX = endX - startX
+  const deltaY = endY - startY
+  const oppositeDirections = deltaX * deltaY < 0
+  return {
+    x: Math.min(startX, endX),
+    y: Math.min(startY, endY),
+    width: Math.abs(deltaX),
+    height: Math.abs(deltaY),
+    flipH: oppositeDirections && deltaX < 0,
+    flipV: oppositeDirections && deltaY < 0,
+    reverseArrows: !oppositeDirections && (deltaX < 0 || deltaY < 0),
+  }
 }
 
 function orderedElements(elements: readonly PptdElement[]): PptdElement[] {

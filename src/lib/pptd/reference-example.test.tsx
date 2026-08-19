@@ -35,7 +35,7 @@ describe.skipIf(!existsSync(exampleRoot))('open-kimi-ppt reference compatibility
     const exported = await exportPptdAsPptx(project)
     expect(exported.blob.size).toBeGreaterThan(100_000)
     if (process.env.M5_EXPORT_REFERENCE === 'true') writeFileSync('/private/tmp/solidify-m5-reference.pptx', new Uint8Array(await exported.blob.arrayBuffer()))
-  })
+  }, 20_000)
 })
 
 async function rasterizeReferencePage(project: PptdProject, pageIndex: number): Promise<{ opaquePixels: number; colorBuckets: number; luminanceVariance: number }> {

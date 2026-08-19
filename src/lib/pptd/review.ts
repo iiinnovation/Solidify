@@ -1,7 +1,7 @@
 import { chartToSvg, getPptdChartSpec } from './chart'
 import type { PptdElement, PptdProject, PptdValidationResult } from './types'
 import { validatePptdProject } from './validate'
-import { pptdLineArrow, pptdLineGeometry } from './line'
+import { pptdAbsoluteLinePoints, pptdLineArrow } from './line'
 
 export interface PptdReviewImage {
   pageIndex: number
@@ -137,14 +137,14 @@ function svgElement(element: PptdProject['pages'][number]['elements'][number], p
   }
   if (element.elementType === 'line') {
     const stroke = record(element.stroke ?? element.border)
-    const geometry = pptdLineGeometry(element)
-    const points = geometry.points.map(([px, py]) => `${px},${py}`).join(' ')
+    const absolutePoints = pptdAbsoluteLinePoints(element)
+    const points = absolutePoints.map(([px, py]) => `${px},${py}`).join(' ')
     const markerId = `pptd-review-arrow-${element.elementId.replace(/[^a-zA-Z0-9_-]/g, '-')}`
     const arrow = pptdLineArrow(element, 'end')
     const marker = arrow ? `<defs><marker id="${markerId}" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L8,4 L0,8 Z" fill="${svgColor(stroke.color, '#000000')}"/></marker></defs>` : ''
-    const first = geometry.points[0]
-    const last = geometry.points.at(-1)
-    const line = geometry.points.length === 2 && first && last
+    const first = absolutePoints[0]
+    const last = absolutePoints.at(-1)
+    const line = absolutePoints.length === 2 && first && last
       ? `<line x1="${first[0]}" y1="${first[1]}" x2="${last[0]}" y2="${last[1]}" stroke="${svgColor(stroke.color, '#000000')}" stroke-width="${number(stroke.width, 1)}" stroke-dasharray="${stroke.style === 'dashed' || stroke.style === 'dash' ? '6 4' : ''}"${arrow ? ` marker-end="url(#${markerId})"` : ''} opacity="${opacity}"${transform}/>`
       : `<polyline points="${points}" fill="none" stroke="${svgColor(stroke.color, '#000000')}" stroke-width="${number(stroke.width, 1)}" stroke-dasharray="${stroke.style === 'dashed' || stroke.style === 'dash' ? '6 4' : ''}"${arrow ? ` marker-end="url(#${markerId})"` : ''} opacity="${opacity}"${transform}/>`
     return `${marker}${line}`

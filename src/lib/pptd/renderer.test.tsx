@@ -98,7 +98,8 @@ describe('PptdRenderer', () => {
     expect(text.style.whiteSpace).toBe('pre-wrap')
     expect(text.style.justifyContent).toBe('flex-end')
     const line = document.querySelector('[data-artifact-content] svg line')
-    expect(line?.getAttribute('x1')).toBe('0')
+    expect(line?.getAttribute('x1')).toBe('50')
+    expect(line?.getAttribute('x2')).toBe('50')
     expect(line?.getAttribute('y2')).toBe('100')
   })
 

@@ -63,6 +63,18 @@ elements:
 `
 }
 
+function validDiagramPage(title: string): string {
+  return `pageType: content
+elements:
+  - {elementId: edge, elementType: line, bounds: [240, 211, 480, 2], endArrow: triangle, stroke: {color: '$accent', width: 2}, zIndex: 0}
+  - {elementId: node-a, elementType: shape, bounds: [80, 180, 160, 64], shapeName: rect, fill: {type: solid, color: '$surface'}, stroke: {color: '$accent'}, zIndex: 1}
+  - {elementId: node-b, elementType: shape, bounds: [720, 180, 160, 64], shapeName: rect, fill: {type: solid, color: '$surface'}, stroke: {color: '$accent'}, zIndex: 1}
+  - {elementId: title, elementType: text, bounds: [64, 48, 832, 64], content: {text: ${JSON.stringify(title)}, fontSize: 32, color: '$text', bold: true}}
+  - {elementId: label-a, elementType: text, bounds: [96, 196, 128, 32], content: {text: "输入", fontSize: 18, color: '$text', align: center}}
+  - {elementId: label-b, elementType: text, bounds: [736, 196, 128, 32], content: {text: "输出", fontSize: 18, color: '$text', align: center}}
+`
+}
+
 const INVALID_PAGE = `pageType: content
 elements:
   - elementId: title
@@ -466,6 +478,31 @@ elements:
     expect(retry.warnings).toContain('已从工作区检查点恢复 1/1 页')
   })
 
+  it('keeps inferred diagram page types consistent after checkpoint restore', async () => {
+    const files = new Map<string, string>()
+    const input = { brief: '生成系统架构数据流' }
+    const callModel = async (call: PptdModelCall) => {
+      if (call.stage === 'design') return { text: DESIGN }
+      if (call.stage === 'outline') return { text: JSON.stringify({
+        title: '架构', audience: '研发', goal: '说明数据流', themeId: 'business-light',
+        pages: [{ pageType: 'content', intent: '系统架构数据流', layout: '左右节点', visualTask: '架构流程', keyPoints: ['输入到输出'] }],
+      }) }
+      return { text: validDiagramPage('系统架构数据流') }
+    }
+    const first = await generatePptdDeck(input, {
+      onCheckpoint: async ({ path, content }) => { files.set(path, content) },
+      loadCheckpoint: async (path) => files.get(path),
+      callModel,
+    })
+    const restored = await generatePptdDeck(input, {
+      onCheckpoint: async ({ path, content }) => { files.set(path, content) },
+      loadCheckpoint: async (path) => files.get(path),
+      callModel: async () => { throw new Error('checkpoint should avoid model calls') },
+    })
+    expect(first.project.pages[0].pageType).toBe('diagram')
+    expect(restored.project.pages[0].pageType).toBe('diagram')
+  })
+
   it('treats a checkpoint write failure as a technical failure', async () => {
     await expect(generatePptdDeck({ brief: '检查点写入失败' }, {
       onCheckpoint: async () => { throw new Error('disk full') },
@@ -759,6 +796,8 @@ describe('PPTD QueryContext model adapter', () => {
       async *stream() {
         requests++
         if (requests === 1) {
+          yield { type: 'content_delta', delta: '{"partial":' }
+          yield { type: 'message_end', usage: { inputTokens: 7, outputTokens: 2, totalTokens: 9 }, stopReason: 'end_turn' }
           yield {
             type: 'error',
             error: {
@@ -769,7 +808,7 @@ describe('PPTD QueryContext model adapter', () => {
           return
         }
         yield { type: 'content_delta', delta: '{"ok":true}' }
-        yield { type: 'message_end', stopReason: 'end_turn' }
+        yield { type: 'message_end', usage: { inputTokens: 7, outputTokens: 3, totalTokens: 10 }, stopReason: 'end_turn' }
       },
     }
     const registry = new ProviderRegistry()
@@ -784,6 +823,7 @@ describe('PPTD QueryContext model adapter', () => {
 
     expect(requests).toBe(2)
     expect(response.text).toBe('{"ok":true}')
+    expect(response.usage).toEqual({ inputTokens: 14, outputTokens: 5, totalTokens: 19 })
   })
 
   it('caps empty-output retries and does not retry max-token responses', async () => {

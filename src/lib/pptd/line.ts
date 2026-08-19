@@ -17,6 +17,8 @@ export function pptdLineGeometry(element: PptdElement): PptdLineGeometry {
   const rawPoints = (element as Record<string, unknown>).points
   const points = parsePoints(rawPoints)
   if (points.length >= 2) return { viewBox, points }
+  if (width >= height * 4) return { viewBox, points: [[0, viewBox[1] / 2], [viewBox[0], viewBox[1] / 2]] }
+  if (height >= width * 4) return { viewBox, points: [[viewBox[0] / 2, 0], [viewBox[0] / 2, viewBox[1]]] }
   return { viewBox, points: [[0, 0], [viewBox[0], viewBox[1]]] }
 }
 

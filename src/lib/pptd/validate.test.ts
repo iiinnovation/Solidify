@@ -87,6 +87,33 @@ describe('PPTD semantic validation gate', () => {
     expect(codes).toEqual(expect.arrayContaining(['diagram-missing-arrow', 'diagram-diagonal-connector', 'diagram-unattached-connector']))
   })
 
+  it('keeps diagram pages inside the sparse gate and reports missing structure', () => {
+    const result = validatePptdProject({
+      version: 'v2', title: 'Sparse diagram', size: [960, 540], pagePaths: ['pages/01.page'], media: {},
+      theme: { colors: { bg: '#ffffff' }, textStyles: {} },
+      pages: [{ pageType: 'diagram', elements: [
+        { elementId: 'title', elementType: 'text', bounds: [40, 40, 800, 50], content: { text: '架构流程 →' } },
+      ] }],
+    })
+    expect(result.warnings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'composition-sparse' }),
+      expect.objectContaining({ code: 'diagram-missing-structure' }),
+    ]))
+  })
+
+  it('recognizes thin bounds-only lines as orthogonal', () => {
+    const result = validatePptdProject({
+      version: 'v2', title: 'Legacy lines', size: [960, 540], pagePaths: ['pages/01.page'], media: {},
+      theme: { colors: { bg: '#ffffff' }, textStyles: {} },
+      pages: [{ pageType: 'diagram', elements: [
+        { elementId: 'a', elementType: 'shape', bounds: [40, 180, 160, 60], fill: { type: 'solid', color: '#E2E8F0' } },
+        { elementId: 'b', elementType: 'shape', bounds: [760, 180, 160, 60], fill: { type: 'solid', color: '#E2E8F0' } },
+        { elementId: 'edge', elementType: 'line', bounds: [200, 208, 560, 2], endArrow: 'triangle', stroke: { color: '#334155', width: 2 } },
+      ] }],
+    })
+    expect(result.warnings.some((item) => item.code === 'diagram-diagonal-connector')).toBe(false)
+  })
+
   it('never infers a token from parsed text and uses a realistic text capacity', () => {
     // Token detection belongs to the parser, which alone can tell `$$USD`
     // (a literal) from `$missing` (a real reference); see parse.test.ts.
