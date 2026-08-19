@@ -1,14 +1,20 @@
 import { useState, useCallback, useMemo } from 'react'
 import { type Skill } from '@/lib/skills'
 import { useSkillStore } from '@/stores/skill-store'
+import { composerDraftKey, useUIStore } from '@/stores/ui-store'
 import { useSkillRegistry } from './use-skill-registry'
 import { isEnabled } from '@/lib/harness/flags'
 
-export function useSkillPalette() {
+export function useSkillPalette(conversationId?: string) {
   const [isOpen, setIsOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [selectedIndex, setSelectedIndex] = useState(0)
-  const [activeSkill, setActiveSkill] = useState<Skill | null>(null)
+  const draftKey = composerDraftKey(conversationId)
+  const activeSkill = useUIStore((s) => s.composerDrafts[draftKey]?.skill ?? null)
+  const setComposerDraft = useUIStore((s) => s.setComposerDraft)
+  const setActiveSkill = useCallback((skill: Skill | null) => {
+    setComposerDraft(conversationId, { skill })
+  }, [conversationId, setComposerDraft])
 
   const getAllSkills = useSkillStore((s) => s.getAllSkills)
   const registryState = useSkillRegistry()
@@ -70,12 +76,12 @@ export function useSkillPalette() {
       const cleaned = textBeforeCursor.replace(/(^|\s)\/[\S]*$/, '$1')
       return (cleaned + textAfterCursor).trim()
     },
-    []
+    [setActiveSkill]
   )
 
   const clearSkill = useCallback(() => {
     setActiveSkill(null)
-  }, [])
+  }, [setActiveSkill])
 
   const closePalette = useCallback(() => {
     setIsOpen(false)

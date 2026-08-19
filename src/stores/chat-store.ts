@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
 import type { QueryEvent } from '@/lib/engine/types'
-import type { RunState } from '@/lib/engine/run-state'
+import type { RunState, ExecutionMetrics } from '@/lib/engine/run-state'
 import { createQuotaResilientStateStorage } from '@/lib/storage-quota'
 
 /* ── 共享类型 ── */
@@ -22,7 +22,9 @@ export interface Message {
   id: string
   role: 'user' | 'assistant'
   content: string
+  skill?: { id: string; name: string }
   attachments?: { name: string; size: number }[]
+  metrics?: ExecutionMetrics
   knowledgeSources?: Array<{
     id: string
     title: string
@@ -41,6 +43,7 @@ export interface Message {
   /** M3.5: artifacts are file references; content lives in the workspace. */
   documents?: Array<{ path: string; messageId: string; version: number }>
 }
+
 
 export interface Conversation {
   id: string
@@ -71,7 +74,9 @@ interface ChatState {
   patchMessageInConversation: (convId: string, messageId: string, patch: Partial<Message>) => void
   removeMessageFromConversation: (convId: string, messageId: string) => void
   removeLastMessageFromConversation: (convId: string) => void
+  truncateMessagesFrom: (convId: string, messageId: string) => void
 }
+
 
 /* ── ID 生成 ── */
 
@@ -207,7 +212,31 @@ export const useChatStore = create<ChatState>()(
               : c,
           ),
         })),
+
+      truncateMessagesFrom: (convId, messageId) =>
+        set((state) => {
+          const removedMessageIds = new Set<string>()
+          let found = false
+          const conversations = state.conversations.map((c) => {
+            if (c.id !== convId) return c
+            const idx = c.messages.findIndex((m) => m.id === messageId)
+            if (idx === -1) return c
+            found = true
+            c.messages.slice(idx).forEach((message) => removedMessageIds.add(message.id))
+            return { ...c, messages: c.messages.slice(0, idx) }
+          })
+          if (!found) return state
+          const artifacts = state.artifacts.filter((artifact) => !removedMessageIds.has(artifact.messageId))
+          return {
+            conversations,
+            artifacts,
+            activeArtifactId: state.activeArtifactId && artifacts.some((artifact) => artifact.id === state.activeArtifactId)
+              ? state.activeArtifactId
+              : null,
+          }
+        }),
     }),
+
     {
       name: 'solidify-chat',
       storage: createJSONStorage(() => createQuotaResilientStateStorage(localStorage)),

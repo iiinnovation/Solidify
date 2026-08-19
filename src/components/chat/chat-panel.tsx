@@ -1,12 +1,12 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { SendHorizonal, Square, FileText, Code, Presentation, GitGraph, ChevronDown, Settings2, Copy, RefreshCw, X, Paperclip, FileIcon, AlertCircle, BookOpen, Sparkles, FolderOpen } from 'lucide-react'
+import { SendHorizonal, Square, FileText, Code, Presentation, GitGraph, ChevronDown, Settings2, Copy, RefreshCw, X, Paperclip, FileIcon, AlertCircle, BookOpen, Sparkles, FolderOpen, Undo2, Zap, Gauge } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
-import { cn } from '@/lib/utils'
+import { cn, formatDuration } from '@/lib/utils'
 import { MarkdownRenderer } from '@/components/artifacts/markdown-renderer'
-import { useChatStore, type ArtifactType } from '@/stores/chat-store'
+import { useChatStore, type ArtifactType, type Message } from '@/stores/chat-store'
 import { useModelStore } from '@/stores/model-store'
 import { useKnowledgeEnhancementStore } from '@/stores/knowledge-store'
-import { useUIStore } from '@/stores/ui-store'
+import { composerDraftKey, EMPTY_COMPOSER_DRAFT, useUIStore } from '@/stores/ui-store'
 import { useChat } from '@/hooks/use-chat'
 import { useSkillPalette } from '@/hooks/use-skill-palette'
 import { SkillPalette } from '@/components/chat/skill-palette'
@@ -24,6 +24,7 @@ import { isEnabled } from '@/lib/harness/flags'
 import { ConfirmDialog } from '@/components/agent/confirm-dialog'
 import { answerApproval, subscribeApprovals } from '@/lib/harness/approval-channel'
 import type { ApprovalRequest } from '@/lib/harness/approval'
+
 
 const typeIcons: Record<ArtifactType, typeof FileText> = {
   document: FileText,
@@ -196,63 +197,112 @@ function StreamingIndicator() {
 }
 
 function MessageActions({
-  content,
-  role,
+  message,
   isLast,
   onRegenerate,
+  onRecall,
   isStreaming
 }: {
-  content: string
-  role: 'user' | 'assistant'
+  message: Message
   isLast: boolean
   onRegenerate?: () => void
+  onRecall?: () => void
   isStreaming: boolean
 }) {
+  const { role, content, skill, attachments, metrics } = message
+
   const handleCopy = async () => {
     try {
-      await navigator.clipboard.writeText(content)
+      let textToCopy = content
+      if (role === 'user') {
+        const parts: string[] = []
+        if (skill?.name) {
+          parts.push(`【技能】${skill.name}`)
+        }
+        if (attachments && attachments.length > 0) {
+          parts.push(`【附件】${attachments.map(a => `${a.name} (${formatFileSize(a.size)})`).join(', ')}`)
+        }
+        if (content) {
+          parts.push(content)
+        }
+        textToCopy = parts.join('\n\n')
+      }
+      await navigator.clipboard.writeText(textToCopy)
       toast.success('已复制到剪贴板')
     } catch {
       toast.error('复制失败')
     }
   }
 
-  if (!content) return null
-
   return (
     <div className={cn(
       "flex items-center gap-1 mt-2",
-      role === 'user' ? "justify-end" : "justify-start"
+      role === 'user' ? "justify-end" : "justify-between w-full"
     )}>
-      <button
-        onClick={handleCopy}
-        className="p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
-        title="复制"
-      >
-        <Copy size={14} strokeWidth={1.75} />
-      </button>
-      {role === 'assistant' && isLast && !isStreaming && onRegenerate && (
-        <button
-          onClick={onRegenerate}
-          className="p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
-          title="重新生成"
-        >
-          <RefreshCw size={14} strokeWidth={1.75} />
-        </button>
+      {role === 'assistant' && !isStreaming && metrics && (
+        <div className="inline-flex items-center gap-2 text-[11px] text-text-tertiary tabular-nums pl-0.5">
+          <span>{formatDuration(metrics.durationMs)}</span>
+          {metrics.ttftMs !== undefined && (
+            <span className="inline-flex items-center gap-0.5" title="首 Token 响应时间 (TTFT)">
+              <Zap size={11} className="text-accent" />
+              首Token: {formatDuration(metrics.ttftMs)}
+            </span>
+          )}
+          {metrics.tokensPerSecond !== undefined && (
+            <span className="inline-flex items-center gap-0.5" title="Token 生成速度 (ts)">
+              <Gauge size={11} className="text-accent" />
+              {metrics.tokensPerSecond} t/s
+            </span>
+          )}
+        </div>
       )}
+      <div className={cn("flex items-center gap-1", role === 'assistant' && "ml-auto")}>
+        {role === 'user' && onRecall && (
+          <button
+            onClick={onRecall}
+            className="p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors flex items-center gap-1 text-xs"
+            title="撤回并重新编辑"
+          >
+            <Undo2 size={13} strokeWidth={1.75} />
+            <span>撤回</span>
+          </button>
+        )}
+        {content && (
+          <button
+            onClick={handleCopy}
+            className="p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
+            title="复制"
+          >
+            <Copy size={14} strokeWidth={1.75} />
+          </button>
+        )}
+        {role === 'assistant' && isLast && !isStreaming && onRegenerate && (
+          <button
+            onClick={onRegenerate}
+            className="p-1.5 rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-colors"
+            title="重新生成"
+          >
+            <RefreshCw size={14} strokeWidth={1.75} />
+          </button>
+        )}
+      </div>
     </div>
   )
 }
 
+
 export function ChatPanel({ conversationId }: { conversationId?: string }) {
-  // 模板页会先写 pendingInput 再跳转到 /chat，本组件届时重新挂载，
-  // 所以挂载时取一次即可，不需要在 effect 里同步 setState
-  const [input, setInput] = useState(() => useUIStore.getState().pendingInput ?? '')
-  const [attachments, setAttachments] = useState<File[]>([])
+  const draftKey = composerDraftKey(conversationId)
+  const composerDraft = useUIStore((s) => s.composerDrafts[draftKey] ?? EMPTY_COMPOSER_DRAFT)
+  const setComposerDraft = useUIStore((s) => s.setComposerDraft)
+  const clearComposerDraft = useUIStore((s) => s.clearComposerDraft)
+  const input = composerDraft.input
+  const attachments = composerDraft.attachments
+
   const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null)
   const [templateFormOpen, setTemplateFormOpen] = useState(false)
   const [approvalRequests, setApprovalRequests] = useState<ApprovalRequest[]>([])
-  const { messages, isStreaming, error, sendMessage, stopStreaming, regenerate, retry } = useChat(conversationId)
+  const { messages, isStreaming, error, sendMessage, stopStreaming, recallMessage, regenerate, retry } = useChat(conversationId)
   const activeRun = [...messages].reverse()
     .find((message) => message.agentRun?.status === 'running')?.agentRun ?? null
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -269,13 +319,15 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
   const setWorkspaceRoot = useWorkspaceStore((s) => s.setWorkspaceRoot)
   const workspaceToolsEnabled = isEnabled('agentLoop') && isEnabled('toolCalling')
 
-  // 消费完 pendingInput 后清空 store 并聚焦输入框（写外部系统，属于 effect 的正当职责）
+  // 消费完 pendingInput 后同步到 composerDraft 并聚焦输入框
   useEffect(() => {
-    if (!useUIStore.getState().pendingInput) return
+    const pending = useUIStore.getState().pendingInput
+    if (!pending) return
+    setComposerDraft(conversationId, { input: pending })
     setPendingInput(null)
     const timer = setTimeout(() => textareaRef.current?.focus(), 100)
     return () => clearTimeout(timer)
-  }, [setPendingInput])
+  }, [conversationId, setPendingInput, setComposerDraft])
 
   const {
     isOpen: isPaletteOpen,
@@ -286,7 +338,7 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
     selectSkill,
     clearSkill,
     handleKeyDown: onPaletteKeyDown,
-  } = useSkillPalette()
+  } = useSkillPalette(conversationId)
 
   const { providers, activeProviderId } = useModelStore()
   const activeProvider = providers.find((p) => p.id === activeProviderId)
@@ -352,7 +404,7 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
         }
 
         if (files.length > 0) {
-          setAttachments(prev => [...prev, ...files])
+          setComposerDraft(conversationId, prev => ({ attachments: [...prev.attachments, ...files] }))
         }
       }
     } else {
@@ -387,7 +439,7 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
     }
 
     if (validFiles.length > 0) {
-      setAttachments(prev => [...prev, ...validFiles])
+      setComposerDraft(conversationId, prev => ({ attachments: [...prev.attachments, ...validFiles] }))
     }
 
     // 重置 input
@@ -397,20 +449,37 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
   }
 
   const handleRemoveAttachment = (index: number) => {
-    setAttachments(prev => prev.filter((_, i) => i !== index))
+    setComposerDraft(conversationId, prev => ({ attachments: prev.attachments.filter((_, i) => i !== index) }))
   }
 
   const handleSend = () => {
     const text = input.trim()
     if (!text || isStreaming) return
-    setInput('')
-    setAttachments([])
+    const currentFiles = [...attachments]
+    const currentSkill = activeSkill
+    clearComposerDraft(conversationId)
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto'
     }
     isNearBottomRef.current = true
-    sendMessage(text, attachments.length > 0 ? attachments : undefined, activeSkill?.systemPrompt, activeSkill?.skipConfirmation, undefined, undefined, activeSkill?.id)
+    sendMessage(
+      text,
+      currentFiles.length > 0 ? currentFiles : undefined,
+      currentSkill?.systemPrompt,
+      currentSkill?.skipConfirmation,
+      undefined,
+      undefined,
+      currentSkill?.id,
+      currentSkill?.name,
+    )
     clearSkill()
+  }
+
+  const handleRecall = (messageId: string) => {
+    recallMessage(messageId)
+    setTimeout(() => {
+      textareaRef.current?.focus()
+    }, 100)
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -420,7 +489,7 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
     if (result.handled) {
       e.preventDefault()
       if (result.newInput !== undefined) {
-        setInput(result.newInput)
+        setComposerDraft(conversationId, { input: result.newInput })
       }
       return
     }
@@ -433,7 +502,7 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
 
   const handleInputChangeLocal = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const value = e.target.value
-    setInput(value)
+    setComposerDraft(conversationId, { input: value })
     const cursorPos = e.target.selectionStart ?? value.length
     onPaletteInputChange(value, cursorPos)
   }
@@ -446,7 +515,7 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
   const handleTemplateSubmit = (content: string) => {
     if (selectedTemplate) {
       incrementUsageMutation.mutate(selectedTemplate.id)
-      setInput(content)
+      setComposerDraft(conversationId, { input: content })
       setTemplateFormOpen(false)
       setSelectedTemplate(null)
       // 自动聚焦到输入框
@@ -488,6 +557,14 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
               >
                 {msg.role === 'user' ? (
                   <>
+                    {msg.skill && (
+                      <div className="flex items-center gap-1 mb-1.5">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-accent/15 text-accent text-xs font-medium">
+                          <Sparkles size={11} />
+                          {msg.skill.name}
+                        </span>
+                      </div>
+                    )}
                     <p className="text-sm text-text-primary whitespace-pre-wrap leading-relaxed">
                       {msg.content}
                     </p>
@@ -542,12 +619,12 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
                   </>
                 )}
               </div>
-              <div className="opacity-0 group-hover:opacity-100 transition-opacity">
+              <div className="opacity-0 group-hover:opacity-100 transition-opacity w-full">
                 <MessageActions
-                  content={msg.content}
-                  role={msg.role}
+                  message={msg}
                   isLast={index === messages.length - 1}
                   onRegenerate={regenerate}
+                  onRecall={msg.role === 'user' ? () => handleRecall(msg.id) : undefined}
                   isStreaming={isStreaming}
                 />
               </div>
@@ -655,7 +732,7 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
               onSelect={(skill) => {
                 const cursorPos = textareaRef.current?.selectionStart ?? input.length
                 const newInput = selectSkill(skill, input, cursorPos)
-                setInput(newInput)
+                setComposerDraft(conversationId, { input: newInput })
               }}
               onSelectTemplate={handleTemplateSelect}
               activeSkillId={activeSkill?.id}
@@ -715,6 +792,7 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
           </div>
         </div>
       </div>
+
 
       {/* Template Variable Form */}
       {selectedTemplate && (

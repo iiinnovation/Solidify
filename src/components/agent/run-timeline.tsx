@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { CircleAlert, CircleCheck, LoaderCircle, Play, Square, TimerReset } from 'lucide-react'
-import { cn } from '@/lib/utils'
+import { CircleAlert, CircleCheck, LoaderCircle, Play, Square, TimerReset, Zap, Gauge } from 'lucide-react'
+import { cn, formatDuration } from '@/lib/utils'
 import type { RunState } from '@/lib/engine/run-state'
 import { ToolCallCard } from './tool-call-card'
 import { LedgerPanel } from './ledger-panel'
@@ -16,14 +16,14 @@ function ElapsedTime({ startedAt, completedAt }: { startedAt: number; completedA
     const refresh = window.setTimeout(() => setNow(Date.now()), 0)
     const timer = window.setInterval(() => {
       if (!document.hidden) setNow(Date.now())
-    }, 1000)
+    }, 500)
     return () => {
       window.clearTimeout(refresh)
       window.clearInterval(timer)
     }
   }, [startedAt, completedAt])
 
-  return <>{completedAt ? completedAt - startedAt : Math.max(0, now - startedAt)}ms</>
+  return <>{formatDuration(completedAt ? completedAt - startedAt : Math.max(0, now - startedAt))}</>
 }
 
 export function RunTimeline({ run, onStop }: { run: RunState | null; onStop?: () => void }) {
@@ -33,13 +33,25 @@ export function RunTimeline({ run, onStop }: { run: RunState | null; onStop?: ()
 
   return (
     <section className="mb-4 border-y border-border-light bg-background-secondary/70" aria-label="Agent 运行过程">
-      <div className="py-2.5 flex flex-wrap items-center gap-2">
+      <div className="py-2.5 flex flex-wrap items-center gap-2.5">
         {active ? <LoaderCircle size={14} className="text-accent animate-spin" /> : run.status === 'completed' ? <CircleCheck size={14} className="text-success" /> : run.status === 'aborted' ? <Square size={12} className="text-warning" /> : run.status === 'failed' ? <CircleAlert size={14} className="text-error" /> : <Play size={14} className="text-text-tertiary" />}
         <span className="text-xs font-medium text-text-primary">{statusLabel}</span>
         <span className="text-[11px] text-text-tertiary font-mono">{run.tools.length} 次工具调用</span>
         {run.usage && (
           <span className="text-[11px] text-text-tertiary tabular-nums">
             {run.usage.totalTokens.toLocaleString()} tokens
+          </span>
+        )}
+        {run.metrics?.ttftMs !== undefined && (
+          <span className="inline-flex items-center gap-0.5 text-[11px] text-text-tertiary tabular-nums" title="首 Token 响应时间 (TTFT)">
+            <Zap size={11} className="text-accent" />
+            首Token: {formatDuration(run.metrics.ttftMs)}
+          </span>
+        )}
+        {run.metrics?.tokensPerSecond !== undefined && (
+          <span className="inline-flex items-center gap-0.5 text-[11px] text-text-tertiary tabular-nums" title="Token 生成速度 (ts)">
+            <Gauge size={11} className="text-accent" />
+            {run.metrics.tokensPerSecond} t/s
           </span>
         )}
         <span className="ml-auto inline-flex items-center gap-1 text-[11px] text-text-tertiary tabular-nums"><TimerReset size={12} /><ElapsedTime startedAt={run.startedAt} completedAt={run.completedAt} /></span>
@@ -49,6 +61,7 @@ export function RunTimeline({ run, onStop }: { run: RunState | null; onStop?: ()
           </button>
         )}
       </div>
+
       {(run.subAgents?.length ?? 0) > 0 && (
         <div className="border-t border-border-light py-3">
           <div className="flex flex-col gap-4 lg:flex-row">

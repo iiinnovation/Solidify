@@ -5,6 +5,7 @@ import type { PieLabelRenderProps } from 'recharts'
 import { useUsageStats } from '@/hooks/use-usage'
 import { supabaseConfigured } from '@/lib/supabase'
 import { loadRecentRunTelemetry } from '@/lib/harness/telemetry'
+import { formatDuration } from '@/lib/utils'
 
 const COLORS = ['#D4915E', '#5BA37C', '#5B8EC7', '#C75B5B', '#9B9590']
 
@@ -12,9 +13,10 @@ function RecentRuns() {
   const runs = loadRecentRunTelemetry()
   return <section className="w-full rounded-lg border border-border bg-surface p-5 text-left">
     <h2 className="mb-3 text-base font-semibold text-text-primary">最近 Agent 运行</h2>
-    {runs.length === 0 ? <p className="text-sm text-text-tertiary">暂无本地运行账本</p> : <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="border-b border-border text-left text-xs text-text-tertiary"><th className="py-2">运行</th><th>耗时</th><th>Token</th><th>工具</th><th>状态</th></tr></thead><tbody>{runs.map((run) => <tr key={run.runId} className="border-b border-border-light last:border-0"><td className="py-2 font-mono text-xs text-text-secondary">{run.runId}</td><td>{run.durationMs}ms</td><td>{run.totalTokens.toLocaleString()}</td><td>{run.toolCalls}</td><td className={run.failed ? 'text-error' : 'text-success'}>{run.failed ? '失败' : '完成'}</td></tr>)}</tbody></table></div>}
+    {runs.length === 0 ? <p className="text-sm text-text-tertiary">暂无本地运行账本</p> : <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="border-b border-border text-left text-xs text-text-tertiary"><th className="py-2">运行</th><th>耗时</th><th>Token</th><th>工具</th><th>状态</th></tr></thead><tbody>{runs.map((run) => <tr key={run.runId} className="border-b border-border-light last:border-0"><td className="py-2 font-mono text-xs text-text-secondary">{run.runId}</td><td>{formatDuration(run.durationMs)}</td><td>{run.totalTokens.toLocaleString()}</td><td>{run.toolCalls}</td><td className={run.failed ? 'text-error' : 'text-success'}>{run.failed ? '失败' : '完成'}</td></tr>)}</tbody></table></div>}
   </section>
 }
+
 
 function StatCard({ icon: Icon, label, value, unit, trend }: {
   icon: typeof BarChart3

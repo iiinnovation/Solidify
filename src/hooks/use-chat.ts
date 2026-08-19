@@ -14,6 +14,8 @@ import { createChatQueryContext, loadChatSkillRuntime } from '@/lib/engine/chat-
 import type { QueryEvent } from '@/lib/engine/types'
 import { useWorkspaceStore } from '@/stores/workspace-store'
 import { useDocumentStore } from '@/stores/document-store'
+import { useUIStore } from '@/stores/ui-store'
+import { useSkillStore } from '@/stores/skill-store'
 import { deriveArtifactPath, materializeArtifact, normalizeArtifactPath, normalizeArtifactType } from '@/lib/workspace/materialize'
 import { isTauri } from '@/lib/tauri'
 
@@ -173,8 +175,10 @@ export function useChat(conversationId?: string) {
   const patchMessageInConversation = useChatStore((s) => s.patchMessageInConversation)
   const removeMessageFromConversation = useChatStore((s) => s.removeMessageFromConversation)
   const removeLastMessageFromConversation = useChatStore((s) => s.removeLastMessageFromConversation)
+  const truncateMessagesFrom = useChatStore((s) => s.truncateMessagesFrom)
   const artifacts = useChatStore((s) => s.artifacts)
   const getActiveProvider = useModelStore((s) => s.getActiveProvider)
+
 
   // 从 store 加载已有对话
   useEffect(() => {
@@ -254,6 +258,7 @@ export function useChat(conversationId?: string) {
       resume?: ResumeRunOptions,
       historyOverride?: Message[],
       skillId?: string,
+      skillName?: string,
     ) => {
       if ((!content.trim() && !resume) || isStreamingRef.current) return
       // React state updates are asynchronous. Use a synchronous guard so two
@@ -311,14 +316,20 @@ export function useChat(conversationId?: string) {
       activeRequestConversationRef.current = currentConvId
       streamConversationRef.current = currentConvId
 
+      const skillObj = skillId
+        ? { id: skillId, name: skillName || useSkillStore.getState().getAllSkills().find((s) => s.id === skillId)?.name || skillId }
+        : (skillSystemPrompt ? { id: 'custom', name: '自定义技能' } : undefined)
+
       const userMsg: Message = {
         id: genId(),
         role: 'user',
         content,
+        skill: skillObj,
         attachments: files?.map(f => ({ name: f.name, size: f.size }))
       }
       const assistantMsg: Message = resume?.assistantMessage
         ?? { id: genId(), role: 'assistant', content: '' }
+
 
       // 处理文件附件
       let enrichedContent = content
@@ -810,6 +821,7 @@ ${result.content}
           const finalPatch: Partial<Message> = {
             ...(finalText !== undefined ? { content: finalText } : {}),
             agentRun: run,
+            metrics: run.metrics,
             runEvents: [...runEvents],
           }
           const settledAssistant = { ...assistantMsg, ...finalPatch }
@@ -821,6 +833,9 @@ ${result.content}
           patchAssistantMessage(finalPatch)
           return
         }
+
+        const requestStartTime = Date.now()
+        let firstTokenTime: number | undefined
 
         const response = await fetchChatStream({
           messages: messagesWithFiles,
@@ -874,6 +889,7 @@ ${result.content}
                   ? parsed.delta.text
                   : undefined)
               if (delta) {
+                if (!firstTokenTime) firstTokenTime = Date.now()
                 fullContent += delta
                 consumeArtifactContent(fullContent, false, false)
               }
@@ -885,7 +901,23 @@ ${result.content}
 
         reader.releaseLock()
 
+        const requestEndTime = Date.now()
+        const durationMs = Math.max(0, requestEndTime - requestStartTime)
+        const ttftMs = firstTokenTime ? Math.max(0, firstTokenTime - requestStartTime) : undefined
+        const outputTokens = Math.ceil(fullContent.length * 0.75)
+        const genDurationSec = (firstTokenTime ? (requestEndTime - firstTokenTime) : durationMs) / 1000
+        const tokensPerSecond = genDurationSec > 0 && outputTokens > 0
+          ? Number((outputTokens / genDurationSec).toFixed(1))
+          : undefined
+        const metrics = {
+          durationMs,
+          ttftMs,
+          tokensPerSecond,
+          outputTokens,
+        }
+
         consumeArtifactContent(fullContent, true)
+        patchAssistantMessage({ metrics }, true)
         await flushMaterializations()
         if (abortController.signal.aborted) discardAssistantPlaceholder()
       } catch (err) {
@@ -957,6 +989,91 @@ ${result.content}
     if (!isEnabled('agentLoop')) setIsStreaming(false)
   }, [])
 
+  const recallMessage = useCallback((messageId?: string) => {
+    const currentConvId = convIdRef.current
+    if (!currentConvId) return null
+
+    const store = useChatStore.getState()
+    const conv = store.conversations.find((c) => c.id === currentConvId)
+    if (!conv || conv.messages.length === 0) return null
+
+    let targetUserIndex = -1
+    if (messageId) {
+      targetUserIndex = conv.messages.findIndex((m) => m.id === messageId && m.role === 'user')
+    } else {
+      for (let i = conv.messages.length - 1; i >= 0; i--) {
+        if (conv.messages[i].role === 'user') {
+          targetUserIndex = i
+          break
+        }
+      }
+    }
+
+    if (targetUserIndex === -1) return null
+    const targetUserMsg = conv.messages[targetUserIndex]
+
+    // 先使旧请求失效，再停止流式输出，避免 abort 后到达的 chunk 写回撤回内容。
+    requestSequenceRef.current += 1
+    if (isStreamingRef.current) {
+      abortRef.current?.abort()
+      abortRef.current = null
+      isStreamingRef.current = false
+      setIsStreaming(false)
+    }
+    activeRequestConversationRef.current = undefined
+    streamConversationRef.current = undefined
+
+    const removedMessages = conv.messages.slice(targetUserIndex)
+    const removedMessageIds = new Set(removedMessages.map((message) => message.id))
+    const remainingDocumentPaths = new Set(
+      store.conversations.flatMap((conversation) => conversation.id === currentConvId
+        ? conversation.messages.slice(0, targetUserIndex)
+        : conversation.messages
+      ).flatMap((message) => message.documents?.map((document) => document.path) ?? []),
+    )
+    const documentStore = useDocumentStore.getState()
+    const removedDocumentPaths = new Set([
+      ...removedMessages.flatMap((message) => message.documents?.map((document) => document.path) ?? []),
+      ...Object.values(documentStore.documents)
+        .filter((document) => document.messageId && removedMessageIds.has(document.messageId))
+        .map((document) => document.path),
+    ])
+    for (const path of removedDocumentPaths) {
+      if (!remainingDocumentPaths.has(path)) useDocumentStore.getState().removeDocument(path)
+    }
+
+    // 截断该消息及之后的所有消息
+    truncateMessagesFrom(currentConvId, targetUserMsg.id)
+    setMessages((prev) => {
+      const idx = prev.findIndex((m) => m.id === targetUserMsg.id)
+      return idx === -1 ? prev : prev.slice(0, idx)
+    })
+
+    // 回填到 UI store 的草稿中
+    const { setComposerDraft } = useUIStore.getState()
+    let draftSkill = null
+    if (targetUserMsg.skill) {
+      const allSkills = useSkillStore.getState().getAllSkills()
+      draftSkill = allSkills.find((s) => s.id === targetUserMsg.skill?.id) ?? {
+        id: targetUserMsg.skill.id,
+        name: targetUserMsg.skill.name,
+        description: '',
+        icon: 'Sparkles',
+        placeholder: '',
+        skipConfirmation: true,
+        systemPrompt: '',
+      }
+    }
+
+    setComposerDraft(currentConvId, {
+      input: targetUserMsg.content,
+      skill: draftSkill,
+    })
+
+    return targetUserMsg
+  }, [truncateMessagesFrom])
+
+
   const regenerate = useCallback(() => {
     if (isStreaming || messages.length < 2) return
 
@@ -1027,8 +1144,18 @@ ${result.content}
       ))
     : []
   const visibleStreaming = streamConversationRef.current === conversationId ? isStreaming : false
-  return { messages: visibleMessages, isStreaming: visibleStreaming, error, sendMessage, stopStreaming, regenerate, retry }
+  return {
+    messages: visibleMessages,
+    isStreaming: visibleStreaming,
+    error,
+    sendMessage,
+    stopStreaming,
+    recallMessage,
+    regenerate,
+    retry,
+  }
 }
+
 
 interface PptdProgressPreview {
   title: string

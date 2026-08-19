@@ -7,6 +7,8 @@ import { useChatStore } from '@/stores/chat-store'
 import { useModelStore } from '@/stores/model-store'
 import { useKnowledgeEnhancementStore } from '@/stores/knowledge-store'
 import { useWorkspaceStore } from '@/stores/workspace-store'
+import { useDocumentStore } from '@/stores/document-store'
+import { composerDraftKey, useUIStore } from '@/stores/ui-store'
 
 const mocks = vi.hoisted(() => ({
   agentLoop: true,
@@ -64,6 +66,8 @@ describe('useChat agent loop switch', () => {
     })
     useKnowledgeEnhancementStore.setState({ enabled: false })
     useWorkspaceStore.setState({ workspaceRoot: null })
+    useDocumentStore.setState({ documents: {}, activePath: null })
+    useUIStore.setState({ composerDrafts: {}, pendingInput: null })
   })
 
   it('consumes runQuery events and saves them on the assistant message', async () => {
@@ -355,6 +359,76 @@ describe('useChat agent loop switch', () => {
     await waitFor(() => expect(result.current.isStreaming).toBe(false))
     expect(mocks.fetchChatStream).toHaveBeenCalledOnce()
     expect(mocks.runQuery).not.toHaveBeenCalled()
+  })
+
+  it('stores legacy output tokens without mislabeling them as total tokens', async () => {
+    mocks.agentLoop = false
+    mocks.fetchChatStream.mockResolvedValue(new Response(
+      'data: {"choices":[{"delta":{"content":"hello"}}]}\n\ndata: [DONE]\n\n',
+      { status: 200 },
+    ))
+    const { result } = renderHook(() => useChat(), { wrapper })
+
+    await act(async () => result.current.sendMessage('hello'))
+    await waitFor(() => expect(result.current.isStreaming).toBe(false))
+
+    const metrics = result.current.messages.find((message) => message.role === 'assistant')?.metrics
+    expect(metrics?.outputTokens).toBeGreaterThan(0)
+    expect(metrics?.totalTokens).toBeUndefined()
+  })
+
+  it('invalidates a running request and cleans related state when recalling a message', async () => {
+    useChatStore.setState({
+      conversations: [{
+        id: 'conv-recall', title: 'Recall', createdAt: 1,
+        messages: [
+          { id: 'keep-user', role: 'user', content: 'keep' },
+          { id: 'keep-assistant', role: 'assistant', content: 'keep response' },
+        ],
+      }],
+      artifacts: [],
+      activeArtifactId: null,
+    })
+    let releaseLateChunk: (() => void) | undefined
+    const lateChunkGate = new Promise<void>((resolve) => { releaseLateChunk = resolve })
+    mocks.runQuery.mockImplementation(async function* () {
+      yield { type: 'run.started', runId: 'run-recall' }
+      await lateChunkGate
+      yield { type: 'message.delta', text: '<solidify-artifact title="Late" type="document">late</solidify-artifact>' }
+      yield { type: 'run.failed', error: { kind: 'aborted', message: 'aborted' } }
+    })
+    const { result } = renderHook(() => useChat('conv-recall'), { wrapper })
+
+    let request: Promise<void> | undefined
+    await act(async () => {
+      request = result.current.sendMessage('recall this')
+      await Promise.resolve()
+    })
+    await waitFor(() => expect(result.current.isStreaming).toBe(true))
+    const userMessage = useChatStore.getState().conversations[0].messages.at(-2)
+    const assistantMessage = useChatStore.getState().conversations[0].messages.at(-1)
+    expect(userMessage?.role).toBe('user')
+    expect(assistantMessage?.role).toBe('assistant')
+
+    useChatStore.setState((state) => ({
+      artifacts: [{ id: 'generated', title: 'Generated', type: 'document', content: 'content', messageId: assistantMessage!.id, version: 1 }],
+      activeArtifactId: 'generated',
+      conversations: state.conversations,
+    }))
+    useDocumentStore.setState({
+      documents: { 'draft.md': { path: 'draft.md', title: 'Draft', type: 'document', content: 'content', streaming: true, messageId: assistantMessage!.id, version: 1 } },
+      activePath: 'draft.md',
+    })
+
+    act(() => result.current.recallMessage(userMessage!.id))
+    releaseLateChunk?.()
+    await act(async () => { await request })
+
+    expect(result.current.messages.map((message) => message.id)).toEqual(['keep-user', 'keep-assistant'])
+    expect(useChatStore.getState().artifacts).toHaveLength(0)
+    expect(useChatStore.getState().activeArtifactId).toBeNull()
+    expect(useDocumentStore.getState().documents).toEqual({})
+    expect(useUIStore.getState().composerDrafts[composerDraftKey('conv-recall')].input).toBe('recall this')
   })
 
   it('removes an empty legacy assistant when stopped before the response arrives', async () => {

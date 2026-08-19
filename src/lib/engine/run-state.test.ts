@@ -42,4 +42,13 @@ describe('run state reducer', () => {
       reason: 'max_tool_calls',
     }).error).toBe('已达到工具调用上限')
   })
+
+  it('records TTFT only after non-empty assistant output arrives', () => {
+    let state = createRunState('run-ttft')
+    state = applyRunEvent(state, { type: 'message.delta', text: '' })
+    expect(state.firstTokenAt).toBeUndefined()
+
+    state = applyRunEvent(state, { type: 'message.completed', content: 'complete response' })
+    expect(state.firstTokenAt).toEqual(expect.any(Number))
+  })
 })

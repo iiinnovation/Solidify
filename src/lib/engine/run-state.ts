@@ -12,12 +12,22 @@ export interface RunToolItem {
   completedAt?: number
 }
 
+export interface ExecutionMetrics {
+  durationMs: number
+  ttftMs?: number
+  tokensPerSecond?: number
+  outputTokens?: number
+  totalTokens?: number
+}
+
 export interface RunState {
   runId: string
   status: 'idle' | 'running' | 'completed' | 'aborted' | 'failed' | 'exhausted'
   text: string
   tools: RunToolItem[]
   usage?: UsageStats
+  metrics?: ExecutionMetrics
+  firstTokenAt?: number
   error?: string
   startedAt: number
   completedAt?: number
@@ -41,12 +51,38 @@ export function createRunState(runId: string): RunState {
   return { runId, status: 'running', text: '', tools: [], startedAt: Date.now(), subAgents: [] }
 }
 
+function computeMetrics(state: RunState, usage?: UsageStats): ExecutionMetrics {
+  const completedAt = Date.now()
+  const durationMs = Math.max(0, completedAt - state.startedAt)
+  const ttftMs = state.firstTokenAt ? Math.max(0, state.firstTokenAt - state.startedAt) : undefined
+  const outputTokens = usage?.outputTokens ?? (state.text ? Math.ceil(state.text.length * 0.75) : 0)
+  const genDurationSec = (state.firstTokenAt ? (completedAt - state.firstTokenAt) : durationMs) / 1000
+  const tokensPerSecond = genDurationSec > 0 && outputTokens > 0
+    ? Number((outputTokens / genDurationSec).toFixed(1))
+    : undefined
+  return {
+    durationMs,
+    ttftMs,
+    tokensPerSecond,
+    outputTokens,
+    totalTokens: usage?.totalTokens,
+  }
+}
+
 export function applyRunEvent(state: RunState, event: QueryEvent): RunState {
   switch (event.type) {
     case 'message.delta':
-      return { ...state, text: state.text + event.text }
+      return {
+        ...state,
+        text: state.text + event.text,
+        ...(event.text && !state.firstTokenAt ? { firstTokenAt: Date.now() } : {}),
+      }
     case 'message.completed':
-      return state.text ? state : { ...state, text: event.content }
+      return {
+        ...state,
+        ...(state.text ? {} : { text: event.content }),
+        ...(event.content && !state.firstTokenAt ? { firstTokenAt: Date.now() } : {}),
+      }
     case 'tool.requested':
       return {
         ...state,
@@ -80,15 +116,36 @@ export function applyRunEvent(state: RunState, event: QueryEvent): RunState {
         }
       }
     case 'run.completed':
-      return { ...state, status: 'completed', usage: event.usage, completedAt: Date.now() }
+      return {
+        ...state,
+        status: 'completed',
+        usage: event.usage,
+        metrics: computeMetrics(state, event.usage),
+        completedAt: Date.now(),
+      }
     case 'run.failed':
-      return { ...state, status: event.error.kind === 'aborted' ? 'aborted' : 'failed', error: event.error.message, completedAt: Date.now() }
+      return {
+        ...state,
+        status: event.error.kind === 'aborted' ? 'aborted' : 'failed',
+        error: event.error.message,
+        usage: event.usage,
+        metrics: computeMetrics(state, event.usage),
+        completedAt: Date.now(),
+      }
     case 'run.exhausted':
-      return { ...state, status: 'exhausted', error: exhaustedLabel(event.reason), completedAt: Date.now() }
+      return {
+        ...state,
+        status: 'exhausted',
+        error: exhaustedLabel(event.reason),
+        usage: event.usage,
+        metrics: computeMetrics(state, event.usage),
+        completedAt: Date.now(),
+      }
     default:
       return state
   }
 }
+
 
 interface SubAgentDetail {
   agent: RunSubAgentItem

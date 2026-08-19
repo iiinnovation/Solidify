@@ -48,12 +48,13 @@ describe('agent run UI', () => {
   it('shows usage and expands tool details', async () => {
     render(<RunTimeline run={completedRun} />)
     expect(screen.getByText('15 tokens')).not.toBeNull()
-    expect(screen.getByText('45ms')).not.toBeNull()
+    expect(screen.getByText('0.04s')).not.toBeNull()
 
     await userEvent.click(screen.getByRole('button', { name: /read_file/ }))
     expect(screen.getByText('file contents')).not.toBeNull()
     expect(screen.getByText(/notes.md/)).not.toBeNull()
   })
+
 
   it('only exposes stop control for a running run', async () => {
     const onStop = vi.fn()

@@ -1,6 +1,6 @@
 import { memo, useState } from 'react'
 import { Check, ChevronDown, CircleAlert, Clock3, LoaderCircle, Wrench } from 'lucide-react'
-import { cn } from '@/lib/utils'
+import { cn, formatDuration } from '@/lib/utils'
 import type { RunToolItem } from '@/lib/engine/run-state'
 
 export const ToolCallCard = memo(function ToolCallCard({ item }: { item: RunToolItem }) {
@@ -24,9 +24,10 @@ export const ToolCallCard = memo(function ToolCallCard({ item }: { item: RunTool
           item.status === 'requested' && 'text-text-tertiary',
           item.status === 'completed' && (failed ? 'text-error' : 'text-success'),
         )} strokeWidth={1.9} />
-        {duration !== undefined && <span className="text-[11px] text-text-tertiary tabular-nums">{duration}ms</span>}
+        {duration !== undefined && <span className="text-[11px] text-text-tertiary tabular-nums">{formatDuration(duration)}</span>}
         <ChevronDown size={14} className={cn('text-text-tertiary transition-transform', expanded && 'rotate-180')} />
       </button>
+
       {item.status === 'running' && item.progress && (
         <div className="px-3 pb-2 text-[11px] text-text-tertiary truncate">{item.progress}</div>
       )}
