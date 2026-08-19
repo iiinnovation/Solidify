@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { ModelProvider } from '@/stores/model-store'
-import { createChatQueryContext, loadChatSkillRuntime } from '@/lib/engine/chat-context'
+import { clearChatSkillRuntimeCache, createChatQueryContext, loadChatSkillRuntime } from '@/lib/engine/chat-context'
 import { buildMessages } from '@/lib/engine/messages'
 import { buildToolUseContext } from '@/lib/engine/tool-context'
 import { createHarnessRuntime, hardGuard, permissionGate } from '@/lib/harness/builtin-hooks'
@@ -29,11 +29,24 @@ const logger = {
 describe('bundled Skill resource runtime', () => {
   beforeEach(() => {
     localStorage.clear()
+    clearChatSkillRuntimeCache()
     setFlagOverride('toolCalling', true)
     setFlagOverride('skillV2', true)
   })
 
   afterEach(() => clearFlagOverrides())
+
+  it('reuses one loaded registry for nearby chat runs in the same workspace', async () => {
+    const [first, second] = await Promise.all([
+      loadChatSkillRuntime({ skillName: 'requirement-analysis' }),
+      loadChatSkillRuntime({ skillName: 'pptd-deck' }),
+    ])
+
+    expect(second.registry).toBe(first.registry)
+    expect(second.loader).toBe(first.loader)
+    expect(first.skill?.metadata.name).toBe('requirement-analysis')
+    expect(second.skill?.metadata.name).toBe('pptd-deck')
+  })
 
   it('reads the indexed SKILL.md and its reference through the real read_file tool on Web', async () => {
     const runtime = await loadChatSkillRuntime({ skillName: 'requirement-analysis' })

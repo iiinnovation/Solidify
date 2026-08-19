@@ -3,6 +3,7 @@ import { isEnabled } from '@/lib/harness/flags'
 import { useWorkspaceStore } from '@/stores/workspace-store'
 import { ensureUserSkillsRoot, SkillLoader } from '@/lib/skills/loader'
 import { SkillRegistry } from '@/lib/skills/registry'
+import { clearChatSkillRuntimeCache } from '@/lib/engine/chat-context'
 import type { SkillLoadError, SkillLoadResult, SkillMetadata } from '@/lib/skills/types'
 import { getDisabledSkillNames } from '@/lib/skills/settings'
 
@@ -37,6 +38,7 @@ export function useSkillRegistry(): SkillRegistryState {
     const signature = JSON.stringify([metadata, result.errors, [...disabled].sort()])
     if (signature === appliedRef.current) return
     appliedRef.current = signature
+    clearChatSkillRuntimeCache()
     setAllSkills(metadata)
     setSkills(metadata.filter((skill) => !disabled.has(skill.name)))
     setErrors(result.errors)

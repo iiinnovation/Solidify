@@ -261,6 +261,7 @@ export function useChat(conversationId?: string) {
       skillName?: string,
     ) => {
       if ((!content.trim() && !resume) || isStreamingRef.current) return
+      const requestStartedAt = Date.now()
       // React state updates are asynchronous. Use a synchronous guard so two
       // events in the same render cannot start duplicate model runs.
       isStreamingRef.current = true
@@ -329,30 +330,51 @@ export function useChat(conversationId?: string) {
       }
       const assistantMsg: Message = resume?.assistantMessage
         ?? { id: genId(), role: 'assistant', content: '' }
+      setIsStreaming(true)
+      const abortController = new AbortController()
+      abortRef.current = abortController
 
+      const savedAgentContext = resume?.assistantMessage.agentContext
+      const preloadWorkspaceRoot = savedAgentContext
+        ? savedAgentContext.workspaceRoot
+        : useWorkspaceStore.getState().workspaceRoot
+      const preloadSkillId = savedAgentContext ? savedAgentContext.skillId : skillId
+      const skillRuntimePromise = isEnabled('agentLoop') && isEnabled('skillV2')
+        ? loadChatSkillRuntime({
+            workspaceRoot: preloadWorkspaceRoot,
+            skillName: preloadSkillId,
+          }).catch((error) => {
+            // The legacy inline prompt remains usable if a local Skill root is
+            // temporarily unavailable; surface the failure for diagnosis.
+            console.warn('[skills] Failed to load Skill registry:', error)
+            return undefined
+          })
+        : Promise.resolve(undefined)
 
-      // 处理文件附件
-      let enrichedContent = content
-      let pptdMedia: Record<string, string> | undefined
-      if (files && files.length > 0) {
+      // Attachment extraction, knowledge retrieval and Skill discovery do not
+      // depend on one another. Start them together so the first model request
+      // waits for the slowest preparation step instead of their sum.
+      const attachmentPromise = (async () => {
+        if (!files?.length) return { enrichedContent: content, pptdMedia: undefined }
         try {
           const { extractText } = await import('@/lib/file-extractor')
           const [fileContents, attachmentMedia] = await Promise.all([
             Promise.all(files.map(file => extractText(file))),
             collectPptdAttachmentMedia(files),
           ])
-          pptdMedia = Object.keys(attachmentMedia).length > 0 ? attachmentMedia : undefined
-          enrichedContent = `${content}\n\n## 附件内容\n\n${fileContents.map((text, i) =>
-            `### ${files[i].name}\n\n${text}`
-          ).join('\n\n')}`
+          return {
+            enrichedContent: `${content}\n\n## 附件内容\n\n${fileContents.map((text, i) =>
+              `### ${files[i].name}\n\n${text}`
+            ).join('\n\n')}`,
+            pptdMedia: Object.keys(attachmentMedia).length > 0 ? attachmentMedia : undefined,
+          }
         } catch (error) {
           console.error('文件内容提取失败:', error)
+          return { enrichedContent: content, pptdMedia: undefined }
         }
-      }
+      })()
 
       // 知识库增强：搜索相关知识
-      let knowledgeContext = ''
-      let knowledgeSources: Array<{ id: string; title: string; similarity: number }> = []
       const knowledgeEnabled = useKnowledgeEnhancementStore.getState().enabled
       const matchCount = useKnowledgeEnhancementStore.getState().matchCount
       const matchThreshold = useKnowledgeEnhancementStore.getState().matchThreshold
@@ -362,7 +384,11 @@ export function useChat(conversationId?: string) {
       // 检查是否启用知识库功能（环境变量控制）
       const enableKnowledge = import.meta.env.VITE_ENABLE_KNOWLEDGE !== 'false'
 
-      if (!resume && knowledgeEnabled && enableKnowledge) {
+      const knowledgePromise = (async (): Promise<{
+        context: string
+        sources: Array<{ id: string; title: string; similarity: number }>
+      }> => {
+        if (resume || !knowledgeEnabled || !enableKnowledge) return { context: '', sources: [] }
         try {
           const { getRAGProvider } = await import('@/lib/rag')
           const ragProvider = getRAGProvider()
@@ -385,14 +411,16 @@ export function useChat(conversationId?: string) {
             })
 
             // 保存知识来源用于显示
-            knowledgeSources = knowledgeResults.map(result => ({
+            const sources = knowledgeResults.map(result => ({
               id: result.id,
               title: result.title,
               similarity: result.similarity,
             }))
 
             // 构建知识上下文
-            knowledgeContext = `
+            return {
+              sources,
+              context: `
 
 ## 相关知识库内容
 
@@ -404,20 +432,38 @@ ${result.content}
 ---
 
 请基于以上知识库内容回答用户问题。如果知识库内容与问题相关，请引用相关内容。
-`
+`,
+            }
           }
         } catch (error) {
           console.error('知识库搜索失败:', error)
           // 搜索失败不影响正常对话
         }
-      }
+        return { context: '', sources: [] }
+      })()
+
+      const [attachmentResult, knowledgeResult, preloadedSkillRuntime] = await Promise.all([
+        attachmentPromise,
+        knowledgePromise,
+        skillRuntimePromise,
+      ])
+      const pptdMedia = attachmentResult.pptdMedia
+      const knowledgeSources = knowledgeResult.sources
+      let enrichedContent = attachmentResult.enrichedContent
 
       // 将知识上下文添加到用户消息中
-      if (knowledgeContext) {
-        enrichedContent = `${enrichedContent}${knowledgeContext}`
+      if (knowledgeResult.context) {
+        enrichedContent = `${enrichedContent}${knowledgeResult.context}`
       }
 
       if (!isCurrentRequest()) return
+      if (abortController.signal.aborted) {
+        isStreamingRef.current = false
+        setIsStreaming(false)
+        abortRef.current = null
+        activeRequestConversationRef.current = undefined
+        return
+      }
 
       // 更新本地 state + store
       if (!resume) {
@@ -425,11 +471,6 @@ ${result.content}
         addMessageToConversation(currentConvId, userMsg)
         addMessageToConversation(currentConvId, assistantMsg)
       }
-
-      setIsStreaming(true)
-
-      const abortController = new AbortController()
-      abortRef.current = abortController
 
       // 流式 artifact 跟踪
       let streamingArtifactId: string | null = null
@@ -656,24 +697,23 @@ ${result.content}
           patchAssistantMessage({ agentRun: run, runEvents, agentContext })
 
           const selectedSkillId = agentContext.skillId ?? skillId
-          let skillRuntime: Awaited<ReturnType<typeof loadChatSkillRuntime>> | undefined
-          if (isEnabled('skillV2')) {
-            try {
-              skillRuntime = await loadChatSkillRuntime({
+          const skillRuntime = isEnabled('skillV2')
+            && selectedSkillId === preloadSkillId
+            && agentContext.workspaceRoot === (preloadWorkspaceRoot ?? undefined)
+            ? preloadedSkillRuntime
+            : await loadChatSkillRuntime({
                 workspaceRoot: agentContext.workspaceRoot,
                 skillName: selectedSkillId,
+              }).catch((error) => {
+                console.warn('[skills] Failed to load Skill registry:', error)
+                return undefined
               })
-            } catch (error) {
-              // The legacy inline prompt remains usable if a local Skill root
-              // is temporarily unavailable; surface the failure for diagnosis.
-              console.warn('[skills] Failed to load Skill registry:', error)
-            }
-          }
 
           if (!isCurrentRequest()) return
 
           const context = createChatQueryContext({
             runId,
+            requestStartedAt,
             conversationId: currentConvId,
             messages: messagesWithFiles,
             provider: activeProvider,

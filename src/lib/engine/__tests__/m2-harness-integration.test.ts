@@ -3,6 +3,7 @@ import { InMemoryState } from '../../memory'
 import { ProviderRegistry } from '../../model'
 import type { CompletionChunk, CompletionRequest, ModelProvider } from '../../model'
 import { answerApproval, subscribeApproval } from '../../harness/approval-channel'
+import { createHarnessRuntime } from '../../harness/builtin-hooks'
 import { resetFlagCache, setFlagOverride } from '../../harness/flags'
 import { RunLedger } from '../../harness/ledger'
 import type { Tool, ToolResult } from '../../tools/types'
@@ -104,6 +105,53 @@ afterEach(() => {
 })
 
 describe('M2 Harness query integration', () => {
+  it('prepares workspace memory and the Skill index concurrently', async () => {
+    let memoryStarted = false
+    let skillsStarted = false
+    let releaseMemory!: () => void
+    let releaseSkills!: () => void
+    const memoryGate = new Promise<void>((resolve) => { releaseMemory = resolve })
+    const skillsGate = new Promise<void>((resolve) => { releaseSkills = resolve })
+    const base = makeContext('m2-parallel-context', scriptedProvider([finalTurn]), [])
+    const context: QueryContext = {
+      ...base,
+      memory: {
+        store: async () => 'handle',
+        retrieve: async () => null,
+        clear: async () => undefined,
+        search: async () => {
+          memoryStarted = true
+          await memoryGate
+          return []
+        },
+      },
+    }
+    const runtime = createHarnessRuntime(context, {
+      skillRegistry: {
+        load: async () => { throw new Error('not used') },
+        resolve: async () => null,
+        list: async () => {
+          skillsStarted = true
+          await skillsGate
+          return []
+        },
+      },
+    })
+    const pending = runtime.hooks.waterfall('before_query', { messages: context.messages }, {
+      type: 'before_query',
+      runId: context.runId,
+      signal: context.signal,
+    })
+
+    await Promise.resolve()
+    await Promise.resolve()
+    const startedTogether = memoryStarted && skillsStarted
+    releaseMemory()
+    releaseSkills()
+    await pending
+    expect(startedTogether).toBe(true)
+  })
+
   it('uses the de-duplicated progress budget instead of cumulative prompt telemetry', async () => {
     const expensiveToolTurn = (id: string): CompletionChunk[] => [
       { type: 'tool_call_start', id, name: 'read_item' },
@@ -143,7 +191,10 @@ describe('M2 Harness query integration', () => {
       finalTurn,
     ])
 
-    const events = await collect(makeContext(runId, provider, [makeTool('read_item', execute)]))
+    const events = await collect({
+      ...makeContext(runId, provider, [makeTool('read_item', execute)]),
+      requestStartedAt: Date.now() - 10,
+    })
     const ledger = new RunLedger(runId)
     const types = ledger.events().map((event) => event.type)
 
@@ -165,6 +216,7 @@ describe('M2 Harness query integration', () => {
       content: 'read complete',
     })
     expect(ledger.find('model.called')[0].payload).toMatchObject({
+      localGapMs: expect.any(Number),
       request: {
         model: 'mock-model',
         maxTokens: 1000,
@@ -173,6 +225,7 @@ describe('M2 Harness query integration', () => {
     })
     expect(ledger.find('run.started')[0].payload).toMatchObject({
       conversationId: `${runId}-conversation`,
+      startupDelayMs: expect.any(Number),
       model: { provider: 'mock', model: 'mock-model' },
       skill: null,
     })

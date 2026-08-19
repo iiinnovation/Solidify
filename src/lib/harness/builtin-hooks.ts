@@ -41,25 +41,22 @@ export function createHarnessRuntime(ctx: QueryContext, options: HarnessRuntimeO
   })
   const hooks = new HookManager()
   hooks.register({ id: 'injectEnvironment', type: 'before_query', mode: 'waterfall', priority: 10, handler: (value: unknown) => ({ action: 'continue' as const, value: appendQueryContext(value, `Environment: cwd=${ctx.cwd}; platform=${ctx.platform ?? 'web'}; time=${new Date().toISOString()}`) }) })
-  hooks.register({ id: 'prefetchWorkspaceMemory', type: 'before_query', mode: 'waterfall', priority: 15, handler: async (value: unknown) => {
-    // Retrieval is an optional enrichment: a failure here must never abort the
-    // run. It also must not reach `context` — that array lands in the system
-    // prompt, and retrieved file text is untrusted (M2-14). It travels in
-    // `retrievedContext`, which buildMessages injects as a user message.
-    try {
-      const memoryContext = await prefetchMemory(ctx.messages, ctx.memory)
-      if (!memoryContext || !isRecord(value)) return { action: 'continue' as const, value }
-      return { action: 'continue' as const, value: { ...value, retrievedContext: memoryContext } }
-    } catch (error) {
+  hooks.register({ id: 'prepareRunContext', type: 'before_query', mode: 'waterfall', priority: 15, handler: async (value: unknown) => {
+    // Memory retrieval and Skill indexing are independent I/O. Preparing them
+    // together removes an avoidable serial wait before the first model call.
+    const memoryPromise = prefetchMemory(ctx.messages, ctx.memory).catch((error) => {
       console.warn('[harness] Workspace memory prefetch failed, continuing without it:', error)
-      return { action: 'continue' as const, value }
-    }
-  } })
-  hooks.register({ id: 'injectSkillIndex', type: 'before_query', mode: 'waterfall', priority: 20, handler: async (value: unknown) => {
-    const index = options.skillRegistry
-      ? formatSkillIndex(await options.skillRegistry.list())
-      : formatSkillIndex(builtinSkills.map((skill) => ({ name: skill.id, displayName: skill.name, version: '1.0.0', description: skill.description })))
-    return { action: 'continue' as const, value: appendQueryContext(value, index) }
+      return null
+    })
+    const skillIndexPromise = options.skillRegistry
+      ? options.skillRegistry.list().then((skills) => formatSkillIndex(skills))
+      : Promise.resolve(formatSkillIndex(builtinSkills.map((skill) => ({ name: skill.id, displayName: skill.name, version: '1.0.0', description: skill.description }))))
+    const [memoryContext, index] = await Promise.all([memoryPromise, skillIndexPromise])
+    const withIndex = appendQueryContext(value, index)
+    if (!memoryContext || !isRecord(withIndex)) return { action: 'continue' as const, value: withIndex }
+    // Retrieved file text remains user-role context; it must never enter the
+    // trusted system-prompt context array.
+    return { action: 'continue' as const, value: { ...withIndex, retrievedContext: memoryContext } }
   } })
   hooks.register({ id: 'enforceTokenBudget', type: 'before_model_call', mode: 'waterfall', priority: 30, handler: (value: unknown) => {
     // `usage.totalTokens` is provider telemetry and includes the full prompt on

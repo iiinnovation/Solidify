@@ -70,6 +70,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
   let harnessContext = [...(ctx.harnessContext ?? [])]
   let retrievedContext = ctx.retrievedContext
   let isFirstTurn = true
+  let previousModelCompletedAt = ctx.requestStartedAt
 
   try {
     harness?.ledger.append('run.started', {
@@ -85,6 +86,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
         version: ctx.skill.metadata.version,
         source: ctx.skill.source ?? ctx.skill.metadata.source,
       } : null,
+      startupDelayMs: ctx.requestStartedAt ? Math.max(0, Date.now() - ctx.requestStartedAt) : null,
     })
     yield { type: 'run.started', runId: ctx.runId }
     logger.log('run.started', { runId: ctx.runId, conversationId: ctx.conversationId })
@@ -165,7 +167,16 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
           harnessContext,
           retrievedContext: isFirstTurn ? retrievedContext : undefined,
         }, logger, {
-          onModelPrepared: harness ? (request) => { harness.ledger.append('model.called', { turn, request }) } : undefined,
+          onModelPrepared: harness ? (request) => {
+            const preparedAt = Date.now()
+            harness.ledger.append('model.called', {
+              turn,
+              request,
+              localGapMs: previousModelCompletedAt === undefined
+                ? null
+                : Math.max(0, preparedAt - previousModelCompletedAt),
+            })
+          } : undefined,
           onToolRequested: harness ? (call) => recordToolRequested(harness, call) : undefined,
         })
       } catch (error) {
@@ -176,6 +187,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       // subsequent turns should rely on the conversation and tool results.
       isFirstTurn = false
       harness?.ledger.append('model.completed', { turn, text: response.text, toolCalls: response.toolCalls, usage: response.usage, stopReason: response.stopReason })
+      previousModelCompletedAt = Date.now()
       await harness?.hooks.observe('after_model_call', { type: 'after_model_call', runId: ctx.runId, response, onHookError: (id, error) => logger.warn('hook.failed', { id, error: String(error) }) })
 
       // Accumulate token usage

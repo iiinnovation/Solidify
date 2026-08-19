@@ -84,6 +84,7 @@ export function createSubAgentContext(
   return {
     ...parent,
     runId,
+    requestStartedAt: Date.now(),
     parentRunId: parent.runId,
     conversationId: `${parent.conversationId}:sub:${spec.id}`,
     messages: [{ role: 'user', content: spec.task }],

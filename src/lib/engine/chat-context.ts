@@ -29,6 +29,7 @@ const DEFAULT_LIMITS: RunLimits = {
 
 export interface ChatQueryContextOptions {
   runId: string
+  requestStartedAt?: number
   conversationId: string
   messages: readonly Message[]
   provider: ModelProvider
@@ -73,6 +74,7 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
 
   const context: QueryContext = {
     runId: options.runId,
+    requestStartedAt: options.requestStartedAt,
     conversationId: options.conversationId,
     cwd,
     messages: options.messages,
@@ -119,17 +121,38 @@ export interface ChatSkillRuntime {
   resources?: SkillResourceResolver
 }
 
+interface CachedChatSkillRegistry {
+  loader: SkillLoader
+  registry: SkillRegistry
+  loadedAt: number
+}
+
+const CHAT_SKILL_REGISTRY_TTL_MS = 30_000
+const chatSkillRegistryCache = new Map<string, Promise<CachedChatSkillRegistry>>()
+
 /** Resolve the selected Skill once before a run; the query loop stays synchronous. */
 export async function loadChatSkillRuntime(options: {
   workspaceRoot?: string | null
   skillName?: string
 }): Promise<ChatSkillRuntime> {
-  const loader = new SkillLoader({
-    workspaceRoot: options.workspaceRoot,
-    userSkillsRoot: await ensureUserSkillsRoot(),
-  })
-  const registry = new SkillRegistry(loader)
-  await registry.reload()
+  const cacheKey = normalizeWorkspacePath(options.workspaceRoot?.trim() || '/')
+  let pending = chatSkillRegistryCache.get(cacheKey)
+  if (!pending) {
+    pending = cacheChatSkillRegistry(cacheKey, options.workspaceRoot)
+  }
+  let cached = await pending
+  if (Date.now() - cached.loadedAt >= CHAT_SKILL_REGISTRY_TTL_MS) {
+    // Only the first caller that still observes the stale promise replaces it;
+    // concurrent callers join the replacement instead of starting more scans.
+    const current = chatSkillRegistryCache.get(cacheKey)
+    if (current === pending) {
+      pending = cacheChatSkillRegistry(cacheKey, options.workspaceRoot)
+    } else if (current) {
+      pending = current
+    }
+    cached = await pending
+  }
+  const { loader, registry } = cached
   // Persisted conversations created before PPTD used `presentation`. Keep the
   // identifier as an input-only migration alias while exposing one PPT Skill.
   const skillName = options.skillName === 'presentation' ? 'pptd-deck' : options.skillName
@@ -142,6 +165,30 @@ export async function loadChatSkillRuntime(options: {
     skill: skill ?? undefined,
     resources: skill ? loader.createResourceResolver(skill) : undefined,
   }
+}
+
+function cacheChatSkillRegistry(cacheKey: string, workspaceRoot?: string | null): Promise<CachedChatSkillRegistry> {
+  const pending = createChatSkillRegistry(workspaceRoot)
+  chatSkillRegistryCache.set(cacheKey, pending)
+  void pending.catch(() => {
+    if (chatSkillRegistryCache.get(cacheKey) === pending) chatSkillRegistryCache.delete(cacheKey)
+  })
+  return pending
+}
+
+async function createChatSkillRegistry(workspaceRoot?: string | null): Promise<CachedChatSkillRegistry> {
+  const loader = new SkillLoader({
+    workspaceRoot,
+    userSkillsRoot: await ensureUserSkillsRoot(),
+  })
+  const registry = new SkillRegistry(loader)
+  await registry.reload()
+  return { loader, registry, loadedAt: Date.now() }
+}
+
+/** Test hook for callers that require an immediate rescan. */
+export function clearChatSkillRuntimeCache(): void {
+  chatSkillRegistryCache.clear()
 }
 
 function createWorkspaceHandle(root: string): WorkspaceHandle {

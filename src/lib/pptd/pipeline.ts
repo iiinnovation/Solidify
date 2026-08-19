@@ -236,6 +236,7 @@ export async function generatePptdDeck(
   const maxRepairRounds = boundedInteger(options.maxRepairRounds ?? MAX_REPAIR_ROUNDS, 0, MAX_REPAIR_ROUNDS, 'maxRepairRounds')
   const maxPages = boundedInteger(input.maxPages ?? DEFAULT_MAX_PAGES, 1, DEFAULT_MAX_PAGES, 'maxPages')
   const usage: PptdDeckPipelineUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0, calls: 0 }
+  const checkpointWrites = createCheckpointWriteQueue()
   const warnings: string[] = []
   const qualityNotices: string[] = []
   const media = preparePptdMedia(input.media)
@@ -328,7 +329,9 @@ export async function generatePptdDeck(
             }
           }
         }
-        await savePageCheckpoint(options.onCheckpoint, checkpointRoot, sourceHash, outline, design, state, !state.parseError)
+        checkpointWrites.enqueue(() => savePageCheckpoint(
+          options.onCheckpoint, checkpointRoot, sourceHash, outline, design, state, !state.parseError,
+        ))
         previewStates[pageIndex] = state
         hasGeneratedPreviewPage = true
         return state
@@ -352,6 +355,7 @@ export async function generatePptdDeck(
   } finally {
     clearInterval(pageHeartbeat)
   }
+  await checkpointWrites.flush()
   throwIfAborted(signal)
 
   const technicalGenerationFailure = generated.find((entry) => entry.status === 'rejected')
@@ -1508,6 +1512,33 @@ async function savePageCheckpoint(
     },
   }, { noRefs: true, lineWidth: -1 })
   await onCheckpoint({ path: `${root}/${state.pagePath}`, content, kind: 'page', pageIndex: state.pageIndex })
+}
+
+interface CheckpointWriteQueue {
+  enqueue(write: () => Promise<void>): void
+  flush(): Promise<void>
+}
+
+function createCheckpointWriteQueue(): CheckpointWriteQueue {
+  let tail = Promise.resolve()
+  let failure: unknown
+  return {
+    enqueue(write) {
+      // Preserve write ordering without occupying a model-generation worker.
+      // A failure is surfaced at the stage boundary, before repair or delivery.
+      tail = tail.then(write).catch((error) => {
+        failure ??= error
+      })
+    },
+    async flush() {
+      await tail
+      if (failure !== undefined) {
+        const error = failure
+        failure = undefined
+        throw error
+      }
+    },
+  }
 }
 
 async function restoreCheckpointPages(

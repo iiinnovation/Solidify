@@ -649,6 +649,38 @@ elements:
     expect(progress.at(-1)?.message).toContain('已完成 2/2 页')
   })
 
+  it('does not hold a page-generation slot while its checkpoint is being written', async () => {
+    const pageCalls: number[] = []
+    let checkpointStarted!: () => void
+    let releaseCheckpoint!: () => void
+    const started = new Promise<void>((resolve) => { checkpointStarted = resolve })
+    const checkpointGate = new Promise<void>((resolve) => { releaseCheckpoint = resolve })
+    const run = generatePptdDeck({ brief: '生成两页汇报' }, {
+      concurrency: 1,
+      onCheckpoint: async (checkpoint) => {
+        if (checkpoint.kind === 'page' && checkpoint.pageIndex === 0) {
+          checkpointStarted()
+          await checkpointGate
+        }
+      },
+      callModel: async (call) => {
+        if (call.stage === 'design') return { text: DESIGN }
+        if (call.stage === 'outline') return { text: OUTLINE }
+        pageCalls.push(call.pageIndex ?? -1)
+        return { text: validPage(`第 ${(call.pageIndex ?? 0) + 1} 页`) }
+      },
+    })
+
+    await started
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(pageCalls).toEqual([0, 1])
+    } finally {
+      releaseCheckpoint()
+    }
+    await run
+  })
+
   it('throttles full deck previews while continuing to report every completed page', async () => {
     const pageProgress: Array<{ current: number; preview: boolean }> = []
     const pages = Array.from({ length: 8 }, (_, index) => ({

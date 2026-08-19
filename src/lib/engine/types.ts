@@ -61,6 +61,8 @@ export type MessageContent =
  */
 export interface QueryContext {
   readonly runId: string
+  /** Wall-clock time when the user initiated this run, before local preparation. */
+  readonly requestStartedAt?: number
   /** M6: Parent run for a one-level sub-agent. Root runs omit this field. */
   readonly parentRunId?: string
   readonly conversationId: string
