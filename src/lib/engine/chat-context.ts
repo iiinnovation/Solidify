@@ -18,6 +18,8 @@ import { configureLedgerWorkspace } from '@/lib/harness/ledger'
 import type { WorkspaceHandle } from '@/lib/workspace'
 import { enableSubAgents } from './sub-agent/context'
 import { enablePptdPipeline } from './pptd-context'
+import type { AttachmentResource } from '../attachments/types'
+import { modelSupportsVision } from '../model/capabilities'
 
 const DEFAULT_LIMITS: RunLimits = {
   maxTurns: 25,
@@ -40,6 +42,7 @@ export interface ChatQueryContextOptions {
   skillResources?: SkillResourceResolver
   skillRegistry?: SkillRegistryApi
   pptdMedia?: Readonly<Record<string, string | Uint8Array>>
+  attachments?: readonly AttachmentResource[]
   workspaceRoot?: string | null
   restoreSnapshot?: boolean
 }
@@ -58,7 +61,7 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
   const settings = createSettings(options.provider, cwd)
   const localWorkspaceEnabled = isEnabled('localWorkspace') && Boolean(workspaceRoot)
   configureLedgerWorkspace(localWorkspaceEnabled ? workspaceRoot ?? null : null)
-  const tools = isEnabled('toolCalling')
+  const resolvedTools = isEnabled('toolCalling')
     ? toolRegistry.resolve({
         // A real root is mandatory before exposing desktop filesystem tools.
         platform: platform === 'tauri' && workspaceRoot ? 'tauri' : 'web',
@@ -69,6 +72,9 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
         isOnline: typeof navigator === 'undefined' || navigator.onLine,
       })
     : []
+  const tools = resolvedTools.filter((tool) =>
+    (tool.name !== 'search_attachments' && tool.name !== 'read_attachment') || Boolean(options.attachments?.length),
+  )
 
   const maxOutputTokens = inferMaxOutputTokens(options.provider.modelId)
 
@@ -83,6 +89,7 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
     skillResources: options.skillResources,
     skillRegistry: options.skillRegistry,
     pptdMedia: options.pptdMedia,
+    attachments: options.attachments,
     memory: localWorkspaceEnabled && workspaceRoot ? new WorkspaceMemory(workspaceRoot) : new InMemoryState(),
     model: {
       provider: providerName,
@@ -101,6 +108,7 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
           baseURL: providerBaseURL(options.provider.apiUrl, options.provider.format),
           defaultModel: options.provider.modelId,
           supportsTools: options.provider.supportsTools !== false,
+          supportsVision: modelSupportsVision(options.provider.modelId, options.provider.supportsVision),
         },
       },
     }),

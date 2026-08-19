@@ -63,7 +63,11 @@ export async function* streamModel(
 
   // Convert tools to unified format
   const visibleTools = provider.metadata.supportsTools
-    ? ctx.tools.filter((tool) => tool.name !== 'read_handle' || hasReadableHandle(ctx.messages))
+    ? ctx.tools.filter((tool) => {
+        if (tool.name === 'read_handle') return hasReadableHandle(ctx.messages)
+        if (tool.name === 'search_attachments' || tool.name === 'read_attachment') return (ctx.attachments?.length ?? 0) > 0
+        return true
+      })
     : []
   const tools: ToolDefinition[] = visibleTools.map((tool) => ({
     name: tool.name,

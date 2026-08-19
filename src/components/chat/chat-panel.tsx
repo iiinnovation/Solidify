@@ -6,7 +6,7 @@ import { MarkdownRenderer } from '@/components/artifacts/markdown-renderer'
 import { useChatStore, type ArtifactType, type Message } from '@/stores/chat-store'
 import { useModelStore } from '@/stores/model-store'
 import { useKnowledgeEnhancementStore } from '@/stores/knowledge-store'
-import { composerDraftKey, EMPTY_COMPOSER_DRAFT, useUIStore } from '@/stores/ui-store'
+import { composerDraftKey, EMPTY_COMPOSER_DRAFT, isComposerAttachmentRecoverable, useUIStore, type ComposerAttachment } from '@/stores/ui-store'
 import { useChat } from '@/hooks/use-chat'
 import { useSkillPalette } from '@/hooks/use-skill-palette'
 import { SkillPalette } from '@/components/chat/skill-palette'
@@ -24,6 +24,7 @@ import { isEnabled } from '@/lib/harness/flags'
 import { ConfirmDialog } from '@/components/agent/confirm-dialog'
 import { answerApproval, subscribeApprovals } from '@/lib/harness/approval-channel'
 import type { ApprovalRequest } from '@/lib/harness/approval'
+import { loadAttachmentResource } from '@/lib/attachments/store'
 
 
 const typeIcons: Record<ArtifactType, typeof FileText> = {
@@ -378,7 +379,7 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
 
       if (paths) {
         const pathArray = Array.isArray(paths) ? paths : [paths]
-        const files: File[] = []
+        const files: ComposerAttachment[] = []
 
         for (const path of pathArray) {
           try {
@@ -396,7 +397,7 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
                 continue
               }
 
-              files.push(file)
+              files.push({ name: fileName, size: file.size, mimeType: file.type, file })
             }
           } catch (error) {
             console.error('读取文件失败:', error)
@@ -424,7 +425,7 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
 
   const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || [])
-    const validFiles: File[] = []
+    const validFiles: ComposerAttachment[] = []
 
     for (const file of files) {
       if (!validateFileType(file)) {
@@ -435,7 +436,7 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
         toast.error(`文件过大 (最大 10MB): ${file.name}`)
         continue
       }
-      validFiles.push(file)
+      validFiles.push({ name: file.name, size: file.size, mimeType: file.type, file })
     }
 
     if (validFiles.length > 0) {
@@ -455,6 +456,11 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
   const handleSend = () => {
     const text = input.trim()
     if (!text || isStreaming) return
+    const unrecoverableAttachment = attachments.find((att) => !isComposerAttachmentRecoverable(att))
+    if (unrecoverableAttachment) {
+      toast.error(`附件「${unrecoverableAttachment.name}」已无法恢复，请移除后重新选择文件`)
+      return
+    }
     const currentFiles = [...attachments]
     const currentSkill = activeSkill
     clearComposerDraft(conversationId)
@@ -573,23 +579,27 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
                         {msg.attachments.map((att, idx) => (
                           <button
                             key={idx}
-                            onClick={() => {
+                            onClick={async () => {
+                              const resource = att.attachmentId ? await loadAttachmentResource(att.attachmentId) : undefined
+                              const extractedText = resource?.text ?? att.extractedText
                               // 创建一个临时 artifact 来显示文件内容
                               const fileArtifact = {
                                 id: `file-${msg.id}-${idx}`,
                                 title: att.name,
                                 type: 'document' as ArtifactType,
-                                content: `# ${att.name}\n\n文件大小: ${formatFileSize(att.size)}\n\n*文件内容已在发送时提取并包含在消息中*`,
+                                content: extractedText
+                                  ? `# ${att.name}\n\n文件大小: ${formatFileSize(att.size)}\n\n${extractedText}`
+                                  : `# ${att.name}\n\n文件大小: ${formatFileSize(att.size)}\n\n*文件内容已在发送时提取并包含在消息中*`,
                                 messageId: msg.id,
                                 version: 1,
                               }
                               useChatStore.getState().addArtifact(fileArtifact)
                               useChatStore.getState().setActiveArtifact(fileArtifact.id)
                             }}
-                            className="flex items-center gap-2 text-xs text-text-secondary hover:text-text-primary transition-colors"
+                            className="flex min-w-0 w-full max-w-full items-center gap-2 text-xs text-text-secondary hover:text-text-primary transition-colors"
                           >
                             <FileIcon size={14} className="text-text-tertiary shrink-0" strokeWidth={1.75} />
-                            <span className="truncate underline decoration-dotted underline-offset-2">{att.name}</span>
+                            <span className="min-w-0 flex-1 truncate text-left underline decoration-dotted underline-offset-2" title={att.name}>{att.name}</span>
                             <span className="text-text-tertiary shrink-0">({formatFileSize(att.size)})</span>
                           </button>
                         ))}

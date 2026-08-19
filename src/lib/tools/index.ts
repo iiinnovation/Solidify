@@ -25,6 +25,7 @@ export { writeFileTool } from './builtin/write-file'
 export { searchFilesTool } from './builtin/search-files'
 export { capturePreviewTool } from './builtin/capture-preview'
 export { readHandleTool } from './builtin/read-handle'
+export { searchAttachmentsTool, readAttachmentTool } from './builtin/attachments'
 export { createDispatchAgentTool, type DispatchAgentInput, type DispatchAgentOutput } from './builtin/dispatch-agent'
 export { createGeneratePptdTool, type GeneratePptdInput, type GeneratePptdOutput } from './builtin/generate-pptd'
 

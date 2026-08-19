@@ -9,6 +9,7 @@ import type { Tool } from '../types'
 export interface GeneratePptdInput {
   brief: string
   materials?: string
+  attachmentIds?: string[]
   title?: string
   themeId?: PptdThemeId
   designSystemId?: string
@@ -39,7 +40,7 @@ export function createGeneratePptdTool(getParent: () => QueryContext): Tool<Gene
     description: [
       'Generate one complete PPTD deck from a prepared brief and source materials.',
       'Use this exactly once after reading all relevant workspace files and references.',
-      'When no workspace is selected, use the user attachments and conversation content already present in context; do not try to read attachment filenames with read_file or read_handle.',
+      'Use attachmentIds for user-uploaded source material; do not paste whole attachments into materials.',
       'The tool performs design direction, outline generation, per-page planning drafts, bounded parallel page generation, validation, targeted repair, and emits the final slides artifact directly.',
       'It includes an art-direction stage backed by the bundled open-kimi-ppt scenario guides, design systems, and reference pages.',
       'Do not generate page YAML yourself before or after calling it.',
@@ -50,7 +51,8 @@ export function createGeneratePptdTool(getParent: () => QueryContext): Tool<Gene
       required: ['brief'],
       properties: {
         brief: { type: 'string', minLength: 1, maxLength: 20_000 },
-        materials: { type: 'string', maxLength: 80_000 },
+        materials: { type: 'string', maxLength: 20_000 },
+        attachmentIds: { type: 'array', items: { type: 'string', minLength: 1 }, maxItems: 20 },
         title: { type: 'string', minLength: 1, maxLength: 160 },
         themeId: { type: 'string', enum: [...PPTD_THEME_IDS] },
         designSystemId: { type: 'string', enum: [...PPTD_DESIGN_SYSTEM_IDS] },
@@ -76,6 +78,15 @@ export function createGeneratePptdTool(getParent: () => QueryContext): Tool<Gene
       started = true
       try {
         const parent = getParent()
+        const availableAttachmentIds = new Set((parent.attachments ?? []).map((attachment) => attachment.id))
+        const requestedAttachmentIds = [...new Set(input.attachmentIds ?? [])]
+        if ((parent.attachments?.length ?? 0) > 0 && input.attachmentIds === undefined) {
+          throw new Error('当前运行存在附件；请先使用附件 manifest 中的 ID，并通过 attachmentIds 显式选择来源。')
+        }
+        const missingAttachmentIds = requestedAttachmentIds.filter((id) => !availableAttachmentIds.has(id))
+        if (missingAttachmentIds.length > 0) {
+          throw new Error(`附件不存在或不属于当前运行：${missingAttachmentIds.join(', ')}`)
+        }
         const workspaceMedia = await loadWorkspaceMedia(input.mediaPaths, parent, signal)
         const checkpointIO = parent.workspace ? {
           async onCheckpoint(checkpoint: { path: string; content: string }) {
@@ -95,6 +106,10 @@ export function createGeneratePptdTool(getParent: () => QueryContext): Tool<Gene
         } : {}
         const result = await runPptdDeckPipeline(parent, {
           ...input,
+          attachmentSources: (parent.attachments ?? [])
+            .filter((attachment) => requestedAttachmentIds.includes(attachment.id))
+            .filter((attachment): attachment is typeof attachment & { text: string } => typeof attachment.text === 'string')
+            .map((attachment) => ({ id: attachment.id, name: attachment.name, text: attachment.text })),
           media: { ...(parent.pptdMedia ?? {}), ...workspaceMedia },
         }, {
           signal,

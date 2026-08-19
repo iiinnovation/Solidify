@@ -2,10 +2,29 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { Skill } from '@/lib/skills'
 
+export interface ComposerAttachment {
+  attachmentId?: string
+  name: string
+  size: number
+  mimeType?: string
+  file?: File
+  extractedText?: string
+  mediaUrl?: string
+  mediaId?: string
+  recoverable?: boolean
+}
+
 export interface ComposerDraft {
   input: string
-  attachments: File[]
+  attachments: ComposerAttachment[]
   skill: Skill | null
+}
+
+export function isComposerAttachmentRecoverable(att: ComposerAttachment): boolean {
+  if (att.recoverable === false) return false
+  if (att.file || att.mediaUrl || att.mediaId || att.attachmentId) return true
+  if (/\.(png|jpe?g|gif|webp|svg)$/i.test(att.name)) return false
+  return att.extractedText !== undefined
 }
 
 export const NEW_COMPOSER_DRAFT_KEY = '__new__'
@@ -14,6 +33,7 @@ export const EMPTY_COMPOSER_DRAFT: ComposerDraft = {
   attachments: [],
   skill: null,
 }
+
 
 export function composerDraftKey(conversationId?: string): string {
   return conversationId ?? NEW_COMPOSER_DRAFT_KEY
@@ -94,11 +114,27 @@ export const useUIStore = create<UIState>()(
         composerDrafts: Object.fromEntries(
           Object.entries(state.composerDrafts).map(([key, draft]) => [key, {
             input: draft.input,
-            attachments: [],
+            attachments: draft.attachments
+                .filter((att) =>
+                  att.recoverable === false
+                || att.attachmentId !== undefined
+                || att.extractedText !== undefined
+                || att.mediaUrl !== undefined
+                || att.mediaId !== undefined,
+              )
+              .map((att) => ({
+                attachmentId: att.attachmentId,
+                name: att.name,
+                size: att.size,
+                mimeType: att.mimeType,
+                mediaId: att.mediaId,
+                recoverable: att.mediaId ? true : att.mediaUrl ? false : att.recoverable,
+              })),
             skill: draft.skill,
           }]),
         ),
       }),
     },
+
   ),
 )

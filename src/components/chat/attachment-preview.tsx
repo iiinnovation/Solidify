@@ -1,10 +1,11 @@
-import { FileIcon, X } from 'lucide-react'
+import { AlertTriangle, FileIcon, X } from 'lucide-react'
 import { formatFileSize } from '@/lib/file-extractor'
 
 interface AttachmentPreviewProps {
-  files: File[]
+  files: Array<{ name: string; size: number; recoverable?: boolean }>
   onRemove: (index: number) => void
 }
+
 
 export function AttachmentPreview({ files, onRemove }: AttachmentPreviewProps) {
   if (files.length === 0) return null
@@ -23,6 +24,11 @@ export function AttachmentPreview({ files, onRemove }: AttachmentPreviewProps) {
           <span className="text-text-tertiary text-xs shrink-0">
             {formatFileSize(file.size)}
           </span>
+          {file.recoverable === false && (
+            <span title="原文件已无法恢复，请移除后重新选择">
+              <AlertTriangle size={14} className="text-warning shrink-0" />
+            </span>
+          )}
           <button
             onClick={() => onRemove(index)}
             className="ml-1 text-text-tertiary hover:text-error transition-colors shrink-0"

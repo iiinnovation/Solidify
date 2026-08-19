@@ -35,7 +35,7 @@ export class ToolRegistry implements IToolRegistry {
     const available: Tool[] = []
 
     for (const tool of this.tools.values()) {
-      const runtimeRequired = tool.name === 'read_handle'
+      const runtimeRequired = tool.name === 'read_handle' || tool.name === 'search_attachments' || tool.name === 'read_attachment'
 
       // Layer 1: Environment filter
       if (tool.availability === 'tauri-only' && ctx.platform === 'web') {
@@ -108,7 +108,8 @@ import { writeFileTool } from './builtin/write-file'
 import { searchFilesTool } from './builtin/search-files'
 import { capturePreviewTool } from './builtin/capture-preview'
 import { readHandleTool } from './builtin/read-handle'
+import { searchAttachmentsTool, readAttachmentTool } from './builtin/attachments'
 
-for (const tool of [listDirTool, readFileTool, writeFileTool, searchFilesTool, capturePreviewTool, readHandleTool]) {
+for (const tool of [listDirTool, readFileTool, writeFileTool, searchFilesTool, capturePreviewTool, readHandleTool, searchAttachmentsTool, readAttachmentTool]) {
   toolRegistry.register(tool as Tool)
 }

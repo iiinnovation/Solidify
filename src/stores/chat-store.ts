@@ -3,6 +3,8 @@ import { createJSONStorage, persist } from 'zustand/middleware'
 import type { QueryEvent } from '@/lib/engine/types'
 import type { RunState, ExecutionMetrics } from '@/lib/engine/run-state'
 import { createQuotaResilientStateStorage } from '@/lib/storage-quota'
+import { createAttachmentResourceId, type AttachmentResource } from '@/lib/attachments/types'
+import { deleteAttachmentResource, saveAttachmentResource } from '@/lib/attachments/store'
 
 /* ── 共享类型 ── */
 
@@ -18,13 +20,25 @@ export interface Artifact {
   streaming?: boolean
 }
 
+export interface MessageAttachment {
+  attachmentId?: string
+  name: string
+  size: number
+  mimeType?: string
+  extractedText?: string
+  mediaUrl?: string
+  mediaId?: string
+  recoverable?: boolean
+}
+
 export interface Message {
   id: string
   role: 'user' | 'assistant'
   content: string
   skill?: { id: string; name: string }
-  attachments?: { name: string; size: number }[]
+  attachments?: MessageAttachment[]
   metrics?: ExecutionMetrics
+
   knowledgeSources?: Array<{
     id: string
     title: string
@@ -36,6 +50,11 @@ export interface Message {
   agentContext?: {
     providerId: string
     workspaceRoot?: string
+    skillSystemPrompt?: string
+    skillSkipConfirmation?: boolean
+    skillId?: string
+  }
+  requestContext?: {
     skillSystemPrompt?: string
     skillSkipConfirmation?: boolean
     skillId?: string
@@ -58,7 +77,7 @@ interface ChatState {
   /* Artifact */
   artifacts: Artifact[]
   activeArtifactId: string | null
-  setActiveArtifact: (id: string) => void
+  setActiveArtifact: (id: string | null) => void
   addArtifact: (artifact: Artifact) => void
   updateArtifactContent: (id: string, content: string, streaming?: boolean) => void
 
@@ -138,6 +157,19 @@ export const useChatStore = create<ChatState>()(
 
       deleteConversation: (id) =>
         set((state) => {
+          const removed = state.conversations.find((conversation) => conversation.id === id)
+          const retainedAttachmentIds = new Set(state.conversations
+            .filter((conversation) => conversation.id !== id)
+            .flatMap((conversation) => conversation.messages)
+            .flatMap((message) => message.attachments ?? [])
+            .map((attachment) => attachment.attachmentId)
+            .filter((attachmentId): attachmentId is string => Boolean(attachmentId)))
+          for (const attachmentId of removed?.messages
+            .flatMap((message) => message.attachments ?? [])
+            .map((attachment) => attachment.attachmentId)
+            .filter((attachmentId): attachmentId is string => Boolean(attachmentId)) ?? []) {
+            if (!retainedAttachmentIds.has(attachmentId)) void deleteAttachmentResource(attachmentId)
+          }
           const filtered = state.conversations.filter((c) => c.id !== id)
           return {
             conversations: filtered,
@@ -241,7 +273,16 @@ export const useChatStore = create<ChatState>()(
       name: 'solidify-chat',
       storage: createJSONStorage(() => createQuotaResilientStateStorage(localStorage)),
       partialize: (state) => ({
-        conversations: state.conversations,
+        conversations: state.conversations.map((conversation) => ({
+          ...conversation,
+          messages: conversation.messages.map((message) => ({
+            ...message,
+            attachments: message.attachments?.map(({ mediaUrl, extractedText: _extractedText, ...attachment }) => ({
+              ...attachment,
+              recoverable: mediaUrl && !attachment.mediaId ? false : attachment.recoverable,
+            })),
+          })),
+        })),
         activeConversationId: state.activeConversationId,
         artifacts: state.artifacts,
         activeArtifactId: state.activeArtifactId,
@@ -250,6 +291,32 @@ export const useChatStore = create<ChatState>()(
         // 清理孤儿 artifacts + 迁移旧类型
         return (state: ChatState | undefined) => {
           if (!state) return
+          for (const conversation of state.conversations) {
+            for (const message of conversation.messages) {
+              for (const attachment of message.attachments ?? []) {
+                if (attachment.extractedText === undefined && attachment.mediaUrl === undefined) continue
+                const resource: AttachmentResource = {
+                  id: attachment.attachmentId ?? createAttachmentResourceId({
+                    name: attachment.name,
+                    size: attachment.size,
+                    mimeType: attachment.mimeType,
+                    text: attachment.extractedText,
+                    mediaId: attachment.mediaId,
+                  }),
+                  name: attachment.name,
+                  size: attachment.size,
+                  mimeType: attachment.mimeType,
+                  text: attachment.extractedText,
+                  mediaUrl: attachment.mediaUrl,
+                  mediaId: attachment.mediaId,
+                }
+                attachment.attachmentId = resource.id
+                void saveAttachmentResource(resource).catch((error) => {
+                  console.warn('[attachments] legacy resource migration failed', error)
+                })
+              }
+            }
+          }
           const allMessageIds = new Set(
             state.conversations.flatMap((c) => c.messages.map((m) => m.id)),
           )

@@ -32,4 +32,31 @@ describe('chat store truncation', () => {
     expect(useChatStore.getState().artifacts.map((artifact) => artifact.id)).toEqual(['keep-artifact'])
     expect(useChatStore.getState().activeArtifactId).toBeNull()
   })
+
+  it('does not persist attachment data URLs in localStorage', () => {
+    useChatStore.setState({
+      conversations: [{
+        id: 'conv-media', title: 'Media', createdAt: 1,
+        messages: [{
+          id: 'user-media',
+          role: 'user',
+          content: 'image',
+          attachments: [{
+            name: 'large.png',
+            size: 8 * 1024 * 1024,
+            extractedText: '[图片文件: large.png，需要 AI 视觉分析]',
+            mediaUrl: `data:image/png;base64,${'a'.repeat(1024)}`,
+            recoverable: true,
+            mediaId: 'stored-media',
+          }],
+        }],
+      }],
+    })
+
+    const persisted = JSON.parse(localStorage.getItem('solidify-chat') ?? '{}')
+    const attachment = persisted.state.conversations[0].messages[0].attachments[0]
+    expect(attachment.mediaUrl).toBeUndefined()
+    expect(attachment.mediaId).toBe('stored-media')
+    expect(attachment.recoverable).toBe(true)
+  })
 })

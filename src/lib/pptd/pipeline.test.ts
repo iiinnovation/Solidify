@@ -84,6 +84,32 @@ elements:
 `
 
 describe('PPTD layered generation pipeline', () => {
+  it('builds a bounded source index before design and keeps raw attachment tails out of later prompts', async () => {
+    const calls: PptdModelCall[] = []
+    const sentinel = 'RAW_ATTACHMENT_TAIL_MUST_NOT_LEAK'
+    await generatePptdDeck({
+      brief: '生成附件汇报',
+      attachmentSources: [{ id: 'att-source', name: 'source.md', text: `# Summary\nRevenue increased by 20%.\n${'x'.repeat(70_000)}${sentinel}` }],
+    }, {
+      callModel: async (call) => {
+        calls.push(call)
+        if (call.stage === 'source') return { text: JSON.stringify({ summary: '收入增长', sections: [] }) }
+        if (call.stage === 'design') return { text: DESIGN }
+        if (call.stage === 'outline') return { text: JSON.stringify({
+          title: '附件汇报', audience: '管理层', goal: '说明增长', themeId: 'business-light',
+          pages: [{ pageType: 'content', intent: '收入增长', keyPoints: ['收入增长20%'], evidenceIds: ['att-source:section-01'] }],
+        }) }
+        return { text: validPage('收入增长') }
+      },
+    })
+
+    expect(calls[0]?.stage).toBe('source')
+    expect(calls.find((call) => call.stage === 'source')?.prompt).not.toContain(sentinel)
+    expect(calls.find((call) => call.stage === 'outline')?.prompt).not.toContain(sentinel)
+    expect(calls.filter((call) => ['source', 'design', 'outline', 'planning'].includes(call.stage)).every((call) => !call.images?.length)).toBe(true)
+    expect(calls.find((call) => call.stage === 'page')?.prompt).toContain('Revenue increased by 20%')
+  })
+
   it('adds a planning draft before page YAML generation', async () => {
     const calls: PptdModelCall[] = []
     const planning = JSON.stringify({
@@ -283,7 +309,8 @@ elements:
       },
     })
 
-    expect(calls.every((call) => call.images?.[0]?.path === 'media/quarterly-chart.png')).toBe(true)
+    expect(calls.filter((call) => call.stage === 'page' || call.stage === 'repair').every((call) => call.images?.[0]?.path === 'media/quarterly-chart.png')).toBe(true)
+    expect(calls.filter((call) => call.stage === 'design' || call.stage === 'outline' || call.stage === 'planning' || call.stage === 'source').every((call) => !call.images?.length)).toBe(true)
     expect(calls.find((call) => call.stage === 'page')?.prompt).toContain('media/quarterly-chart.png')
     expect(calls.find((call) => call.stage === 'page')?.prompt).not.toContain('当前没有可用图片')
     expect(result.project.media).toEqual(media)

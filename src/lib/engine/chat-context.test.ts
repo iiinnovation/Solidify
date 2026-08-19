@@ -101,4 +101,18 @@ describe('chat Agent workspace context', () => {
 
     expect(context.pptdMedia).toBe(media)
   })
+
+  it('treats unknown custom models as non-vision unless explicitly enabled', () => {
+    const unknown = createChatQueryContext({
+      runId: 'run-custom', conversationId: 'conversation', messages: [{ role: 'user', content: 'hello' }],
+      provider: { ...provider, modelId: 'custom-text-model' }, signal: new AbortController().signal,
+    })
+    expect(unknown.providerRegistry.get('openai').metadata.supportsVision).toBe(false)
+
+    const enabled = createChatQueryContext({
+      runId: 'run-custom-vision', conversationId: 'conversation', messages: [{ role: 'user', content: 'hello' }],
+      provider: { ...provider, modelId: 'custom-text-model', supportsVision: true }, signal: new AbortController().signal,
+    })
+    expect(enabled.providerRegistry.get('openai').metadata.supportsVision).toBe(true)
+  })
 })

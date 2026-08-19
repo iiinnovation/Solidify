@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { fetchChatStream, compressMessages } from '@/lib/chat-api'
-import { useChatStore, type ArtifactType, type Message } from '@/stores/chat-store'
+import { useChatStore, type ArtifactType, type Message, type MessageAttachment } from '@/stores/chat-store'
 import { useModelStore } from '@/stores/model-store'
 import { useKnowledgeEnhancementStore } from '@/stores/knowledge-store'
 import { useProjectStore } from '@/stores/project-store'
@@ -14,10 +14,13 @@ import { createChatQueryContext, loadChatSkillRuntime } from '@/lib/engine/chat-
 import type { QueryEvent } from '@/lib/engine/types'
 import { useWorkspaceStore } from '@/stores/workspace-store'
 import { useDocumentStore } from '@/stores/document-store'
-import { useUIStore } from '@/stores/ui-store'
+import { isComposerAttachmentRecoverable, useUIStore, type ComposerAttachment } from '@/stores/ui-store'
+import { loadAttachmentMedia, saveAttachmentMedia } from '@/lib/attachment-media'
 import { useSkillStore } from '@/stores/skill-store'
 import { deriveArtifactPath, materializeArtifact, normalizeArtifactPath, normalizeArtifactType } from '@/lib/workspace/materialize'
 import { isTauri } from '@/lib/tauri'
+import { createAttachmentResourceId, formatAttachmentManifest, type AttachmentResource } from '@/lib/attachments/types'
+import { loadAttachmentResource, loadAttachmentResources, saveAttachmentResource } from '@/lib/attachments/store'
 
 function genId() {
   return newId('msg')
@@ -252,7 +255,7 @@ export function useChat(conversationId?: string) {
   const sendMessage = useCallback(
     async (
       content: string,
-      files?: File[],
+      composerAttachments?: ComposerAttachment[],
       skillSystemPrompt?: string,
       skillSkipConfirmation?: boolean,
       resume?: ResumeRunOptions,
@@ -261,6 +264,11 @@ export function useChat(conversationId?: string) {
       skillName?: string,
     ) => {
       if ((!content.trim() && !resume) || isStreamingRef.current) return
+      const unrecoverableAttachment = composerAttachments?.find((att) => !isComposerAttachmentRecoverable(att))
+      if (unrecoverableAttachment) {
+        setError(new Error(`附件「${unrecoverableAttachment.name}」已无法恢复，请重新选择文件`))
+        return
+      }
       const requestStartedAt = Date.now()
       // React state updates are asynchronous. Use a synchronous guard so two
       // events in the same render cannot start duplicate model runs.
@@ -321,12 +329,29 @@ export function useChat(conversationId?: string) {
         ? { id: skillId, name: skillName || useSkillStore.getState().getAllSkills().find((s) => s.id === skillId)?.name || skillId }
         : (skillSystemPrompt ? { id: 'custom', name: '自定义技能' } : undefined)
 
+      const userMessageId = genId()
+      // Full attachment text stays in the local resource plane. The model only
+      // receives a bounded manifest and reads content through attachment tools.
       const userMsg: Message = {
-        id: genId(),
+        id: userMessageId,
         role: 'user',
         content,
         skill: skillObj,
-        attachments: files?.map(f => ({ name: f.name, size: f.size }))
+        requestContext: {
+          skillSystemPrompt,
+          skillSkipConfirmation,
+          skillId,
+        },
+        attachments: composerAttachments?.map((a) => ({
+          attachmentId: a.attachmentId,
+          name: a.name,
+          size: a.size,
+          mimeType: a.mimeType ?? a.file?.type,
+          extractedText: a.extractedText,
+          mediaUrl: a.mediaUrl,
+          mediaId: a.mediaId,
+          recoverable: a.recoverable,
+        }))
       }
       const assistantMsg: Message = resume?.assistantMessage
         ?? { id: genId(), role: 'assistant', content: '' }
@@ -355,22 +380,95 @@ export function useChat(conversationId?: string) {
       // depend on one another. Start them together so the first model request
       // waits for the slowest preparation step instead of their sum.
       const attachmentPromise = (async () => {
-        if (!files?.length) return { enrichedContent: content, pptdMedia: undefined }
+        if (!composerAttachments?.length) return { attachmentResources: [], pptdMedia: undefined, error: undefined }
         try {
           const { extractText } = await import('@/lib/file-extractor')
-          const [fileContents, attachmentMedia] = await Promise.all([
-            Promise.all(files.map(file => extractText(file))),
-            collectPptdAttachmentMedia(files),
-          ])
+
+          // 分离新文件（需要提取）和已有提取内容（撤回恢复的附件）
+          const extractedTexts: string[] = []
+          const newFiles: { index: number; file: File }[] = []
+
+          for (let i = 0; i < composerAttachments.length; i++) {
+            const att = composerAttachments[i]
+            if (att.extractedText !== undefined) {
+              // 撤回恢复的附件：直接复用已提取的文本
+              extractedTexts.push(att.extractedText)
+            } else {
+              const file = getAttachmentFile(att)
+              if (file) {
+                // 新添加的文件：需要提取
+                newFiles.push({ index: i, file })
+                extractedTexts.push('__PENDING__')
+              } else {
+                const stored = att.attachmentId ? await loadAttachmentResource(att.attachmentId) : undefined
+                if (stored?.text !== undefined) {
+                  extractedTexts.push(stored.text)
+                  if (!att.mediaUrl && stored.mediaUrl) att.mediaUrl = stored.mediaUrl
+                  if (!att.mediaId && stored.mediaId) att.mediaId = stored.mediaId
+                } else {
+                  throw new Error(`附件资源不存在或已损坏：${att.name}`)
+                }
+              }
+            }
+          }
+
+          // 批量提取新文件的文本
+          if (newFiles.length > 0) {
+            const newTexts = await Promise.all(newFiles.map(({ file }) => extractText(file)))
+            newFiles.forEach(({ index }, i) => {
+              extractedTexts[index] = newTexts[i]
+            })
+          }
+
+          // 收集图片媒体 (支持原生 File 和已有的 mediaUrl)
+          const { attachmentMedia, mediaUrls, mediaIds } = await collectPptdAttachmentMedia(composerAttachments)
+
+          // 回填提取文本和轻量媒体引用；Data URL 只保留在当前运行时。
+          if (userMsg.attachments) {
+            for (let i = 0; i < userMsg.attachments.length; i++) {
+              if (!userMsg.attachments[i].extractedText) {
+                userMsg.attachments[i].extractedText = extractedTexts[i]
+              }
+              if (mediaUrls[i] && !userMsg.attachments[i].mediaUrl) {
+                userMsg.attachments[i].mediaUrl = mediaUrls[i]
+              }
+              if (mediaIds[i]) userMsg.attachments[i].mediaId = mediaIds[i]
+              userMsg.attachments[i].recoverable = !isImageAttachment(composerAttachments[i]) || Boolean(mediaUrls[i])
+            }
+          }
+
+          const attachmentResources: AttachmentResource[] = (userMsg.attachments ?? []).map((attachment, index) => {
+            const resource: AttachmentResource = {
+              id: attachment.attachmentId ?? createAttachmentResourceId({
+                name: attachment.name,
+                size: attachment.size,
+                mimeType: attachment.mimeType,
+                text: extractedTexts[index],
+                mediaId: mediaIds[index] ?? attachment.mediaId,
+              }),
+              name: attachment.name,
+              size: attachment.size,
+              mimeType: attachment.mimeType,
+              text: extractedTexts[index],
+              mediaUrl: mediaUrls[index] ?? attachment.mediaUrl,
+              mediaId: mediaIds[index] ?? attachment.mediaId,
+            }
+            attachment.attachmentId = resource.id
+            return resource
+          })
+          await Promise.all(attachmentResources.map(saveAttachmentResource))
           return {
-            enrichedContent: `${content}\n\n## 附件内容\n\n${fileContents.map((text, i) =>
-              `### ${files[i].name}\n\n${text}`
-            ).join('\n\n')}`,
+            attachmentResources,
             pptdMedia: Object.keys(attachmentMedia).length > 0 ? attachmentMedia : undefined,
+            error: undefined,
           }
         } catch (error) {
           console.error('文件内容提取失败:', error)
-          return { enrichedContent: content, pptdMedia: undefined }
+          return {
+            attachmentResources: [],
+            pptdMedia: undefined,
+            error: error instanceof Error ? error : new Error('附件内容提取失败'),
+          }
         }
       })()
 
@@ -447,9 +545,31 @@ ${result.content}
         knowledgePromise,
         skillRuntimePromise,
       ])
+      if (attachmentResult.error) {
+        if (isCurrentRequest()) {
+          setError(attachmentResult.error)
+          isStreamingRef.current = false
+          setIsStreaming(false)
+          abortRef.current = null
+          activeRequestConversationRef.current = undefined
+        }
+        return
+      }
       const pptdMedia = attachmentResult.pptdMedia
+      const historicalAttachmentIds = messages.flatMap((message) =>
+        message.attachments?.map((attachment) => attachment.attachmentId).filter((id): id is string => Boolean(id)) ?? [],
+      )
+      const historicalResources = await loadAttachmentResources(historicalAttachmentIds)
+      const attachmentResources = [...new Map(
+        [...historicalResources, ...attachmentResult.attachmentResources].map((resource) => [resource.id, resource]),
+      ).values()]
       const knowledgeSources = knowledgeResult.sources
-      let enrichedContent = attachmentResult.enrichedContent
+      const attachmentContext = attachmentResources.length > 0
+        ? `\n\n${formatAttachmentManifest(attachmentResources)}\n\n${isEnabled('agentLoop')
+          ? '附件正文不会自动展开；需要时请使用 search_attachments 和 read_attachment 按需读取。'
+          : '当前为兼容聊天模式，只提供附件的有限预览；如需分段读取，请启用 Agent 模式。'}`
+        : ''
+      let enrichedContent = `${content}${attachmentContext}`
 
       // 将知识上下文添加到用户消息中
       if (knowledgeResult.context) {
@@ -666,9 +786,14 @@ ${result.content}
         // 应用上下文压缩：保留首轮 + 最近 10 轮
         const apiMessages = compressMessages(allMessages, 10)
 
-        // 使用增强后的内容（包含文件内容）
+        // The stored user message remains the user's original text. Resource
+        // manifests are reconstructed per run so stale attachment previews do
+        // not become permanent conversation history.
         const messagesWithFiles = [...apiMessages]
-        if (enrichedContent !== content) {
+        if (resume && attachmentContext && messagesWithFiles.length > 0) {
+          const last = messagesWithFiles[messagesWithFiles.length - 1]
+          messagesWithFiles[messagesWithFiles.length - 1] = { ...last, content: `${last.content}${attachmentContext}` }
+        } else if (enrichedContent !== content) {
           messagesWithFiles[messagesWithFiles.length - 1] = {
             role: 'user',
             content: enrichedContent
@@ -724,6 +849,7 @@ ${result.content}
             skillResources: skillRuntime?.resources,
             skillRegistry: skillRuntime?.registry,
             pptdMedia,
+            attachments: attachmentResources,
             workspaceRoot: agentContext.workspaceRoot,
             restoreSnapshot: Boolean(resume),
           })
@@ -1100,14 +1226,24 @@ ${result.content}
         description: '',
         icon: 'Sparkles',
         placeholder: '',
-        skipConfirmation: true,
-        systemPrompt: '',
+        skipConfirmation: targetUserMsg.requestContext?.skillSkipConfirmation ?? true,
+        systemPrompt: targetUserMsg.requestContext?.skillSystemPrompt ?? '',
       }
     }
 
+    const restoredAttachments = messageAttachmentsToComposer(targetUserMsg.attachments)
     setComposerDraft(currentConvId, {
       input: targetUserMsg.content,
+      attachments: restoredAttachments,
       skill: draftSkill,
+    })
+    // Hydrate resources that were intentionally omitted from persisted message
+    // JSON without delaying the synchronous recall UI contract.
+    void restoreComposerAttachments(targetUserMsg.attachments).then((hydrated) => {
+      const current = useUIStore.getState().composerDrafts[currentConvId]
+      const expected = restoredAttachments.map((attachment) => attachment.attachmentId ?? attachment.name).join('|')
+      const actual = current?.attachments.map((attachment) => attachment.attachmentId ?? attachment.name).join('|')
+      if (actual === expected) setComposerDraft(currentConvId, { attachments: hydrated })
     })
 
     return targetUserMsg
@@ -1127,7 +1263,18 @@ ${result.content}
     }
     if (lastUserMsgIndex === -1) return
 
-    const lastUserContent = messages[lastUserMsgIndex].content
+    const lastUserMsg = messages[lastUserMsgIndex]
+    const lastUserContent = lastUserMsg.content
+    const previousAssistant = messages[lastUserMsgIndex + 1]?.role === 'assistant'
+      ? messages[lastUserMsgIndex + 1]
+      : undefined
+    const lastAttachments = messageAttachmentsToComposer(lastUserMsg.attachments)
+    const unrecoverableAttachment = lastAttachments?.find((att) => !isComposerAttachmentRecoverable(att))
+    if (unrecoverableAttachment) {
+      setError(new Error(`附件「${unrecoverableAttachment.name}」已无法恢复，请撤回消息后重新选择文件`))
+      return
+    }
+    const requestContext = lastUserMsg.requestContext ?? previousAssistant?.agentContext
 
     // 从 store 中移除最后一条 assistant 消息
     const currentConvId = convIdRef.current
@@ -1139,7 +1286,16 @@ ${result.content}
     setMessages((prev) => prev.slice(0, -1))
 
     // 重新发送
-    sendMessage(lastUserContent)
+    void sendMessage(
+      lastUserContent,
+      lastAttachments,
+      requestContext?.skillSystemPrompt,
+      requestContext?.skillSkipConfirmation,
+      undefined,
+      undefined,
+      requestContext?.skillId ?? lastUserMsg.skill?.id,
+      lastUserMsg.skill?.name,
+    )
   }, [messages, isStreaming, sendMessage, removeLastMessageFromConversation])
 
   const retry = useCallback(() => {
@@ -1151,6 +1307,14 @@ ${result.content}
     if (userMsg?.role !== 'user') return
 
     const content = userMsg.content
+    const failedAssistant = failedAgent ? lastMsg : undefined
+    const lastAttachments = messageAttachmentsToComposer(userMsg.attachments)
+    const unrecoverableAttachment = lastAttachments?.find((att) => !isComposerAttachmentRecoverable(att))
+    if (unrecoverableAttachment) {
+      setError(new Error(`附件「${unrecoverableAttachment.name}」已无法恢复，请撤回消息后重新选择文件`))
+      return
+    }
+    const requestContext = userMsg.requestContext ?? failedAssistant?.agentContext
     setError(null)
 
     // sendMessage creates a fresh user/assistant pair. A failed recovered
@@ -1166,11 +1330,13 @@ ${result.content}
 
     void sendMessage(
       content,
-      undefined,
-      undefined,
-      undefined,
+      lastAttachments,
+      requestContext?.skillSystemPrompt,
+      requestContext?.skillSkipConfirmation,
       undefined,
       failedAgent ? retainedMessages : undefined,
+      requestContext?.skillId ?? userMsg.skill?.id,
+      userMsg.skill?.name,
     )
   }, [messages, isStreaming, sendMessage, removeLastMessageFromConversation])
 
@@ -1205,19 +1371,96 @@ interface PptdProgressPreview {
   pageCount: number
 }
 
-async function collectPptdAttachmentMedia(files: readonly File[]): Promise<Record<string, string>> {
-  const supported = files.filter((file) =>
-    file.type === 'image/png'
-    || file.type === 'image/jpeg'
-    || file.type === 'image/gif'
-    || file.type === 'image/webp'
-    || file.type === 'image/svg+xml',
-  )
-  const entries = await Promise.all(supported.map(async (file, index) => {
-    const safeName = file.name.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || `image-${index + 1}`
-    return [`media/attachment-${String(index + 1).padStart(2, '0')}-${safeName}`, await fileDataUrl(file)] as const
+function getAttachmentFile(att: ComposerAttachment | File): File | undefined {
+  if (att instanceof File) return att
+  if (att && typeof att === 'object') {
+    if ('file' in att && att.file) return att.file
+    if (typeof (att as unknown as Blob).slice === 'function' && typeof (att as unknown as File).name === 'string') {
+      return att as unknown as File
+    }
+  }
+  return undefined
+}
+
+function isImageAttachment(att: ComposerAttachment | File): boolean {
+  const file = getAttachmentFile(att)
+  if (file) {
+    if (file.type && file.type.startsWith('image/')) return true
+    if (file.name && /\.(png|jpe?g|gif|webp|svg)$/i.test(file.name)) return true
+  }
+  if ('name' in att && att.name && /\.(png|jpe?g|gif|webp|svg)$/i.test(att.name)) return true
+  return false
+}
+
+async function collectPptdAttachmentMedia(
+  composerAttachments: readonly ComposerAttachment[],
+): Promise<{ attachmentMedia: Record<string, string>; mediaUrls: Record<number, string>; mediaIds: Record<number, string> }> {
+  const attachmentMedia: Record<string, string> = {}
+  const mediaUrls: Record<number, string> = {}
+  const mediaIds: Record<number, string> = {}
+
+  for (let i = 0; i < composerAttachments.length; i++) {
+    const att = composerAttachments[i]
+    let mediaUrl = att.mediaUrl
+    if (!mediaUrl && att.mediaId) mediaUrl = await loadAttachmentMedia(att.mediaId)
+    const file = getAttachmentFile(att)
+
+    if (!mediaUrl && file && isImageAttachment(file)) {
+      try {
+        mediaUrl = await fileDataUrl(file)
+      } catch (e) {
+        console.warn('读取图片 Data URL 失败:', e)
+      }
+    }
+
+    if (mediaUrl) {
+      const mediaId = att.mediaId ?? await saveAttachmentMedia(mediaUrl)
+      mediaUrls[i] = mediaUrl
+      mediaIds[i] = mediaId
+      const safeName = att.name.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || `image-${i + 1}`
+      attachmentMedia[`media/attachment-${String(i + 1).padStart(2, '0')}-${safeName}`] = mediaUrl
+    }
+  }
+
+  return { attachmentMedia, mediaUrls, mediaIds }
+}
+
+async function restoreComposerAttachments(attachments?: readonly MessageAttachment[]): Promise<ComposerAttachment[]> {
+  if (!attachments?.length) return []
+  return Promise.all(attachments.map(async (attachment) => {
+    const resource = attachment.attachmentId
+      ? await loadAttachmentResource(attachment.attachmentId)
+      : undefined
+    const restored: ComposerAttachment = {
+      attachmentId: attachment.attachmentId,
+      name: attachment.name,
+      size: attachment.size,
+      mimeType: attachment.mimeType,
+      extractedText: resource?.text ?? attachment.extractedText,
+      mediaUrl: resource?.mediaUrl ?? attachment.mediaUrl,
+      mediaId: resource?.mediaId ?? attachment.mediaId,
+      recoverable: attachment.recoverable,
+    }
+    restored.recoverable = isComposerAttachmentRecoverable(restored)
+    return restored
   }))
-  return Object.fromEntries(entries)
+}
+
+function messageAttachmentsToComposer(attachments?: readonly MessageAttachment[]): ComposerAttachment[] {
+  return (attachments ?? []).map((attachment) => {
+    const restored: ComposerAttachment = {
+      attachmentId: attachment.attachmentId,
+      name: attachment.name,
+      size: attachment.size,
+      mimeType: attachment.mimeType,
+      extractedText: attachment.extractedText,
+      mediaUrl: attachment.mediaUrl,
+      mediaId: attachment.mediaId,
+      recoverable: attachment.recoverable,
+    }
+    restored.recoverable = isComposerAttachmentRecoverable(restored)
+    return restored
+  })
 }
 
 function fileDataUrl(file: File): Promise<string> {

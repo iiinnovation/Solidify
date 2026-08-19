@@ -51,6 +51,7 @@ export class OpenAIProvider implements ModelProvider {
     this.metadata = {
       ...OPENAI_METADATA,
       supportsTools: config.supportsTools ?? OPENAI_METADATA.supportsTools,
+      supportsVision: config.supportsVision ?? OPENAI_METADATA.supportsVision,
     }
     this.client = new OpenAI({
       apiKey: config.apiKey,

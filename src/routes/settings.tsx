@@ -15,6 +15,7 @@ import { builtinSkills } from '@/lib/skills'
 import { useNavigate } from 'react-router-dom'
 import { getFlags, setFlagOverride } from '@/lib/harness/flags'
 import { migrateStoredCustomSkills } from '@/lib/skills/migration'
+import { modelSupportsVision } from '@/lib/model/capabilities'
 
 function ProviderForm({
   initial,
@@ -31,6 +32,7 @@ function ProviderForm({
   const [modelId, setModelId] = useState(initial?.modelId ?? '')
   const [format, setFormat] = useState<ApiFormat>(initial?.format ?? 'openai')
   const [supportsTools, setSupportsTools] = useState(initial?.supportsTools ?? true)
+  const [supportsVision, setSupportsVision] = useState(modelSupportsVision(initial?.modelId ?? '', initial?.supportsVision))
   const [showKey, setShowKey] = useState(false)
 
   const isValid = name.trim() && apiUrl.trim() && apiKey.trim() && modelId.trim()
@@ -128,10 +130,25 @@ function ProviderForm({
         </p>
       </div>
 
+      <div className="space-y-1.5">
+        <label className="flex items-center gap-2 text-sm text-text-primary">
+          <input
+            type="checkbox"
+            checked={supportsVision}
+            onChange={(event) => setSupportsVision(event.target.checked)}
+            className="h-4 w-4 rounded border-border text-accent focus:ring-accent focus:ring-offset-0"
+          />
+          支持视觉输入
+        </label>
+        <p className="text-xs text-text-tertiary">
+          开启后 PPTD 可向模型发送逐页图片并执行截图审阅；纯文本模型请保持关闭。
+        </p>
+      </div>
+
       <div className="flex gap-2 pt-2">
         <Button
           onClick={() =>
-            onSave({ name, apiUrl, apiKey, modelId, format, enabled: true, supportsTools })
+            onSave({ name, apiUrl, apiKey, modelId, format, enabled: true, supportsTools, supportsVision })
           }
           disabled={!isValid}
         >
@@ -425,6 +442,7 @@ export function SettingsPage() {
                           <p className="text-xs text-text-tertiary font-mono mt-0.5 truncate">
                             {provider.modelId} · {provider.format}
                             {provider.supportsTools === false ? ' · 纯对话' : ''}
+                            {modelSupportsVision(provider.modelId, provider.supportsVision) ? ' · 视觉' : ''}
                           </p>
                         </button>
                         <div className="flex items-center gap-1 shrink-0 ml-3">

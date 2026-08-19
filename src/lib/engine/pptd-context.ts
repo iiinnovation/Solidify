@@ -68,9 +68,8 @@ export function enablePptdPipeline(base: QueryContext): QueryContext {
           : `${sanitized.skill.content}${LEGACY_PRESENTATION_OVERRIDE}`,
       },
     } : {}),
-    // Chat attachments are already present in the conversation. Without a
-    // selected workspace these tools can only read bundled Skill resources,
-    // so exposing them invites futile attempts to open attachment filenames.
+  // Attachments are exposed through bounded resource tools; they are not
+  // filesystem files and must never be confused with read_handle results.
     tools: [...sanitized.tools, tool],
   }
   holder.current = context

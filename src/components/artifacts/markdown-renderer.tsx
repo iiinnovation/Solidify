@@ -68,7 +68,7 @@ export function MarkdownRenderer({ content, className }: MarkdownRendererProps) 
         rehypePlugins={[rehypeHighlight]}
         components={{
           h1: ({ children }) => (
-            <h1 className="text-2xl font-semibold text-text-primary leading-tight mt-6 mb-3 first:mt-0">
+            <h1 className="max-w-full break-words [overflow-wrap:anywhere] text-2xl font-semibold text-text-primary leading-tight mt-6 mb-3 first:mt-0">
               {children}
             </h1>
           ),

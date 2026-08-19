@@ -29,4 +29,23 @@ describe('UI composer drafts', () => {
     expect(drafts[composerDraftKey('conv-a')] ?? EMPTY_COMPOSER_DRAFT).toEqual(EMPTY_COMPOSER_DRAFT)
     expect(drafts[composerDraftKey('conv-b')].input).toBe('draft B')
   })
+
+  it('strips attachment media data from persisted drafts', () => {
+    useUIStore.getState().setComposerDraft('conv-image', {
+      attachments: [{
+        name: 'image.png',
+        size: 1024,
+        extractedText: '[图片文件: image.png，需要 AI 视觉分析]',
+        mediaUrl: 'data:image/png;base64,large-payload',
+        mediaId: 'draft-media',
+        recoverable: true,
+      }],
+    })
+
+    const persisted = JSON.parse(localStorage.getItem('solidify-ui') ?? '{}')
+    const attachment = persisted.state.composerDrafts['conv-image'].attachments[0]
+    expect(attachment.mediaUrl).toBeUndefined()
+    expect(attachment.mediaId).toBe('draft-media')
+    expect(attachment.recoverable).toBe(true)
+  })
 })

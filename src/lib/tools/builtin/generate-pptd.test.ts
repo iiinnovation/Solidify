@@ -83,6 +83,29 @@ describe('generate_pptd workspace media', () => {
     })
   })
 
+  it('passes only explicitly selected attachment resources to PPTD', async () => {
+    const context = parent({ attachments: [
+      { id: 'att-a', name: 'a.md', size: 3, text: 'A' },
+      { id: 'att-b', name: 'b.md', size: 3, text: 'B' },
+    ] })
+    await createGeneratePptdTool(() => context).execute(
+      { brief: 'deck', attachmentIds: ['att-b'] },
+      toolContext(context), new AbortController().signal,
+    )
+    expect(mocks.runPptdDeckPipeline.mock.calls[0][1].attachmentSources).toEqual([
+      { id: 'att-b', name: 'b.md', text: 'B' },
+    ])
+  })
+
+  it('rejects attachment IDs outside the current run', async () => {
+    const context = parent({ attachments: [{ id: 'att-a', name: 'a.md', size: 3, text: 'A' }] })
+    await expect(createGeneratePptdTool(() => context).execute(
+      { brief: 'deck', attachmentIds: ['att-missing'] },
+      toolContext(context), new AbortController().signal,
+    )).rejects.toThrow('附件不存在')
+    expect(mocks.runPptdDeckPipeline).not.toHaveBeenCalled()
+  })
+
   it('wires resumable checkpoint reads and writes to the selected workspace', async () => {
     const context = parent()
     mocks.readWorkspaceFile.mockResolvedValue({ content: 'checkpoint', binary: false, bytes: 10, truncated: false })

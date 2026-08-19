@@ -13,6 +13,8 @@ export interface ModelProvider {
   enabled: boolean
   /** Capability declaration; omitted legacy configs default to true. */
   supportsTools?: boolean
+  /** Optional model-level vision capability override. */
+  supportsVision?: boolean
   /**
    * Usable context window in tokens. Drives context trimming; omitted configs
    * fall back to a conservative default rather than assuming a 200k window.
@@ -27,48 +29,56 @@ export const providerTemplates: Omit<ModelProvider, 'id' | 'apiKey' | 'enabled'>
     apiUrl: 'https://api.deepseek.com/v1/chat/completions',
     modelId: 'deepseek-chat',
     format: 'openai',
+    supportsVision: false,
   },
   {
     name: 'DeepSeek Reasoner',
     apiUrl: 'https://api.deepseek.com/v1/chat/completions',
     modelId: 'deepseek-reasoner',
     format: 'openai',
+    supportsVision: false,
   },
   {
     name: 'Claude Sonnet',
     apiUrl: 'https://api.anthropic.com/v1/messages',
     modelId: 'claude-sonnet-4-20250514',
     format: 'anthropic',
+    supportsVision: true,
   },
   {
     name: 'Claude Haiku',
     apiUrl: 'https://api.anthropic.com/v1/messages',
     modelId: 'claude-haiku-4-20250514',
     format: 'anthropic',
+    supportsVision: true,
   },
   {
     name: 'GPT-4o',
     apiUrl: 'https://api.openai.com/v1/chat/completions',
     modelId: 'gpt-4o',
     format: 'openai',
+    supportsVision: true,
   },
   {
     name: 'GPT-4o Mini',
     apiUrl: 'https://api.openai.com/v1/chat/completions',
     modelId: 'gpt-4o-mini',
     format: 'openai',
+    supportsVision: true,
   },
   {
     name: '自定义 (OpenAI 兼容)',
     apiUrl: '',
     modelId: '',
     format: 'openai',
+    supportsVision: false,
   },
   {
     name: '自定义 (Anthropic 兼容)',
     apiUrl: '',
     modelId: '',
     format: 'anthropic',
+    supportsVision: false,
   },
 ]
 

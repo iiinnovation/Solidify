@@ -10,6 +10,7 @@ import type { MemoryState } from '../memory/types'
 import type { Settings, PermissionMap, Platform } from '../harness/types'
 import type { RunLogger } from '../harness/types'
 import type { SkillResourceResolver } from '../skills/types'
+import type { AttachmentResource } from '../attachments/types'
 
 // ============================================================================
 // Tool Definition
@@ -95,6 +96,8 @@ export interface ToolUseContext {
   readonly logger: RunLogger              // Write to run ledger
   /** Read-only resources for the currently selected Skill. */
   readonly skillResources?: SkillResourceResolver
+  /** User attachments explicitly associated with the current run. */
+  readonly attachments?: readonly AttachmentResource[]
   /** Current conversation, exposed only for recoverable tool-input repairs. */
   readonly messages?: readonly unknown[]
 }

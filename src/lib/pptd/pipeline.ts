@@ -35,6 +35,8 @@ const MAX_PIPELINE_CONCURRENCY = 5
 const DEFAULT_MAX_PAGES = 24
 const MAX_KEY_POINTS = 6
 const MAX_MATERIAL_CHARS = 48_000
+const MAX_SOURCE_CHARS = 64_000
+const MAX_SOURCE_SECTIONS = 80
 const PROGRESS_HEARTBEAT_MS = 10_000
 const MAX_MEDIA_FILE_BYTES = 15 * 1024 * 1024
 const MAX_MEDIA_TOTAL_BYTES = 40 * 1024 * 1024
@@ -42,6 +44,7 @@ const OUTLINE_MAX_TOKENS = 3_200
 const DESIGN_MAX_TOKENS = 4_000
 const PAGE_MAX_TOKENS = 4_800
 const PAGE_REPAIR_MAX_TOKENS = 5_200
+const SOURCE_MAX_TOKENS = 2_200
 export interface DeckOutlinePage {
   pageType: string
   intent: string
@@ -50,6 +53,7 @@ export interface DeckOutlinePage {
   layout?: string
   visualTask?: string
   assetBrief?: string
+  evidenceIds?: string[]
 }
 
 export interface DeckOutline {
@@ -63,6 +67,7 @@ export interface DeckOutline {
 export interface PptdDeckPipelineInput {
   brief: string
   materials?: string
+  attachmentSources?: readonly PptdSourceDocument[]
   title?: string
   themeId?: PptdThemeId
   designSystemId?: string
@@ -71,7 +76,11 @@ export interface PptdDeckPipelineInput {
   artifactPath?: string
 }
 
-export type PptdPipelineStage = 'design' | 'outline' | 'planning' | 'page' | 'repair' | 'review'
+export interface PptdSourceDocument { id: string; name: string; text: string }
+export interface PptdSourceSection { id: string; attachmentId: string; attachmentName: string; title?: string; summary: string; evidence: string[] }
+export interface PptdSourceIndex { summary: string; sections: PptdSourceSection[] }
+
+export type PptdPipelineStage = 'source' | 'design' | 'outline' | 'planning' | 'page' | 'repair' | 'review'
 
 export interface PptdModelCall {
   stage: PptdPipelineStage
@@ -136,6 +145,7 @@ export interface PptdDeckArtifact {
 }
 
 export interface PptdDeckPipelineResult {
+  sourceIndex: PptdSourceIndex
   design: PptdDesignSpec
   outline: DeckOutline
   planningDrafts: PptdPlanningDraft[]
@@ -245,7 +255,6 @@ export async function generatePptdDeck(
   const warnings: string[] = []
   const qualityNotices: string[] = []
   const media = preparePptdMedia(input.media)
-  const mediaPrompt = buildMediaPrompt(media.images)
 
   const callModel = async (request: PptdModelCall): Promise<PptdModelCallResult> => {
     throwIfAborted(signal)
@@ -258,8 +267,9 @@ export async function generatePptdDeck(
     return result
   }
 
-  const designSource = resolvePptdDesignSource(`${input.brief}\n${input.materials ?? ''}`, input.designSystemId)
-  const baseThemeId = input.themeId ?? inferPptdThemeId(`${input.brief}\n${input.materials ?? ''}`)
+  const sourceIndex = await generateSourceIndex(input, callModel, signal, warnings, options.onProgress)
+  const designSource = resolvePptdDesignSource(`${input.brief}\n${sourceIndex.summary}`, input.designSystemId)
+  const baseThemeId = input.themeId ?? inferPptdThemeId(`${input.brief}\n${sourceIndex.summary}`)
   const baseTheme = getPptdThemePreset(baseThemeId)
   const checkpointRoot = checkpointRootFor(input)
   const sourceHash = checkpointSourceHash(input)
@@ -281,8 +291,8 @@ export async function generatePptdDeck(
       planningDrafts = undefined
     }
   }
-  design ??= await generateDesignSpec(input, designSource, baseTheme, mediaPrompt, media.images, callModel, signal, warnings, options.onProgress)
-  outline ??= await generateOutline(input, design, maxPages, mediaPrompt, media.images, callModel, signal, warnings, options.onProgress)
+  design ??= await generateDesignSpec(input, designSource, baseTheme, sourceIndex, '', callModel, signal, warnings, options.onProgress)
+  outline ??= await generateOutline(input, design, sourceIndex, maxPages, '', callModel, signal, warnings, options.onProgress)
   const theme = themeFromDesignSpec(getPptdThemePreset(outline.themeId), design)
   const scheduler = new SubAgentScheduler(concurrency)
   if (!planningDrafts) {
@@ -292,7 +302,7 @@ export async function generatePptdDeck(
     const planningResults = await scheduler.run(outline.pages, async (pageOutline, pageIndex) => {
       let draft: PptdPlanningDraft
       try {
-        draft = await generatePlanningDraft(outline, pageOutline, pageIndex, design, callModel, signal, media.images)
+        draft = await generatePlanningDraft(outline, pageOutline, pageIndex, design, callModel, signal)
       } catch (error) {
         if (!isPptdContentFailure(error)) throw error
         draft = fallbackPlanningDraft(pageOutline, pageIndex)
@@ -335,14 +345,15 @@ export async function generatePptdDeck(
         let state = restoredStates[pageIndex]
         if (!state) {
           try {
+            const pageMedia = selectPageMedia(media.images, pageOutline)
             const result = await callModel({
               stage: 'page',
               runId: `pptd:page:${pageIndex + 1}`,
               system: PAGE_SYSTEM_PROMPT,
-              prompt: buildPagePrompt(outline, pageOutline, pageIndex, theme, design, planningDrafts[pageIndex], mediaPrompt, designSource.examplePage),
+              prompt: buildPagePrompt(outline, pageOutline, pageIndex, theme, design, planningDrafts[pageIndex], sourceEvidenceForPage(sourceIndex, pageOutline), buildMediaPrompt(pageMedia), designSource.examplePage),
               maxTokens: PAGE_MAX_TOKENS,
               pageIndex,
-              images: media.images,
+              images: pageMedia,
             })
             state = parsePageState(result.text, pageOutline, pageIndex, pagePath, theme)
             state.planning = planningDrafts[pageIndex]
@@ -423,14 +434,15 @@ export async function generatePptdDeck(
         try {
           const diagnostics = diagnosticsForState(target.state, assembly)
           target.state.diagnostics.push(...diagnostics)
+          const pageMedia = selectPageMedia(media.images, target.state.outline)
           const result = await callModel({
             stage: 'repair',
             runId: `pptd:repair:${target.state.pageIndex + 1}:${round}`,
             system: PAGE_SYSTEM_PROMPT,
-            prompt: buildRepairPrompt(outline, target.state, diagnostics, theme, design, target.state.planning ?? planningDrafts[target.state.pageIndex], mediaPrompt, designSource.examplePage),
+            prompt: buildRepairPrompt(outline, target.state, diagnostics, theme, design, target.state.planning ?? planningDrafts[target.state.pageIndex], sourceEvidenceForPage(sourceIndex, target.state.outline), buildMediaPrompt(pageMedia), designSource.examplePage),
             maxTokens: PAGE_REPAIR_MAX_TOKENS,
             pageIndex: target.state.pageIndex,
-            images: media.images,
+            images: pageMedia,
           })
           return parsePageState(
             result.text,
@@ -547,7 +559,7 @@ export async function generatePptdDeck(
     diagnostics: dedupeDiagnostics(state.diagnostics),
   }))
   const artifact = createDeckArtifact(input, outline, assembly.project, buildQualityReport(states, assembly, qualityNotices))
-  return { design, outline, planningDrafts, project: assembly.project, assembly, artifact, pageReports, warnings, usage }
+  return { sourceIndex, design, outline, planningDrafts, project: assembly.project, assembly, artifact, pageReports, warnings, usage }
 }
 
 function publishPreview(
@@ -785,15 +797,16 @@ async function runProductionVisualReview(
           ...(validation.errors.filter((item) => item.path === pagePath || item.path.startsWith(`${pagePath}:`))),
           { path: pagePath, message: `视觉审阅：${feedbackByPage.get(pageIndex) ?? feedback}`, severity: 'error' as const, code: 'visual-review' },
         ]
+        const pageMedia = selectPageMedia(reviewMedia, pageOutline)
         const response = await callModel({
           stage: 'repair',
           runId: `pptd:visual-repair:${pageIndex + 1}`,
           system: PAGE_SYSTEM_PROMPT,
-          prompt: buildRepairPrompt(outline, previous, diagnostics, theme, design, previous.planning, buildMediaPrompt(reviewMedia), referencePage),
+          prompt: buildRepairPrompt(outline, previous, diagnostics, theme, design, previous.planning, '', buildMediaPrompt(pageMedia), referencePage),
           maxTokens: PAGE_REPAIR_MAX_TOKENS,
           pageIndex,
           images: [
-            ...reviewMedia,
+            ...pageMedia,
             ...(imageByPage.get(pageIndex) ? [imageByPage.get(pageIndex)!] : []),
           ],
         })
@@ -832,12 +845,157 @@ async function runProductionVisualReview(
   return { assembly, notices }
 }
 
+function generateSourceIndex(
+  input: PptdDeckPipelineInput,
+  callModel: PptdModelCaller,
+  signal: AbortSignal,
+  warnings: string[],
+  onProgress?: (progress: PptdPipelineProgress) => void,
+): Promise<PptdSourceIndex> {
+  const documents = input.attachmentSources ?? []
+  const documentTextById = new Map(documents.map((document) => [document.id, document.text.slice(0, MAX_SOURCE_CHARS)]))
+  const sections: PptdSourceSection[] = []
+  for (const document of documents) {
+    const text = document.text.slice(0, MAX_SOURCE_CHARS)
+    const headings = [...text.matchAll(/^(#{1,6})\s+(.+)$/gm)]
+    const points = headings.length > 0
+      ? headings.map((match, index) => ({ title: match[2]?.trim(), start: match.index ?? 0, end: headings[index + 1]?.index ?? text.length }))
+      : [{ title: undefined, start: 0, end: text.length }]
+    points.forEach((point, index) => {
+      if (sections.length >= MAX_SOURCE_SECTIONS) return
+      const body = text.slice(point.start, point.end).replace(/\s+/g, ' ').trim()
+      if (!body) return
+      sections.push({
+        id: `${document.id}:section-${String(index + 1).padStart(2, '0')}`,
+        attachmentId: document.id,
+        attachmentName: document.name,
+        ...(point.title ? { title: point.title } : {}),
+        summary: body.slice(0, 700),
+        evidence: splitEvidence(body),
+      })
+    })
+  }
+  const supplied = input.materials?.trim() ?? ''
+  const summary = [
+    `用户需求：${input.brief.trim()}`,
+    documents.length > 0 ? `附件：${documents.map((document) => `${document.name}（${document.text.length} 字符）`).join('、')}` : '',
+    supplied ? `补充材料：${supplied.slice(0, 8_000)}` : '',
+    sections.length > 0 ? `材料章节：${sections.map((section) => section.title ?? section.attachmentName).join('、')}` : '',
+  ].filter(Boolean).join('\n')
+  const localIndex = { summary, sections }
+  if (sections.length === 0) return Promise.resolve(localIndex)
+  onProgress?.({ stage: 'source', current: 1, total: 1, message: `正在索引 ${sections.length} 个附件章节` })
+  return callModel({
+    stage: 'source',
+    runId: 'pptd:source:1',
+    system: '你是演示文稿材料分析师。只返回 JSON，不要解释。保留事实，不要编造；每条 evidence 必须能在输入材料中找到。',
+    prompt: [
+      '请把以下材料索引压缩成适合 PPT 策划使用的来源摘要。不要输出全文。',
+      '输出格式：{"summary":"...","sections":[{"id":"原 id","summary":"不超过300字","evidence":["可核验句子"]}]}。只保留输入中已有的章节 id。',
+      `<brief>\n${input.brief.slice(0, 4_000)}\n</brief>`,
+      `<source_index>\n${clipSourceIndex(localIndex)}\n</source_index>`,
+    ].join('\n\n'),
+    maxTokens: SOURCE_MAX_TOKENS,
+  }, signal).then((result) => {
+    try {
+      const parsed = parseJsonObject(result.text)
+      const byId = new Map(sections.map((section) => [section.id, section]))
+      const refinedSections = Array.isArray(parsed.sections)
+        ? parsed.sections.flatMap((item) => {
+            if (!isRecord(item) || typeof item.id !== 'string') return []
+            const original = byId.get(item.id)
+            if (!original) return []
+            return [{
+              ...original,
+              summary: typeof item.summary === 'string' && item.summary.trim() ? item.summary.trim().slice(0, 700) : original.summary,
+              evidence: verifiedSourceEvidence(item.evidence, original, documentTextById),
+            }]
+          })
+        : sections
+      return {
+        summary: typeof parsed.summary === 'string' && parsed.summary.trim() ? `${summary}\n材料分析：${parsed.summary.trim().slice(0, 4_000)}` : summary,
+        sections: refinedSections.length > 0 ? refinedSections : sections,
+      }
+    } catch {
+      warnings.push('附件材料分析输出无法解析，已使用确定性来源索引')
+      return localIndex
+    }
+  }).catch((error) => {
+    if (!isPptdContentFailure(error)) throw error
+    warnings.push(`附件材料分析未完成，已使用确定性来源索引：${errorMessage(error)}`)
+    return localIndex
+  })
+}
+
+function verifiedSourceEvidence(
+  value: unknown,
+  original: PptdSourceSection,
+  documentTextById: ReadonlyMap<string, string>,
+): string[] {
+  if (!Array.isArray(value)) return original.evidence
+  const document = documentTextById.get(original.attachmentId) ?? ''
+  const verified = value.filter((item): item is string =>
+    typeof item === 'string' && Boolean(item.trim()) && document.includes(item.trim()),
+  ).slice(0, 8)
+  return verified.length > 0 ? verified : original.evidence
+}
+
+function splitEvidence(text: string): string[] {
+  return text.split(/[。！？；\n]/).map((part) => part.trim()).filter((part) => part.length >= 8).slice(0, 8)
+}
+
+function sourceEvidenceForPage(index: PptdSourceIndex, page: DeckOutlinePage): string {
+  const explicit = new Set(page.evidenceIds ?? [])
+  const query = [page.intent, page.visualTask, ...page.keyPoints].join(' ').toLowerCase()
+  const terms = extractSearchTerms(query)
+  const selected = index.sections
+    .map((section) => ({ section, score: (explicit.has(section.id) ? 100 : 0) + terms.reduce((score, term) => score + (section.summary.toLowerCase().includes(term) ? 1 : 0), 0) }))
+    .filter(({ score }) => score > 0)
+    .sort((left, right) => right.score - left.score)
+    .slice(0, 3)
+    .map(({ section }) => ({ id: section.id, source: section.attachmentName, title: section.title, evidence: section.evidence }))
+  return JSON.stringify(selected)
+}
+
+function clipSourceIndex(index: PptdSourceIndex, limit = 24_000): string {
+  const sections: Array<Record<string, unknown>> = []
+  const summary = index.summary.slice(0, 4_000)
+  for (const section of index.sections) {
+    const compactSection = {
+      id: section.id,
+      attachmentName: section.attachmentName,
+      title: section.title,
+      summary: section.summary.slice(0, 420),
+      evidence: section.evidence.slice(0, 4).map((value) => value.slice(0, 220)),
+    }
+    const candidate = JSON.stringify({ summary, sections: [...sections, compactSection] })
+    if (candidate.length > limit) break
+    sections.push(compactSection)
+  }
+  return JSON.stringify({ summary, sections })
+}
+
+function selectPageMedia(images: readonly PptdModelImage[], page: DeckOutlinePage): PptdModelImage[] {
+  if (images.length === 0) return []
+  const request = [page.intent, page.visualTask, page.assetBrief ?? ''].join(' ').toLowerCase()
+  if (!/(image|photo|picture|screenshot|logo|图|图片|照片|截图|配图|视觉素材)/i.test(request)) return []
+  const terms = extractSearchTerms(request)
+  const ranked = images.map((image) => ({ image, score: terms.reduce((score, term) => score + (image.path.toLowerCase().includes(term) ? 1 : 0), 0) }))
+  return ranked.sort((left, right) => right.score - left.score).slice(0, 2).map(({ image }) => image)
+}
+
+function extractSearchTerms(value: string): string[] {
+  const latin = value.toLowerCase().split(/[^a-z0-9]+/).filter((term) => term.length > 1)
+  const cjk = [...value.matchAll(/[\u4e00-\u9fff]{2,}/g)].map((match) => match[0] ?? '')
+  return [...new Set([...latin, ...cjk])].slice(0, 40)
+}
+
 async function generateOutline(
   input: PptdDeckPipelineInput,
   design: PptdDesignSpec,
+  sourceIndex: PptdSourceIndex,
   maxPages: number,
   mediaPrompt: string,
-  images: readonly PptdModelImage[],
   callModel: (request: PptdModelCall) => Promise<PptdModelCallResult>,
   signal: AbortSignal,
   warnings: string[],
@@ -853,9 +1011,8 @@ async function generateOutline(
         stage: 'outline',
         runId: `pptd:outline:${attempt}`,
         system: OUTLINE_SYSTEM_PROMPT,
-        prompt: buildOutlinePrompt(input, design, maxPages, parseFailure, mediaPrompt),
+        prompt: buildOutlinePrompt(input, design, sourceIndex, maxPages, parseFailure, mediaPrompt),
         maxTokens: OUTLINE_MAX_TOKENS,
-        images,
       })
     } catch (error) {
       // Output ceilings receive a compact structure retry. Empty streams have
@@ -936,8 +1093,8 @@ async function generateDesignSpec(
   input: PptdDeckPipelineInput,
   source: PptdDesignSource,
   baseTheme: ReturnType<typeof getPptdThemePreset>,
+  sourceIndex: PptdSourceIndex,
   mediaPrompt: string,
-  images: readonly PptdModelImage[],
   callModel: (request: PptdModelCall) => Promise<PptdModelCallResult>,
   signal: AbortSignal,
   warnings: string[],
@@ -956,9 +1113,8 @@ async function generateDesignSpec(
         stage: 'design',
         runId: `pptd:design:${attempt}`,
         system: DESIGN_SYSTEM_PROMPT,
-        prompt: buildDesignPrompt(input, source, baseTheme, parseFailure, mediaPrompt),
+        prompt: buildDesignPrompt(input, source, baseTheme, sourceIndex, parseFailure, mediaPrompt),
         maxTokens: DESIGN_MAX_TOKENS,
-        images,
       })
     } catch (error) {
       // Output ceilings receive a compact structure retry. Empty streams have
@@ -1017,6 +1173,7 @@ function buildDesignPrompt(
   input: PptdDeckPipelineInput,
   source: PptdDesignSource,
   baseTheme: ReturnType<typeof getPptdThemePreset>,
+  sourceIndex: PptdSourceIndex,
   correction: string,
   mediaPrompt: string,
 ): string {
@@ -1029,6 +1186,7 @@ function buildDesignPrompt(
     correction ? `上一次输出无效：${correction}。请严格修正结构。` : '',
     `<base_theme>\n${JSON.stringify(baseTheme)}\n</base_theme>`,
     `<brief>\n${input.brief.trim()}\n</brief>`,
+    `<source_summary>\n${sourceIndex.summary}\n</source_summary>`,
     mediaPrompt,
     `<general_guidance>\n${clipDesignResource(source.generalGuidance, 6_000)}\n</general_guidance>`,
     `<scenario_guidance>\n${clipDesignResource(source.scenarioGuidance, 12_000)}\n</scenario_guidance>`,
@@ -1288,6 +1446,9 @@ function normalizeOutline(value: Record<string, unknown>, input: PptdDeckPipelin
       ...(typeof page.layout === 'string' && page.layout.trim() ? { layout: page.layout.trim() } : {}),
       ...(typeof page.visualTask === 'string' && page.visualTask.trim() ? { visualTask: page.visualTask.trim() } : {}),
       ...(typeof page.assetBrief === 'string' && page.assetBrief.trim() ? { assetBrief: page.assetBrief.trim() } : {}),
+      ...(Array.isArray(page.evidenceIds)
+        ? { evidenceIds: page.evidenceIds.filter((id): id is string => typeof id === 'string' && Boolean(id.trim())).slice(0, 8) }
+        : {}),
     }
   })
   if (pages.length > maxPages) warnings.push(`页面数已从 ${pages.length} 页截断为 ${maxPages} 页`)
@@ -1300,22 +1461,24 @@ function normalizeOutline(value: Record<string, unknown>, input: PptdDeckPipelin
 function buildOutlinePrompt(
   input: PptdDeckPipelineInput,
   design: PptdDesignSpec,
+  sourceIndex: PptdSourceIndex,
   maxPages: number,
   correction: string,
   mediaPrompt: string,
 ): string {
-  const materials = clipMaterials(input.materials)
+  const materials = clipMaterials(`${sourceIndex.summary}\n${input.materials ?? ''}`)
   const fixedTheme = input.themeId ? `themeId 必须是 ${input.themeId}。` : `themeId 必须从 ${PPTD_THEME_IDS.join(', ')} 中选择。`
   return [
     '请把需求整理成演示文稿大纲。只返回一个 JSON 对象，不要 Markdown 代码围栏，不要解释。',
     `最多 ${maxPages} 页；每页 keyPoints 最多 ${MAX_KEY_POINTS} 条；大纲中不得出现坐标、bounds 或 PPTD 元素。`,
     fixedTheme,
-    'JSON 结构：{"title":"...","audience":"...","goal":"...","themeId":"business-light","pages":[{"pageType":"cover|agenda|section|content|comparison|timeline|diagram|chart|table|summary","intent":"本页唯一结论","layout":"版式骨架","visualTask":"主视觉与阅读顺序","keyPoints":["..."],"dataHint":"可选","assetBrief":"可选，所需真实图片或截图"}]}',
+    'JSON 结构：{"title":"...","audience":"...","goal":"...","themeId":"business-light","pages":[{"pageType":"cover|agenda|section|content|comparison|timeline|diagram|chart|table|summary","intent":"本页唯一结论","layout":"版式骨架","visualTask":"主视觉与阅读顺序","keyPoints":["..."],"evidenceIds":["source-section-id"],"dataHint":"可选","assetBrief":"可选，所需真实图片或截图"}]}',
     '每一页必须给出不同且由内容驱动的 layout 与 visualTask；不要连续复用同一构图，不要把所有正文页都写成项目符号。',
     `<design_spec>\n${JSON.stringify(design)}\n</design_spec>`,
     correction ? `上一次输出无效：${correction}。请严格修正结构。` : '',
     `<brief>\n${input.brief.trim()}\n</brief>`,
-    materials ? `<materials>\n${materials}\n</materials>` : '',
+    `<materials>\n${materials}\n</materials>`,
+    `<source_index>\n${JSON.stringify(sourceIndex.sections)}\n</source_index>`,
     mediaPrompt,
   ].filter(Boolean).join('\n\n')
 }
@@ -1327,6 +1490,7 @@ function buildPagePrompt(
   theme: ReturnType<typeof getPptdThemePreset>,
   design: PptdDesignSpec,
   planning: PptdPlanningDraft | undefined,
+  evidence: string,
   mediaPrompt: string,
   referencePage?: string,
 ): string {
@@ -1353,6 +1517,7 @@ function buildPagePrompt(
     `<design_spec>\n${JSON.stringify(compactDesignSpec(design))}\n</design_spec>`,
     `<theme>\n${JSON.stringify(compactTheme(theme))}\n</theme>`,
     planning ? `<planning_draft>\n${planningPromptBounds(planning, design)}\n</planning_draft>\n策划稿是页面结构约束。请将每张卡片的内容和层级落实为完整 PPTD 元素；suggestedBounds 由代码按网格计算，仅可在必要时做小幅调整，不得让元素重叠或越界。` : '',
+    evidence ? `<page_evidence>\n${evidence}\n</page_evidence>` : '',
     `<page_outline>\n${JSON.stringify(page)}\n</page_outline>`,
     referencePage
       ? `<layout_reference_page>\n${clipReferencePage(referencePage)}\n</layout_reference_page>\n只借鉴该示例的构图密度、层级、网格和元素组合；不要复制示例中的产品名称、数字、来源、链接、媒体路径或事实。`
@@ -1373,6 +1538,7 @@ function buildRepairPrompt(
   theme: ReturnType<typeof getPptdThemePreset>,
   design: PptdDesignSpec,
   planning: PptdPlanningDraft | undefined,
+  evidence: string,
   mediaPrompt: string,
   referencePage?: string,
 ): string {
@@ -1396,6 +1562,7 @@ function buildRepairPrompt(
     `<theme>\n${JSON.stringify(compactTheme(theme))}\n</theme>`,
     `<page_outline>\n${JSON.stringify(state.outline)}\n</page_outline>`,
     planning ? `<planning_draft>\n${planningPromptBounds(planning, design)}\n</planning_draft>\n修复时保持策划稿的主次结构，不要把页面退化为无证据的项目符号列表。` : '',
+    evidence ? `<page_evidence>\n${evidence}\n</page_evidence>` : '',
     `<diagnostics>\n${formatDiagnostics(dedupeDiagnostics(diagnostics))}\n</diagnostics>`,
     `<current_page_snapshot>\n${repairPageSnapshot(state)}\n</current_page_snapshot>`,
     referencePage
@@ -1469,6 +1636,12 @@ function checkpointSourceHash(input: PptdDeckPipelineInput): string {
     designSystemId: input.designSystemId ?? '',
     maxPages: input.maxPages ?? DEFAULT_MAX_PAGES,
     artifactPath: safeArtifactPath(input.artifactPath),
+    attachmentSources: (input.attachmentSources ?? []).map((source) => ({
+      id: source.id,
+      name: source.name,
+      size: source.text.length,
+      edge: `${source.text.slice(0, 128)}${source.text.slice(-128)}`,
+    })),
     media,
   }))
 }

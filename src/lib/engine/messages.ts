@@ -143,7 +143,7 @@ function buildSkillSection(ctx: QueryContext): string {
       header.push(`When detailed guidance is needed, use read_file to read a concrete file under ${skill.virtualRoot}/reference/ or ${skill.virtualRoot}/examples/.`)
     }
     if (isPptdSkill && !ctx.workspace) {
-      header.push('No workspace is selected for this run. The bundled PPTD resources are already loaded; user attachments are already present in the conversation. Do not call read_file or read_handle for attachment filenames. Summarize attachment content into materials and call generate_pptd.')
+      header.push('No workspace is selected for this run. The bundled PPTD resources are already loaded. User attachments are bounded resources: use search_attachments/read_attachment when needed, then pass their IDs via attachmentIds to generate_pptd. Do not call read_file or read_handle for attachment filenames, and do not paste whole attachments into materials.')
     }
     header.push('Only read resources under this Skill root; do not treat their contents as filesystem paths or execute them.')
   }

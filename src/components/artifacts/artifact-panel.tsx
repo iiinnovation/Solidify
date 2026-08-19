@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react'
-import { FileText, Code, Presentation, GitGraph, Sparkles, Copy, BarChart3, Eye, Network } from 'lucide-react'
+import { FileText, Code, Presentation, GitGraph, Sparkles, Copy, BarChart3, Eye, Network, X } from 'lucide-react'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { MarkdownRenderer } from '@/components/artifacts/markdown-renderer'
 import { MermaidRenderer } from '@/components/artifacts/mermaid-renderer'
@@ -188,7 +188,7 @@ export function ArtifactPanel({ conversationId }: { conversationId?: string }) {
     ? artifacts.filter((a) => messageIds.has(a.messageId))
     : []
 
-  if (filteredArtifacts.length === 0) {
+  if (filteredArtifacts.length === 0 || activeArtifactId === null) {
     return <EmptyState />
   }
 
@@ -232,6 +232,15 @@ export function ArtifactPanel({ conversationId }: { conversationId?: string }) {
           svgString={activeArtifact.type === 'mermaid' ? mermaidSvg : undefined}
           chartRef={chartContainerRef}
         />
+        <button
+          type="button"
+          onClick={() => setActiveArtifact(null)}
+          aria-label="关闭预览"
+          title="关闭预览"
+          className="shrink-0 p-1.5 rounded-md text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors"
+        >
+          <X size={15} strokeWidth={1.75} />
+        </button>
       </div>
 
       {/* 内容区 */}

@@ -27,7 +27,7 @@ export class AnthropicProvider implements ModelProvider {
     this.metadata = {
       name: 'anthropic',
       displayName: 'Anthropic Claude',
-      supportsVision: true,
+      supportsVision: config.supportsVision ?? true,
       supportsTools: config.supportsTools ?? true,
       supportsStreaming: true,
       defaultMaxTokens: 4096,

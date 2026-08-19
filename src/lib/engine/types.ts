@@ -13,6 +13,7 @@ import type { Settings, PermissionMap, Platform } from '../harness/types'
 import type { ConfirmationPrompt } from '../harness/policy'
 import type { ApprovalOutcome } from '../harness/approval'
 import type { TaskTreeBudget } from './sub-agent/types'
+import type { AttachmentResource } from '../attachments/types'
 
 // ============================================================================
 // Query Context
@@ -74,6 +75,8 @@ export interface QueryContext {
   readonly skillRegistry?: SkillRegistryApi
   /** Trusted image attachments available to the PPTD generator for this run. */
   readonly pptdMedia?: Readonly<Record<string, string | Uint8Array>>
+  /** User attachments available to read-only attachment tools and PPTD. */
+  readonly attachments?: readonly AttachmentResource[]
   readonly memory: MemoryState
   readonly model: ModelConfig
   readonly limits: RunLimits

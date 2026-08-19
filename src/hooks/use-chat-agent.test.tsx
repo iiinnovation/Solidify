@@ -9,6 +9,7 @@ import { useKnowledgeEnhancementStore } from '@/stores/knowledge-store'
 import { useWorkspaceStore } from '@/stores/workspace-store'
 import { useDocumentStore } from '@/stores/document-store'
 import { composerDraftKey, useUIStore } from '@/stores/ui-store'
+import { saveAttachmentMedia } from '@/lib/attachment-media'
 
 const mocks = vi.hoisted(() => ({
   agentLoop: true,
@@ -634,5 +635,202 @@ describe('useChat agent loop switch', () => {
       content: 'retry completed',
       agentRun: { status: 'completed' },
     })
+  })
+
+  it('persists attachment extracted text and restores it to composer draft on recall', async () => {
+    useChatStore.setState({
+      conversations: [{ id: 'conv-att-recall', title: 'Att recall', createdAt: 1, messages: [] }],
+      artifacts: [],
+      activeArtifactId: null,
+    })
+
+    mocks.runQuery.mockImplementation(async function* () {
+      yield { type: 'run.started', runId: 'run-att' }
+      yield { type: 'message.completed', content: 'received attachment' }
+      yield {
+        type: 'run.completed',
+        usage: { inputTokens: 5, outputTokens: 2, totalTokens: 7, turns: 1, toolCalls: 0 },
+      }
+    })
+
+    const { result } = renderHook(() => useChat('conv-att-recall'), { wrapper })
+
+    const testFile = new File(['# Document Heading\n\nDocument body content'], 'report.md', { type: 'text/markdown' })
+    await act(async () => {
+      await result.current.sendMessage('Please analyze this report', [{
+        name: 'report.md',
+        size: testFile.size,
+        file: testFile,
+      }])
+    })
+
+    const userMsg = useChatStore.getState().conversations[0].messages.find((m) => m.role === 'user')
+    expect(userMsg).toBeDefined()
+    expect(userMsg?.attachments).toHaveLength(1)
+    expect(userMsg?.attachments?.[0]).toMatchObject({
+      name: 'report.md',
+      extractedText: '# Document Heading\n\nDocument body content',
+      recoverable: true,
+    })
+
+    // Recall message
+    act(() => {
+      result.current.recallMessage(userMsg!.id)
+    })
+
+    const draft = useUIStore.getState().composerDrafts[composerDraftKey('conv-att-recall')]
+    expect(draft).toBeDefined()
+    expect(draft.input).toBe('Please analyze this report')
+    expect(draft.attachments).toEqual([expect.objectContaining({
+      name: 'report.md',
+      size: testFile.size,
+      extractedText: '# Document Heading\n\nDocument body content',
+      mediaUrl: undefined,
+      recoverable: true,
+    })])
+  })
+
+  it('reuses recalled attachment extractedText and mediaUrl when re-sending', async () => {
+    useChatStore.setState({
+      conversations: [{ id: 'conv-att-resend', title: 'Att resend', createdAt: 1, messages: [] }],
+      artifacts: [],
+      activeArtifactId: null,
+    })
+
+    mocks.runQuery.mockImplementation(async function* () {
+      yield { type: 'run.started', runId: 'run-att-resend' }
+      yield { type: 'message.completed', content: 'analysis done' }
+      yield {
+        type: 'run.completed',
+        usage: { inputTokens: 5, outputTokens: 2, totalTokens: 7, turns: 1, toolCalls: 0 },
+      }
+    })
+
+    const { result } = renderHook(() => useChat('conv-att-resend'), { wrapper })
+
+    // Simulate sending with recalled attachment (no File object, only extractedText and mediaUrl)
+    await act(async () => {
+      await result.current.sendMessage('Re-analyzing with recalled attachment', [{
+        name: 'recalled-image.png',
+        size: 1024,
+        extractedText: '[图片文件: recalled-image.png，需要 AI 视觉分析]',
+        mediaUrl: 'data:image/png;base64,fakeimagedata',
+      }])
+    })
+
+    expect(mocks.runQuery).toHaveBeenCalledOnce()
+    const queryContext = mocks.runQuery.mock.calls[0][0]
+    expect(queryContext.messages[0].content).toContain('<attachments>')
+    expect(queryContext.messages[0].content).toContain('id: ')
+    expect(queryContext.messages[0].content).not.toContain('## 附件内容')
+    expect(queryContext.messages[0].content).toContain('[图片文件: recalled-image.png，需要 AI 视觉分析]')
+    expect(queryContext.pptdMedia).toMatchObject({
+      'media/attachment-01-recalled-image.png': 'data:image/png;base64,fakeimagedata',
+    })
+
+    const savedUserMsg = useChatStore.getState().conversations[0].messages.find((m) => m.role === 'user')
+    expect(savedUserMsg?.attachments?.[0]).toMatchObject({
+      name: 'recalled-image.png',
+      size: 1024,
+      extractedText: '[图片文件: recalled-image.png，需要 AI 视觉分析]',
+      mediaUrl: 'data:image/png;base64,fakeimagedata',
+      recoverable: true,
+      mediaId: expect.any(String),
+    })
+  })
+
+  it('restores persisted image media by mediaId when re-sending', async () => {
+    useChatStore.setState({
+      conversations: [{ id: 'conv-media-id', title: 'Media id', createdAt: 1, messages: [] }],
+      artifacts: [],
+      activeArtifactId: null,
+    })
+    const mediaUrl = 'data:image/png;base64,persisted-image'
+    const mediaId = await saveAttachmentMedia(mediaUrl)
+    mocks.runQuery.mockImplementation(async function* () {
+      yield { type: 'run.started', runId: 'run-media-id' }
+      yield { type: 'message.completed', content: 'done' }
+      yield {
+        type: 'run.completed',
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, turns: 1, toolCalls: 0 },
+      }
+    })
+    const { result } = renderHook(() => useChat('conv-media-id'), { wrapper })
+
+    await act(async () => {
+      await result.current.sendMessage('Reuse image', [{
+        name: 'persisted.png',
+        size: 1024,
+        extractedText: '[图片文件: persisted.png，需要 AI 视觉分析]',
+        mediaId,
+        recoverable: true,
+      }])
+    })
+
+    expect(mocks.runQuery.mock.calls[0][0].pptdMedia).toEqual({
+      'media/attachment-01-persisted.png': mediaUrl,
+    })
+  })
+
+  it('rejects an attachment whose original content is no longer recoverable', async () => {
+    useChatStore.setState({
+      conversations: [{ id: 'conv-unrecoverable', title: 'Unavailable', createdAt: 1, messages: [] }],
+      artifacts: [],
+      activeArtifactId: null,
+    })
+    const { result } = renderHook(() => useChat('conv-unrecoverable'), { wrapper })
+
+    await act(async () => {
+      await result.current.sendMessage('Analyze the old file', [{
+        name: 'legacy.pdf',
+        size: 2048,
+        recoverable: false,
+      }])
+    })
+
+    expect(result.current.error?.message).toContain('legacy.pdf')
+    expect(mocks.runQuery).not.toHaveBeenCalled()
+    expect(useChatStore.getState().conversations[0].messages).toEqual([])
+  })
+
+  it('regenerates once with the original assistant skill context', async () => {
+    useChatStore.setState({
+      conversations: [{
+        id: 'conv-regenerate-skill',
+        title: 'Regenerate skill',
+        createdAt: 1,
+        messages: [
+          { id: 'user-skill', role: 'user', content: 'create a report', skill: { id: 'report', name: 'Report' } },
+          {
+            id: 'assistant-skill',
+            role: 'assistant',
+            content: 'first answer',
+            agentContext: {
+              providerId: 'provider-1',
+              skillId: 'report',
+              skillSystemPrompt: 'ORIGINAL REPORT INSTRUCTIONS',
+              skillSkipConfirmation: true,
+            },
+          },
+        ],
+      }],
+      artifacts: [],
+      activeArtifactId: null,
+    })
+    mocks.runQuery.mockImplementation(async function* () {
+      yield { type: 'run.started', runId: 'run-regenerate-skill' }
+      yield { type: 'message.completed', content: 'regenerated' }
+      yield {
+        type: 'run.completed',
+        usage: { inputTokens: 2, outputTokens: 2, totalTokens: 4, turns: 1, toolCalls: 0 },
+      }
+    })
+    const { result } = renderHook(() => useChat('conv-regenerate-skill'), { wrapper })
+
+    act(() => result.current.regenerate())
+
+    await waitFor(() => expect(mocks.runQuery).toHaveBeenCalledOnce())
+    await waitFor(() => expect(result.current.isStreaming).toBe(false))
+    expect(mocks.runQuery.mock.calls[0][0].skill?.content).toContain('ORIGINAL REPORT INSTRUCTIONS')
   })
 })
