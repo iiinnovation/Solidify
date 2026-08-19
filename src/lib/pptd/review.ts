@@ -1,6 +1,7 @@
 import { chartToSvg, getPptdChartSpec } from './chart'
 import type { PptdElement, PptdProject, PptdValidationResult } from './types'
 import { validatePptdProject } from './validate'
+import { pptdLineArrow, pptdLineGeometry } from './line'
 
 export interface PptdReviewImage {
   pageIndex: number
@@ -136,8 +137,17 @@ function svgElement(element: PptdProject['pages'][number]['elements'][number], p
   }
   if (element.elementType === 'line') {
     const stroke = record(element.stroke ?? element.border)
-    const geometry = lineGeometry(element)
-    return `<line x1="${geometry.x1}" y1="${geometry.y1}" x2="${geometry.x2}" y2="${geometry.y2}" stroke="${svgColor(stroke.color, '#000000')}" stroke-width="${number(stroke.width, 1)}" stroke-dasharray="${stroke.style === 'dashed' || stroke.style === 'dash' ? '6 4' : ''}" opacity="${opacity}"${transform}/>`
+    const geometry = pptdLineGeometry(element)
+    const points = geometry.points.map(([px, py]) => `${px},${py}`).join(' ')
+    const markerId = `pptd-review-arrow-${element.elementId.replace(/[^a-zA-Z0-9_-]/g, '-')}`
+    const arrow = pptdLineArrow(element, 'end')
+    const marker = arrow ? `<defs><marker id="${markerId}" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L8,4 L0,8 Z" fill="${svgColor(stroke.color, '#000000')}"/></marker></defs>` : ''
+    const first = geometry.points[0]
+    const last = geometry.points.at(-1)
+    const line = geometry.points.length === 2 && first && last
+      ? `<line x1="${first[0]}" y1="${first[1]}" x2="${last[0]}" y2="${last[1]}" stroke="${svgColor(stroke.color, '#000000')}" stroke-width="${number(stroke.width, 1)}" stroke-dasharray="${stroke.style === 'dashed' || stroke.style === 'dash' ? '6 4' : ''}"${arrow ? ` marker-end="url(#${markerId})"` : ''} opacity="${opacity}"${transform}/>`
+      : `<polyline points="${points}" fill="none" stroke="${svgColor(stroke.color, '#000000')}" stroke-width="${number(stroke.width, 1)}" stroke-dasharray="${stroke.style === 'dashed' || stroke.style === 'dash' ? '6 4' : ''}"${arrow ? ` marker-end="url(#${markerId})"` : ''} opacity="${opacity}"${transform}/>`
+    return `${marker}${line}`
   }
   if (element.elementType === 'shape') {
     const fill = record(element.fill)
@@ -244,22 +254,6 @@ function orderedElements(elements: readonly PptdElement[]): PptdElement[] {
     const z = number(left.element.zIndex, 0) - number(right.element.zIndex, 0)
     return z || left.index - right.index
   }).map(({ element }) => element)
-}
-function lineGeometry(element: PptdElement): { x1: number; y1: number; x2: number; y2: number } {
-  const [x, y, width, height] = element.bounds
-  const rawPoints = (element as Record<string, unknown>).points
-  const viewBox = Array.isArray(element.viewBox) && element.viewBox.length === 2
-    ? [number(element.viewBox[0], width), number(element.viewBox[1], height)]
-    : [100, 100]
-  if (typeof rawPoints === 'string') {
-    const points = rawPoints.trim().split(/\s+/).map((point) => point.split(',').map(Number))
-    const first = points[0]
-    const last = points.at(-1)
-    if (first?.length === 2 && last?.length === 2 && [...first, ...last].every(Number.isFinite)) {
-      return { x1: x + first[0] / viewBox[0] * width, y1: y + first[1] / viewBox[1] * height, x2: x + last[0] / viewBox[0] * width, y2: y + last[1] / viewBox[1] * height }
-    }
-  }
-  return { x1: x, y1: y, x2: x + width, y2: y + height }
 }
 function wrapSvgText(value: string, width: number, size: number): string[] {
   const maxCharacters = Math.max(1, Math.floor(width / Math.max(6, size * 0.58)))

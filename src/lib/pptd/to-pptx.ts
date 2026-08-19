@@ -5,6 +5,7 @@ import { chartPptxData, chartToSvg, getPptdChartSpec, isImagePptdChartType, isNa
 import { createPptdDegradationReport, type PptdDegradationReport } from './report'
 import { pptdMediaDataUrl } from './media'
 import { validatePptdProject } from './validate'
+import { pptdAbsoluteLinePoints, pptdLineArrow } from './line'
 
 export interface PptdExportResult { blob: Blob; degradations: string[]; report: PptdDegradationReport }
 
@@ -123,7 +124,24 @@ async function renderElement(slide: PptxGenJS.Slide, element: PptdElement, proje
   if (element.elementType === 'line') {
     const stroke = lineStroke(element)
     const lineColor = normalizeColor(stroke.color ?? '#000000', '#000000', (value) => degrade(`线条颜色 ${JSON.stringify(value)} 不是受支持的 hex 格式，已回退为 #000000`))
-    slide.addShape(presentation.ShapeType.line, { x, y, w, h, rotate: elementRotation(element), line: { color: lineColor, width: number(stroke.width, 1), transparency: opacityTransparency(element.opacity) } } as never)
+    const points = pptdAbsoluteLinePoints(element)
+    const hasExplicitPoints = Array.isArray((element as Record<string, unknown>).points)
+      || typeof (element as Record<string, unknown>).points === 'string'
+    const beginArrowType = pptxArrowType(pptdLineArrow(element, 'start'))
+    const endArrowType = pptxArrowType(pptdLineArrow(element, 'end'))
+    for (let index = 1; index < points.length; index++) {
+      const [startX, startY] = points[index - 1]
+      const [endX, endY] = points[index]
+      slide.addShape(presentation.ShapeType.line, {
+        x: startX / 96, y: startY / 96, w: (endX - startX) / 96, h: (endY - startY) / 96,
+        rotate: hasExplicitPoints ? undefined : elementRotation(element),
+        line: {
+          color: lineColor, width: number(stroke.width, 1), transparency: opacityTransparency(element.opacity),
+          beginArrowType: index === 1 ? beginArrowType : undefined,
+          endArrowType: index === points.length - 1 ? endArrowType : undefined,
+        },
+      } as never)
+    }
     return
   }
   if (element.elementType === 'table') {
@@ -286,6 +304,13 @@ function cellRecord(value: unknown): { text?: unknown; style?: Record<string, un
 
 function lineStroke(element: PptdElement): Record<string, unknown> {
   return record(element.stroke ?? element.border)
+}
+
+function pptxArrowType(value: string | undefined): 'none' | 'arrow' | 'diamond' | 'oval' | 'stealth' | 'triangle' | undefined {
+  if (!value || value === 'none') return undefined
+  return ['arrow', 'diamond', 'oval', 'stealth', 'triangle'].includes(value)
+    ? value as 'arrow' | 'diamond' | 'oval' | 'stealth' | 'triangle'
+    : 'triangle'
 }
 
 function orderedElements(elements: readonly PptdElement[]): PptdElement[] {

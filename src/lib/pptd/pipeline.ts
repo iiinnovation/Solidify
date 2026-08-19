@@ -1067,8 +1067,9 @@ function parsePageState(
 ): PageState {
   const attempts = (previous?.attempts ?? 0) + 1
   try {
+    const parsedPage = parseGeneratedPage(raw, pagePath, theme)
     return {
-      pageIndex, pagePath, outline, raw, page: parseGeneratedPage(raw, pagePath, theme),
+      pageIndex, pagePath, outline, raw, page: isDiagramOutlinePage(outline) ? { ...parsedPage, pageType: 'diagram' } : parsedPage,
       attempts, repaired: Boolean(previous), fallback: false,
       diagnostics: [...(previous?.diagnostics ?? [])],
     }
@@ -1179,7 +1180,7 @@ function repairTargets(states: PageState[], assembly: PptdAssemblyResult): Repai
 }
 
 function isRepairablePageWarning(code: string | undefined): boolean {
-  return code === 'composition-sparse' || code === 'hidden-element'
+  return code === 'composition-sparse' || code === 'hidden-element' || code?.startsWith('diagram-') === true
 }
 
 function diagnosticsForState(state: PageState, assembly: PptdAssemblyResult): PptdDiagnostic[] {
@@ -1265,7 +1266,7 @@ function buildOutlinePrompt(
     '请把需求整理成演示文稿大纲。只返回一个 JSON 对象，不要 Markdown 代码围栏，不要解释。',
     `最多 ${maxPages} 页；每页 keyPoints 最多 ${MAX_KEY_POINTS} 条；大纲中不得出现坐标、bounds 或 PPTD 元素。`,
     fixedTheme,
-    'JSON 结构：{"title":"...","audience":"...","goal":"...","themeId":"business-light","pages":[{"pageType":"cover|agenda|section|content|comparison|timeline|chart|table|summary","intent":"本页唯一结论","layout":"版式骨架","visualTask":"主视觉与阅读顺序","keyPoints":["..."],"dataHint":"可选","assetBrief":"可选，所需真实图片或截图"}]}',
+    'JSON 结构：{"title":"...","audience":"...","goal":"...","themeId":"business-light","pages":[{"pageType":"cover|agenda|section|content|comparison|timeline|diagram|chart|table|summary","intent":"本页唯一结论","layout":"版式骨架","visualTask":"主视觉与阅读顺序","keyPoints":["..."],"dataHint":"可选","assetBrief":"可选，所需真实图片或截图"}]}',
     '每一页必须给出不同且由内容驱动的 layout 与 visualTask；不要连续复用同一构图，不要把所有正文页都写成项目符号。',
     `<design_spec>\n${JSON.stringify(design)}\n</design_spec>`,
     correction ? `上一次输出无效：${correction}。请严格修正结构。` : '',
@@ -1296,6 +1297,8 @@ function buildPagePrompt(
     'text 元素格式示例：{elementId: title, elementType: text, bounds: [64,48,832,64], content: {text: "标题", fontSize: 32, color: "$text", bold: true}}。',
     '所有 content.text、label、title、value 等文本值必须用引号包裹；文本包含冒号、井号、美元符号或花括号时尤其如此，禁止裸写导致 YAML 解析失败。',
     '只有存在至少两条真实数值数据时才可使用 chart；SQL/组件映射、架构、流程、依赖和关系禁止使用 chart，必须用 shape、line、icon 与 text 表达。禁止生成只有坐标轴、空系列或全为 0 的图表。',
+    isDiagramOutlinePage(page) ? '这是流程/架构/关系图页面。必须使用 3-8 个清晰节点和有向连接线：节点使用不小于 120x44 的 shape，节点之间至少留 24px；连接线使用 points + viewBox 绘制水平/垂直正交折线，末端必须设置 endArrow: triangle，连接线放在节点之前（zIndex: 0），节点放在连接线之后（zIndex: 1），不得穿过第三个节点、不得交叉、不得使用斜线。每条连接线必须从一个节点边缘连接到另一个节点边缘。节点文字单独放在节点内部并保持可读。' : '',
+    isDiagramOutlinePage(page) ? '关系图页面禁止使用 chart、长段落、重叠卡片和裸文本箭头（如 ->、→）代替连接线；复杂架构请拆成 2-3 层或减少节点，不要把所有系统塞进一张图。' : '',
     '同页 text bounds 不得重叠。正文不小于 14pt，标题不小于 28pt。通过图表、表格、形状关系、细线和留白表达结构，禁止把 keyPoints 原样堆成大段项目符号。',
     '用页面结论所需的全部元素完成页面（通常 6-24 个）；不要删除表达层级、关系或证据所需的元素，也不要用冗余装饰消耗输出预算。',
     ['content', 'comparison', 'timeline', 'chart', 'table', 'summary'].includes(page.pageType)
@@ -1310,6 +1313,11 @@ function buildPagePrompt(
       : '',
     mediaPrompt,
   ].filter(Boolean).join('\n\n')
+}
+
+function isDiagramOutlinePage(page: DeckOutlinePage): boolean {
+  const value = [page.pageType, page.intent, page.layout, page.visualTask, ...page.keyPoints].join(' ').toLowerCase()
+  return /diagram|flow|process|architecture|sequence|dependency|pipeline|workflow|架构|流程|依赖|链路|组件映射|系统关系|数据流/.test(value)
 }
 
 function buildRepairPrompt(
@@ -1327,6 +1335,9 @@ function buildRepairPrompt(
     '沿用 Kimi PPTD 示例的紧凑 YAML：除 composition-sparse 之外，保留 current_page_snapshot 中全部 elementId、元素类型和视觉层级，只做诊断指出的最小修改；优先使用 style/token、内联 map/数组，不要把页面改写成简单项目符号页。',
     compositionRepair
       ? '本轮诊断是 composition-sparse，允许并且必须新增、删除、重排元素，重构为有证据结构的页面；不要为了保留全部 elementId 而维持原来的裸文本布局。正文页至少使用 6 个元素，并包含至少 1 个非文本元素。'
+      : '',
+    diagnostics.some((diagnostic) => diagnostic.code?.startsWith('diagram-'))
+      ? '本轮诊断发现关系图几何错误。允许并且必须重排节点和连接线：节点至少 120x44、间距至少 24px；连接线必须是带 points/viewBox 的水平或垂直正交折线，endArrow: triangle，zIndex 低于节点，起止点连接节点边缘，不穿过第三节点，不与其他连接线交叉。可以删除并重建错误连接线，不要保留不可读的旧几何。'
       : '',
     mediaPrompt
       ? '保持本页结论和关键内容，做最小必要修改。所有 bounds 必须位于 960x540 内，text 元素不得重叠。image 只能引用 media_catalog 中列出的本地路径。'

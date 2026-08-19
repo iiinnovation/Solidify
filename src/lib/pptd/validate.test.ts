@@ -71,6 +71,22 @@ describe('PPTD semantic validation gate', () => {
     expect(structured.warnings).not.toContainEqual(expect.objectContaining({ code: 'composition-sparse' }))
   })
 
+  it('flags unreadable process connectors instead of silently approving them', () => {
+    const result = validatePptdProject({
+      version: 'v2', title: 'Flow', size: [960, 540], pagePaths: ['pages/01.page'], media: {},
+      theme: { colors: { bg: '#ffffff' }, textStyles: {} },
+      pages: [{ pageType: 'diagram', elements: [
+        { elementId: 'a', elementType: 'shape', bounds: [80, 180, 160, 64], fill: { type: 'solid', color: '#E2E8F0' } },
+        { elementId: 'b', elementType: 'shape', bounds: [400, 180, 160, 64], fill: { type: 'solid', color: '#E2E8F0' } },
+        { elementId: 'c', elementType: 'shape', bounds: [260, 300, 160, 64], fill: { type: 'solid', color: '#E2E8F0' } },
+        { elementId: 'edge-a', elementType: 'line', bounds: [240, 210, 160, 130], points: '0,0 50,50 100,100' as unknown as unknown[], stroke: { color: '#334155', width: 2 } },
+        { elementId: 'edge-b', elementType: 'line', bounds: [560, 210, 160, 130], points: '0,0 100,100' as unknown as unknown[], stroke: { color: '#334155', width: 2 }, endArrow: 'triangle' },
+      ] }],
+    })
+    const codes = result.warnings.map((item) => item.code)
+    expect(codes).toEqual(expect.arrayContaining(['diagram-missing-arrow', 'diagram-diagonal-connector', 'diagram-unattached-connector']))
+  })
+
   it('never infers a token from parsed text and uses a realistic text capacity', () => {
     // Token detection belongs to the parser, which alone can tell `$$USD`
     // (a literal) from `$missing` (a real reference); see parse.test.ts.

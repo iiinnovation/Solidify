@@ -3,6 +3,7 @@ import { useLayoutEffect, useRef, useState, type CSSProperties, type MouseEvent 
 import type { PptdElement, PptdProject, PptdTextStyle } from './types'
 import { chartToSvg, getPptdChartSpec } from './chart'
 import { pptdMediaDataUrl } from './media'
+import { pptdLineArrow, pptdLineGeometry } from './line'
 
 export interface PptdRendererProps {
   project: PptdProject
@@ -114,8 +115,18 @@ function ImageElement({ element, project, style, onClick }: ElementRenderProps) 
 
 function LineElement({ element, style, onClick }: ElementRenderProps) {
   const lineStyle = lineStroke(element)
-  const geometry = lineGeometry(element)
-  return <svg style={style} onClick={onClick} viewBox={geometry.viewBox} preserveAspectRatio="none"><line x1={geometry.x1} y1={geometry.y1} x2={geometry.x2} y2={geometry.y2} stroke={color(lineStyle.color, '#000000')} strokeWidth={number(lineStyle.width, 1)} strokeDasharray={lineStyle.style === 'dashed' || lineStyle.style === 'dash' ? '6 4' : undefined} vectorEffect="non-scaling-stroke" /></svg>
+  const geometry = pptdLineGeometry(element)
+  const points = geometry.points.map(([x, y]) => `${x},${y}`).join(' ')
+  const markerId = `pptd-arrow-${element.elementId.replace(/[^a-zA-Z0-9_-]/g, '-')}`
+  const arrow = pptdLineArrow(element, 'end')
+  const first = geometry.points[0]
+  const last = geometry.points.at(-1)
+  return <svg style={{ ...style, overflow: 'visible' }} onClick={onClick} viewBox={`0 0 ${geometry.viewBox[0]} ${geometry.viewBox[1]}`} preserveAspectRatio="none">
+    {arrow && <defs><marker id={markerId} markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L8,4 L0,8 Z" fill={color(lineStyle.color, '#000000')} /></marker></defs>}
+    {geometry.points.length === 2 && first && last
+      ? <line x1={first[0]} y1={first[1]} x2={last[0]} y2={last[1]} stroke={color(lineStyle.color, '#000000')} strokeWidth={number(lineStyle.width, 1)} strokeDasharray={lineStyle.style === 'dashed' || lineStyle.style === 'dash' ? '6 4' : undefined} markerEnd={arrow ? `url(#${markerId})` : undefined} vectorEffect="non-scaling-stroke" />
+      : <polyline points={points} fill="none" stroke={color(lineStyle.color, '#000000')} strokeWidth={number(lineStyle.width, 1)} strokeDasharray={lineStyle.style === 'dashed' || lineStyle.style === 'dash' ? '6 4' : undefined} markerEnd={arrow ? `url(#${markerId})` : undefined} vectorEffect="non-scaling-stroke" />}
+  </svg>
 }
 
 function IconElement({ element, style, onClick }: ElementRenderProps) {
@@ -219,22 +230,6 @@ function cellRecord(value: unknown): { text?: unknown; style?: Record<string, un
 
 function lineStroke(element: PptdElement): Record<string, unknown> {
   return record(element.stroke ?? element.border)
-}
-
-function lineGeometry(element: PptdElement): { viewBox: string; x1: number; y1: number; x2: number; y2: number } {
-  const viewBox = Array.isArray(element.viewBox) && element.viewBox.length === 2
-    ? [number(element.viewBox[0], element.bounds[2]), number(element.viewBox[1], element.bounds[3])]
-    : [100, 100]
-  const rawPoints = (element as unknown as Record<string, unknown>).points
-  if (typeof rawPoints === 'string') {
-    const points = rawPoints.trim().split(/\s+/).map((point: string) => point.split(',').map(Number))
-    const first = points[0]
-    const last = points.at(-1)
-    if (first?.length === 2 && last?.length === 2 && [...first, ...last].every(Number.isFinite)) {
-      return { viewBox: `0 0 ${viewBox[0]} ${viewBox[1]}`, x1: first[0], y1: first[1], x2: last[0], y2: last[1] }
-    }
-  }
-  return { viewBox: `0 0 ${viewBox[0]} ${viewBox[1]}`, x1: 0, y1: 0, x2: viewBox[0], y2: viewBox[1] }
 }
 
 function normalizedRatios(value: unknown, expected: number): number[] {

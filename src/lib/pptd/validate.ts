@@ -1,5 +1,6 @@
 import type { PptdDiagnostic, PptdElement, PptdPage, PptdProject, PptdValidationResult } from './types'
 import { getPptdChartSpec, isImagePptdChartType, isNativePptdChartType } from './chart'
+import { pptdAbsoluteLinePoints, pptdLineArrow, pptdLineIsOrthogonal } from './line'
 
 export function validatePptdProject(project: PptdProject): PptdValidationResult {
   const errors: PptdDiagnostic[] = []
@@ -47,8 +48,108 @@ export function validatePptdProject(project: PptdProject): PptdValidationResult 
         }
       }
     }
+    checkDiagramGeometry(page, pagePath, warnings)
   })
   return { errors, warnings, valid: errors.length === 0 }
+}
+
+function checkDiagramGeometry(page: PptdPage, pagePath: string, warnings: PptdDiagnostic[]): void {
+  const lines = page.elements.filter((element) => element.elementType === 'line')
+  const nodes = page.elements.filter((element) => element.elementType === 'shape' && isDiagramNode(element))
+  const pageType = String(page.pageType ?? '').toLowerCase()
+  const diagramPage = /diagram|flow|process|architecture|sequence|dependency|pipeline|架构|流程|依赖|链路/.test(pageType)
+    || (lines.length >= 2 && nodes.length >= 3)
+  if (!diagramPage || lines.length === 0 || nodes.length < 2) return
+
+  const nodeOverlap = nodes.some((left, index) => nodes.slice(index + 1).some((right) => overlapArea(left, right) > Math.min(area(left), area(right)) * 0.08))
+  if (nodeOverlap) warnings.push(diagnostic(pagePath, '关系图节点互相重叠，阅读顺序和边界不可判定', 'diagram-node-overlap', 'warning'))
+
+  const absoluteLines = lines.map((line) => ({ line, points: pptdAbsoluteLinePoints(line) }))
+  const allHaveArrows = absoluteLines.every(({ line }) => Boolean(pptdLineArrow(line, 'end')))
+  if (!allHaveArrows) warnings.push(diagnostic(pagePath, '关系图连线缺少方向箭头，依赖或流程关系不可判定', 'diagram-missing-arrow', 'warning'))
+
+  for (const { line, points } of absoluteLines) {
+    if (!pprdLineIsOrthogonalSafe(line)) warnings.push(diagnostic(pagePath, `关系图连线 ${line.elementId} 使用斜线，容易穿过节点；请改为水平/垂直折线`, 'diagram-diagonal-connector', 'warning'))
+    const endpointNodes = nodes.filter((node) => pointInRect(points[0], node.bounds) || pointInRect(points.at(-1) ?? points[0], node.bounds))
+    const crossed = nodes.some((node) => !endpointNodes.includes(node) && polylineHitsRect(points, node.bounds))
+    if (crossed) warnings.push(diagnostic(pagePath, `关系图连线 ${line.elementId} 穿过其他节点`, 'diagram-line-through-node', 'warning'))
+    const attached = points.length >= 2 && [points[0], points.at(-1) as readonly [number, number]].every((point) => nodes.some((node) => nearRect(point, node.bounds, 18)))
+    if (!attached) warnings.push(diagnostic(pagePath, `关系图连线 ${line.elementId} 没有连接到两个节点`, 'diagram-unattached-connector', 'warning'))
+  }
+
+  for (let i = 0; i < absoluteLines.length; i++) {
+    for (let j = i + 1; j < absoluteLines.length; j++) {
+      if (polylinesCross(absoluteLines[i].points, absoluteLines[j].points)) {
+        warnings.push(diagnostic(pagePath, `关系图连线 ${absoluteLines[i].line.elementId} 与 ${absoluteLines[j].line.elementId} 相交`, 'diagram-crossing-connectors', 'warning'))
+      }
+    }
+  }
+}
+
+function isDiagramNode(element: PptdElement): boolean {
+  const [, , width, height] = element.bounds
+  return width >= 72 && height >= 28 && width * height < 500_000
+}
+
+function pprdLineIsOrthogonalSafe(element: PptdElement): boolean {
+  const points = (element as Record<string, unknown>).points
+  if (Array.isArray(points)) {
+    const normalized = points.flatMap((point) => Array.isArray(point) && point.length >= 2 ? [[Number(point[0]), Number(point[1])] as const] : [])
+    return normalized.length < 2 || pptdLineIsOrthogonal(normalized)
+  }
+  if (typeof points === 'string') {
+    const normalized = points.trim().split(/\s+/).map((point) => point.split(',').map(Number) as [number, number]).filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y))
+    return normalized.length < 2 || pptdLineIsOrthogonal(normalized)
+  }
+  return false
+}
+
+function polylineHitsRect(points: readonly (readonly [number, number])[], rect: readonly [number, number, number, number]): boolean {
+  if (points.length < 2) return false
+  for (let index = 1; index < points.length; index++) {
+    const [startX, startY] = points[index - 1]
+    const [endX, endY] = points[index]
+    for (let step = 1; step < 10; step++) {
+      const t = step / 10
+      if (pointInRect([startX + (endX - startX) * t, startY + (endY - startY) * t], rect)) return true
+    }
+  }
+  return false
+}
+
+function polylinesCross(first: readonly (readonly [number, number])[], second: readonly (readonly [number, number])[]): boolean {
+  for (let i = 1; i < first.length; i++) {
+    for (let j = 1; j < second.length; j++) {
+      if (segmentsCross(first[i - 1], first[i], second[j - 1], second[j])) return true
+    }
+  }
+  return false
+}
+
+function segmentsCross(a: readonly [number, number], b: readonly [number, number], c: readonly [number, number], d: readonly [number, number]): boolean {
+  const orient = (p: readonly [number, number], q: readonly [number, number], r: readonly [number, number]) => (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
+  const shared = distance(a, c) < 2 || distance(a, d) < 2 || distance(b, c) < 2 || distance(b, d) < 2
+  if (shared) return false
+  return orient(a, b, c) * orient(a, b, d) < 0 && orient(c, d, a) * orient(c, d, b) < 0
+}
+
+function pointInRect(point: readonly [number, number], rect: readonly [number, number, number, number]): boolean {
+  return point[0] > rect[0] + 2 && point[0] < rect[0] + rect[2] - 2 && point[1] > rect[1] + 2 && point[1] < rect[1] + rect[3] - 2
+}
+
+function nearRect(point: readonly [number, number], rect: readonly [number, number, number, number], tolerance: number): boolean {
+  return point[0] >= rect[0] - tolerance && point[0] <= rect[0] + rect[2] + tolerance && point[1] >= rect[1] - tolerance && point[1] <= rect[1] + rect[3] + tolerance
+}
+
+function area(element: PptdElement): number { return element.bounds[2] * element.bounds[3] }
+
+function overlapArea(left: PptdElement, right: PptdElement): number {
+  return Math.max(0, Math.min(left.bounds[0] + left.bounds[2], right.bounds[0] + right.bounds[2]) - Math.max(left.bounds[0], right.bounds[0]))
+    * Math.max(0, Math.min(left.bounds[1] + left.bounds[3], right.bounds[1] + right.bounds[3]) - Math.max(left.bounds[1], right.bounds[1]))
+}
+
+function distance(first: readonly [number, number], second: readonly [number, number]): number {
+  return Math.hypot(first[0] - second[0], first[1] - second[1])
 }
 
 function checkBounds(element: PptdElement, width: number, height: number, path: string, errors: PptdDiagnostic[]) {

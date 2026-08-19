@@ -148,4 +148,18 @@ describe('PptdRenderer', () => {
     expect(document.querySelector('svg line')?.getAttribute('stroke')).toBe('#123456')
     expect(document.querySelector('svg line')?.getAttribute('x2')).toBe('500')
   })
+
+  it('renders orthogonal connectors with arrowheads', () => {
+    const diagram: PptdProject = {
+      ...project,
+      pages: [{ pageType: 'diagram', elements: [{
+        elementId: 'edge', elementType: 'line', bounds: [100, 100, 300, 200],
+        viewBox: [300, 200], points: '0,20 150,20 150,180 300,180' as unknown as unknown[],
+        endArrow: 'triangle', stroke: { color: '#123456', width: 2 },
+      }] }],
+    }
+    render(<PptdRenderer project={diagram} />)
+    expect(document.querySelector('svg polyline')?.getAttribute('points')).toBe('0,20 150,20 150,180 300,180')
+    expect(document.querySelector('svg polyline')?.getAttribute('marker-end')).toContain('pptd-arrow-edge')
+  })
 })
