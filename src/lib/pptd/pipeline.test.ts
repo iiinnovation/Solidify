@@ -84,6 +84,52 @@ elements:
 `
 
 describe('PPTD layered generation pipeline', () => {
+  it('adds a planning draft before page YAML generation', async () => {
+    const calls: PptdModelCall[] = []
+    const planning = JSON.stringify({
+      pageType: 'content', layoutType: 'bento',
+      cards: [
+        { id: 'main', grid: { col: 0, row: 0, colSpan: 8, rowSpan: 3 }, type: 'text', priority: 'primary', content: { text: '核心结论' } },
+        { id: 'proof', grid: { col: 8, row: 0, colSpan: 4, rowSpan: 3 }, type: 'data', priority: 'secondary', content: { text: '证据' } },
+      ],
+    })
+    const result = await generatePptdDeck({ brief: '验证策划稿阶段' }, {
+      callModel: async (call) => {
+        calls.push(call)
+        if (call.stage === 'design') return { text: DESIGN }
+        if (call.stage === 'outline') return { text: JSON.stringify({
+          title: '策划稿', audience: '管理层', goal: '确认方案', themeId: 'business-light',
+          pages: [{ pageType: 'content', intent: '核心结论', keyPoints: ['证据'] }],
+        }) }
+        if (call.stage === 'planning') return { text: planning }
+        return { text: validPage('核心结论') }
+      },
+    })
+
+    expect(calls.map((call) => call.stage).slice(0, 4)).toEqual(['design', 'outline', 'planning', 'page'])
+    expect(calls.find((call) => call.stage === 'page')?.prompt).toContain('<planning_draft>')
+    expect(calls.find((call) => call.stage === 'page')?.prompt).toContain('suggestedBounds')
+    expect(result.planningDrafts[0].cards).toHaveLength(2)
+  })
+
+  it('falls back to a deterministic planning draft on content-only planning failure', async () => {
+    const result = await generatePptdDeck({ brief: '策划稿截断后继续交付' }, {
+      callModel: async (call) => {
+        if (call.stage === 'design') return { text: DESIGN }
+        if (call.stage === 'outline') return { text: JSON.stringify({
+          title: '策划稿降级', audience: '管理层', goal: '交付', themeId: 'business-light',
+          pages: [{ pageType: 'content', intent: '核心结论', keyPoints: ['证据'] }],
+        }) }
+        if (call.stage === 'planning') throw new Error('PPTD planning 输出达到 token 上限')
+        return { text: validPage('核心结论') }
+      },
+    })
+
+    expect(result.assembly.validation.valid).toBe(true)
+    expect(result.planningDrafts[0].cards[0].id).toBe('main-conclusion')
+    expect(result.warnings.some((warning) => warning.includes('策划稿生成失败'))).toBe(true)
+  })
+
   it('normalizes common model YAML boundary mistakes before validation', async () => {
     const arrayPage = `- elementId: title
   elementType: text
@@ -270,7 +316,7 @@ elements:
     expect(result.project.pages).toHaveLength(2)
     expect(result.assembly.validation.valid).toBe(true)
     expect(result.pageReports.map((page) => page.status)).toEqual(['generated', 'repaired'])
-    expect(result.usage.calls).toBe(6)
+    expect(result.usage.calls).toBe(8)
     expect(result.design.designSystemId).toBe('work/warm-jade-annual-report')
     expect(result.artifact.type).toBe('slides')
     expect(result.artifact.envelope.match(/<solidify-artifact/g)).toHaveLength(1)
@@ -456,7 +502,7 @@ elements:
         return { text: validPage('检查点结论') }
       },
     })
-    expect(firstCalls).toBe(3)
+    expect(firstCalls).toBe(4)
     expect([...files.keys()]).toEqual(expect.arrayContaining([
       expect.stringMatching(/\/deck\.pptd$/),
       expect.stringMatching(/\/pages\/01\.page$/),
@@ -666,7 +712,7 @@ elements:
       callModel: async (call) => {
         if (call.stage === 'design') return { text: DESIGN }
         if (call.stage === 'outline') return { text: OUTLINE }
-        pageCalls.push(call.pageIndex ?? -1)
+        if (call.stage === 'page') pageCalls.push(call.pageIndex ?? -1)
         return { text: validPage(`第 ${(call.pageIndex ?? 0) + 1} 页`) }
       },
     })

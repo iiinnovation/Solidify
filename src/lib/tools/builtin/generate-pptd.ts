@@ -40,7 +40,7 @@ export function createGeneratePptdTool(getParent: () => QueryContext): Tool<Gene
       'Generate one complete PPTD deck from a prepared brief and source materials.',
       'Use this exactly once after reading all relevant workspace files and references.',
       'When no workspace is selected, use the user attachments and conversation content already present in context; do not try to read attachment filenames with read_file or read_handle.',
-      'The tool performs outline generation, bounded parallel page generation, validation, targeted repair, and emits the final slides artifact directly.',
+      'The tool performs design direction, outline generation, per-page planning drafts, bounded parallel page generation, validation, targeted repair, and emits the final slides artifact directly.',
       'It includes an art-direction stage backed by the bundled open-kimi-ppt scenario guides, design systems, and reference pages.',
       'Do not generate page YAML yourself before or after calling it.',
     ].join(' '),
