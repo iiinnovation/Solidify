@@ -26,6 +26,8 @@ export interface PptdElement {
   elementId: string
   elementType: 'text' | 'shape' | 'image' | 'line' | 'icon' | 'table' | 'chart'
   bounds: PptdBounds
+  /** Optional semantic binding to a card from the PPTD planning draft. */
+  planningCardId?: string
   content?: Record<string, unknown>
   shapeName?: string
   fill?: Record<string, unknown>

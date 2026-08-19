@@ -4,6 +4,7 @@ import { SharedTaskTreeBudget } from '../engine/sub-agent/budget'
 import type { QueryContext } from '../engine/types'
 import { parsePptdArtifactContent, parsePptdArtifactContentDetailed } from './artifact'
 import { createPptdModelCaller, generatePptdDeck, runPptdDeckPipeline, type PptdModelCall } from './pipeline'
+import { bentoGridToBounds } from './bento-layout'
 
 const OUTLINE = JSON.stringify({
   title: '经营复盘',
@@ -163,6 +164,30 @@ describe('PPTD layered generation pipeline', () => {
     expect(calls.find((call) => call.stage === 'page')?.prompt).toContain('<planning_draft>')
     expect(calls.find((call) => call.stage === 'page')?.prompt).toContain('suggestedBounds')
     expect(result.planningDrafts[0].cards).toHaveLength(2)
+  })
+
+  it('enforces deterministic Bento regions for elements bound to planning cards', async () => {
+    const planning = JSON.stringify({
+      pageType: 'cover', layoutType: 'bento',
+      cards: [{ id: 'main', grid: { col: 0, row: 0, colSpan: 8, rowSpan: 3 }, type: 'text', priority: 'primary', content: { text: '结论' } }],
+    })
+    const result = await generatePptdDeck({ brief: '约束策划稿坐标' }, {
+      callModel: async (call) => {
+        if (call.stage === 'design') return { text: DESIGN }
+        if (call.stage === 'outline') return { text: JSON.stringify({
+          title: '坐标约束', audience: '管理层', goal: '验证', themeId: 'business-light',
+          pages: [{ pageType: 'cover', intent: '结论', keyPoints: ['结论'] }],
+        }) }
+        if (call.stage === 'planning') return { text: planning }
+        return { text: `pageType: cover\nelements:\n  - elementId: title\n    elementType: text\n    planningCardId: main\n    bounds: [0, 0, 960, 540]\n    content: {text: "结论", fontSize: 32, color: '$text'}` }
+      },
+    })
+    const region = bentoGridToBounds({ col: 0, row: 0, colSpan: 8, rowSpan: 3 }, { margin: 48, gutter: 16 })
+    const bounds = result.project.pages[0]?.elements[0]?.bounds
+    expect(bounds?.[0]).toBe(region.x)
+    expect(bounds?.[1]).toBe(region.y)
+    expect(bounds?.[2]).toBe(region.width)
+    expect(bounds?.[3]).toBe(region.height)
   })
 
   it('falls back to a deterministic planning draft on content-only planning failure', async () => {
