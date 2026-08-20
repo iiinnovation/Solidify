@@ -19,7 +19,7 @@ skip-confirmation: true
 
 ## 工作流
 
-1. 若已选择工作区，读取用户指定的工作区文件和必要素材，整理成自包含的 brief 与 materials；用户附件通过 `search_attachments` 定位、`read_attachment` 分段读取，禁止把全文复制进初始请求。调用 `generate_pptd` 时使用附件 manifest 中的 `attachmentIds`，materials 只放补充判断和必要摘录，不要按附件文件名调用 `read_file` 或 `read_handle`。不要自行生成页面 YAML。工作区内需要使用的 PNG/JPEG/GIF/WebP/SVG 图片路径通过 `mediaPaths` 传给工具；用户随消息上传的图片由运行时按资源引用提供。
+1. 若已选择工作区，读取用户指定的工作区文件和必要素材，整理成自包含的 brief 与 materials；用户附件通过 `search_attachments` 定位、`read_attachment` 分段读取，禁止把全文复制进初始请求。调用 `generate_pptd` 时始终显式传入 `attachmentIds`（无附件时传空数组），只能使用附件 manifest 中的 ID；materials 只放补充判断和必要摘录，不要按附件文件名调用 `read_file` 或 `read_handle`。不要自行生成页面 YAML。工作区内需要使用的 PNG/JPEG/GIF/WebP/SVG 图片路径通过 `mediaPaths` 传给工具；用户随消息上传的图片由运行时按资源引用提供。
 2. 根据任务判断演示场景。内置场景方法、设计系统和 Kimi 示例页会由 `generate_pptd` 自动加载，不要为这些 bundled 参考重复调用 `read_file`；用户点名设计系统时把相对标识（例如 `consulting/apricot-white-brief`）传给 `designSystemId`。
 3. 调用一次 `generate_pptd`。该工具内置 Art Director、大纲、逐页 Bento 策划稿、逐页生成、装配校验、定向修复和最终单一 `slides` artifact。策划稿使用 12×6 网格表达内容优先级与视觉层级；页面元素应使用策划稿中的 `planningCardId`，代码会把绑定元素确定性地限制在对应页面区域，跨卡片连接线可以不绑定。不要把远程图片 URL 写入 brief 或页面，图片只引用工具提供的本地 `media/...` 路径。
 4. 工具成功后不要复述、拆分或重新包装 deck；其 artifact 会直接进入聊天交付流。

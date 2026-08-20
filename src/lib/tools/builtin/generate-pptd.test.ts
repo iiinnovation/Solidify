@@ -65,6 +65,27 @@ describe('generate_pptd workspace media', () => {
     })
   })
 
+  it('requires and enumerates attachmentIds when the run has attachments', () => {
+    const context = parent({ attachments: [
+      { id: 'att-a', name: 'a.md', size: 3, text: 'A' },
+      { id: 'att-b', name: 'b.md', size: 3, text: 'B' },
+    ] })
+    const schema = createGeneratePptdTool(() => context).inputSchema
+    expect(schema.required).toEqual(['brief', 'attachmentIds'])
+    expect(schema.properties?.attachmentIds).toMatchObject({
+      description: expect.stringContaining('att-a (a.md)'),
+      items: { enum: ['att-a', 'att-b'] },
+    })
+  })
+
+  it('explains the available IDs when attachment selection is omitted', async () => {
+    const context = parent({ attachments: [{ id: 'att-a', name: 'a.md', size: 3, text: 'A' }] })
+    await expect(createGeneratePptdTool(() => context).execute(
+      { brief: 'deck' }, toolContext(context), new AbortController().signal,
+    )).rejects.toThrow('att-a (a.md)')
+    expect(mocks.runPptdDeckPipeline).not.toHaveBeenCalled()
+  })
+
   it('loads validated workspace images and preserves colliding attachment media', async () => {
     const context = parent({
       pptdMedia: { 'media/chart.png': 'data:image/png;base64,iVBORw0KGgo=' },

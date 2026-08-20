@@ -298,6 +298,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       // this run; the user can start a fresh run after adjusting the brief.
       const failedPptd = results.find((result) =>
         !result.success
+        && result.error?.kind !== 'invalid_input'
         && response.toolCalls.some((call) => call.id === result.callId && call.name === 'generate_pptd'),
       )
       if (failedPptd) {

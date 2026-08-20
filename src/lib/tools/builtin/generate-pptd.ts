@@ -5,6 +5,8 @@ import { runPptdDeckPipeline, type PptdDeckPipelineResult } from '../../pptd/pip
 import { PPTD_THEME_IDS, type PptdThemeId } from '../../pptd/theme-presets'
 import { readWorkspaceBytes, readWorkspaceFile, writeWorkspaceFile } from '@/lib/tauri'
 import { attachmentMediaPath } from '@/lib/attachment-media'
+import type { AttachmentResource } from '../../attachments/types'
+import type { JSONSchema } from '../../types/json-schema'
 import type { Tool } from '../types'
 
 export interface GeneratePptdInput {
@@ -46,24 +48,12 @@ export function createGeneratePptdTool(getParent: () => QueryContext): Tool<Gene
       'It includes an art-direction stage backed by the bundled open-kimi-ppt scenario guides, design systems, and reference pages.',
       'Do not generate page YAML yourself before or after calling it.',
     ].join(' '),
-    inputSchema: {
-      type: 'object',
-      additionalProperties: false,
-      required: ['brief'],
-      properties: {
-        brief: { type: 'string', minLength: 1, maxLength: 20_000 },
-        materials: { type: 'string', maxLength: 20_000 },
-        attachmentIds: { type: 'array', items: { type: 'string', minLength: 1 }, maxItems: 20 },
-        title: { type: 'string', minLength: 1, maxLength: 160 },
-        themeId: { type: 'string', enum: [...PPTD_THEME_IDS] },
-        designSystemId: { type: 'string', enum: [...PPTD_DESIGN_SYSTEM_IDS] },
-        mediaPaths: {
-          type: 'array', maxItems: 20,
-          items: { type: 'string', minLength: 1, maxLength: 240 },
-        },
-        maxPages: { type: 'integer', minimum: 1, maximum: 24 },
-        artifactPath: { type: 'string', minLength: 1, maxLength: 240 },
-      },
+    // The schema is resolved after the PPTD context is installed. When the
+    // run has attachments, requiring attachmentIds here prevents a model from
+    // producing a syntactically valid but semantically unsafe call that only
+    // fails inside execute().
+    get inputSchema() {
+      return buildGeneratePptdInputSchema(getParent().attachments)
     },
     // With a selected desktop workspace the tool persists resumable checkpoints
     // under .solidify; the final user-facing artifact is still materialized by chat.
@@ -82,7 +72,8 @@ export function createGeneratePptdTool(getParent: () => QueryContext): Tool<Gene
         const availableAttachmentIds = new Set((parent.attachments ?? []).map((attachment) => attachment.id))
         const requestedAttachmentIds = [...new Set(input.attachmentIds ?? [])]
         if ((parent.attachments?.length ?? 0) > 0 && input.attachmentIds === undefined) {
-          throw new Error('当前运行存在附件；请先使用附件 manifest 中的 ID，并通过 attachmentIds 显式选择来源。')
+          const available = (parent.attachments ?? []).map((attachment) => `${attachment.id} (${attachment.name})`).join(', ')
+          throw new Error(`当前运行存在附件；请通过 attachmentIds 显式选择来源。可用附件：${available}`)
         }
         const missingAttachmentIds = requestedAttachmentIds.filter((id) => !availableAttachmentIds.has(id))
         if (missingAttachmentIds.length > 0) {
@@ -166,6 +157,38 @@ export function createGeneratePptdTool(getParent: () => QueryContext): Tool<Gene
     },
     renderCall(input) {
       return `生成 PPTD 演示文稿${input.title ? `：${input.title}` : ''}`
+    },
+  }
+}
+
+function buildGeneratePptdInputSchema(attachments?: readonly AttachmentResource[]): JSONSchema {
+  const available = attachments ?? []
+  const ids = available.map((attachment) => attachment.id)
+  const attachmentDescription = available.length > 0
+    ? `Select source attachment IDs explicitly. Available IDs: ${available.map((attachment) => `${attachment.id} (${attachment.name})`).join(', ')}`
+    : 'Select source attachment IDs explicitly when using uploaded files; use [] when no attachment is needed.'
+  return {
+    type: 'object',
+    additionalProperties: false,
+    required: available.length > 0 ? ['brief', 'attachmentIds'] : ['brief'],
+    properties: {
+      brief: { type: 'string', minLength: 1, maxLength: 20_000 },
+      materials: { type: 'string', maxLength: 20_000 },
+      attachmentIds: {
+        type: 'array',
+        items: { type: 'string', minLength: 1, ...(ids.length > 0 ? { enum: ids } : {}) },
+        maxItems: 20,
+        description: attachmentDescription,
+      },
+      title: { type: 'string', minLength: 1, maxLength: 160 },
+      themeId: { type: 'string', enum: [...PPTD_THEME_IDS] },
+      designSystemId: { type: 'string', enum: [...PPTD_DESIGN_SYSTEM_IDS] },
+      mediaPaths: {
+        type: 'array', maxItems: 20,
+        items: { type: 'string', minLength: 1, maxLength: 240 },
+      },
+      maxPages: { type: 'integer', minimum: 1, maximum: 24 },
+      artifactPath: { type: 'string', minLength: 1, maxLength: 240 },
     },
   }
 }

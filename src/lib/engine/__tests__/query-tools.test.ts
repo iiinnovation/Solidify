@@ -177,6 +177,50 @@ describe('runQuery tool execution (M1-14/15)', () => {
     })
   })
 
+  it('lets the model correct invalid generate_pptd arguments before the pipeline starts', async () => {
+    const provider = makeMockProvider([
+      [
+        { type: 'tool_call_start', id: 'deck-invalid', name: 'generate_pptd' },
+        { type: 'tool_call_end', id: 'deck-invalid', input: { brief: 'deck' } },
+        { type: 'message_end', stopReason: 'tool_use' },
+      ],
+      [
+        { type: 'tool_call_start', id: 'deck-valid', name: 'generate_pptd' },
+        { type: 'tool_call_end', id: 'deck-valid', input: { brief: 'deck', attachmentIds: ['att-a'] } },
+        { type: 'message_end', stopReason: 'tool_use' },
+      ],
+      finalTurn,
+    ])
+    let executions = 0
+    const generator: Tool = {
+      name: 'generate_pptd', description: 'generate',
+      inputSchema: {
+        type: 'object', required: ['brief', 'attachmentIds'],
+        properties: {
+          brief: { type: 'string' },
+          attachmentIds: { type: 'array', items: { type: 'string', enum: ['att-a'] } },
+        },
+      },
+      readOnly: true, concurrencySafe: false, destructive: false,
+      requiresConfirmation: false, availability: 'always', permissions: [],
+      async execute(): Promise<ToolResult> {
+        executions++
+        return { success: true, content: 'generated' }
+      },
+      renderCall: () => 'generate',
+    }
+    const events: QueryEvent[] = []
+    for await (const event of runQuery(makeCtx(provider, [generator]))) events.push(event)
+
+    expect(executions).toBe(1)
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'tool.completed',
+      callId: 'deck-invalid',
+      result: expect.objectContaining({ error: expect.objectContaining({ kind: 'invalid_input' }) }),
+    }))
+    expect(events.at(-1)?.type).toBe('run.completed')
+  })
+
   it('feeds capture results back as an image in the next model turn', async () => {
     const requests: CompletionRequest[] = []
     let turn = 0
