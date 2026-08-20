@@ -120,10 +120,14 @@ VITE_RAGFLOW_API_KEY=ragflow-...
 ```
 
 部署 `chat` Edge Function 时会强制校验 Supabase 登录态，并且只代理受信任的模型主机。
-默认允许 OpenAI、Anthropic 和 DeepSeek；如需自定义兼容服务，请通过 Edge Secret 增加精确主机名：
+默认允许 OpenAI、Anthropic、DeepSeek、Qwen（DashScope）、GLM（智谱）和 Moonshot 的官方公共主机。
+业务空间专属域名及其他自定义兼容服务需要通过 Edge Secret 增加精确主机名。
+
+必须先设置 Secret，再部署函数，避免新代码生效后、自定义 Provider 白名单尚未生效的中断窗口：
 
 ```bash
 supabase secrets set MODEL_PROXY_ALLOWED_HOSTS=api.example.com,models.example.org
+supabase functions deploy chat
 ```
 
 ### 开发模式

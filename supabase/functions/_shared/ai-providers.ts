@@ -1,3 +1,5 @@
+import { buildNativeRelayRequestInit } from './model-relay-policy.ts'
+
 export type AIModel =
   | 'deepseek-chat'
   | 'deepseek-reasoner'
@@ -223,56 +225,6 @@ export async function streamChatCustom(
   })
 }
 
-const NATIVE_BODY_KEYS: Record<ApiFormat, readonly string[]> = {
-  openai: [
-    'messages',
-    'tools',
-    'temperature',
-    'max_tokens',
-    'stream',
-    'stream_options',
-  ],
-  anthropic: [
-    'system',
-    'messages',
-    'tools',
-    'max_tokens',
-    'temperature',
-    'top_p',
-    'stream',
-  ],
-}
-
-/**
- * Rebuild the SDK body from the subset used by Solidify's adapters. Model and
- * stream semantics are server-owned, so an authenticated client cannot turn
- * this endpoint into an arbitrary JSON relay.
- */
-export function buildNativeRequestBody(
-  nativeBody: Record<string, unknown>,
-  modelId: string,
-  format: ApiFormat,
-): Record<string, unknown> {
-  if (format !== 'openai' && format !== 'anthropic') throw new Error('不支持的 Provider 格式')
-  if (!Array.isArray(nativeBody.messages) || nativeBody.messages.length === 0) {
-    throw new Error('模型请求必须包含非空 messages 数组')
-  }
-  if (nativeBody.tools !== undefined && !Array.isArray(nativeBody.tools)) {
-    throw new Error('模型请求的 tools 必须是数组')
-  }
-  if (nativeBody.stream !== undefined && typeof nativeBody.stream !== 'boolean') {
-    throw new Error('模型请求的 stream 必须是布尔值')
-  }
-
-  const body: Record<string, unknown> = {}
-  for (const key of NATIVE_BODY_KEYS[format]) {
-    if (Object.hasOwn(nativeBody, key)) body[key] = nativeBody[key]
-  }
-  body.model = modelId
-  body.stream = nativeBody.stream === true
-  return body
-}
-
 /** Forward a validated provider SDK request without flattening its message shape. */
 export function streamNativeCustom(
   targetUrl: string,
@@ -280,12 +232,5 @@ export function streamNativeCustom(
   format: ApiFormat,
   body: Record<string, unknown>,
 ): Promise<Response> {
-  return fetch(targetUrl, {
-    method: 'POST',
-    redirect: 'manual',
-    headers: format === 'openai'
-      ? { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }
-      : { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
+  return fetch(targetUrl, buildNativeRelayRequestInit(apiKey, format, body))
 }

@@ -6,25 +6,18 @@ import {
   streamChat,
   streamChatCustom,
   streamNativeCustom,
-  buildNativeRequestBody,
   getDefaultModel,
   type AIModel,
   type ApiFormat,
   type ToolDefinition,
 } from '../_shared/ai-providers.ts'
+import {
+  buildNativeRequestBody,
+  buildRelayHostAllowlist,
+  parseRelayTarget,
+} from '../_shared/model-relay-policy.ts'
 
-const DEFAULT_RELAY_HOSTS = new Set([
-  'api.openai.com',
-  'api.anthropic.com',
-  'api.deepseek.com',
-])
-const ALLOWED_RELAY_HOSTS = new Set([
-  ...DEFAULT_RELAY_HOSTS,
-  ...(Deno.env.get('MODEL_PROXY_ALLOWED_HOSTS') ?? '')
-    .split(',')
-    .map((host) => host.trim().toLowerCase())
-    .filter(Boolean),
-])
+const ALLOWED_RELAY_HOSTS = buildRelayHostAllowlist(Deno.env.get('MODEL_PROXY_ALLOWED_HOSTS'))
 const MAX_NATIVE_BODY_BYTES = 12_000_000
 
 const BASE_SYSTEM_PROMPT = `你是 Solidify 的 AI 助手，专门服务于项目实施人员（项目经理、实施工程师、售前顾问）。
@@ -130,31 +123,6 @@ interface ChatRequest {
   targetUrl?: string
 }
 
-function parseRelayTarget(rawUrl: string, format: ApiFormat): URL {
-  if (format !== 'openai' && format !== 'anthropic') throw new Error('不支持的 Provider 格式')
-
-  let endpoint: URL
-  try {
-    endpoint = new URL(rawUrl)
-  } catch {
-    throw new Error('模型 API URL 必须是有效的 https 地址')
-  }
-  if (endpoint.protocol !== 'https:' || endpoint.username || endpoint.password) {
-    throw new Error('模型 API URL 必须使用不含凭据的 https:// 地址')
-  }
-
-  if (!ALLOWED_RELAY_HOSTS.has(endpoint.hostname.toLowerCase())) {
-    throw new Error(`模型服务主机未获准代理：${endpoint.hostname}`)
-  }
-
-  const path = endpoint.pathname.replace(/\/+$/, '')
-  const expectedPath = format === 'openai' ? /\/chat\/completions$/ : /\/v1\/messages$/
-  if (!expectedPath.test(path)) {
-    throw new Error(`模型 API 路径与 ${format} 格式不匹配`)
-  }
-  return endpoint
-}
-
 function relayResponse(upstream: Response, streaming: boolean): Response {
   const headers: Record<string, string> = {
     ...corsHeaders,
@@ -188,7 +156,9 @@ serve(async (req: Request) => {
       let endpoint: URL
       let upstreamBody: Record<string, unknown>
       try {
-        endpoint = parseRelayTarget(targetUrl, provider.format)
+        endpoint = parseRelayTarget(targetUrl, provider.format, ALLOWED_RELAY_HOSTS)
+        // Defense in depth after req.json(); the Supabase gateway owns the
+        // parse-level request cap, while this limits what the relay processes.
         if (new TextEncoder().encode(JSON.stringify(nativeBody)).byteLength > MAX_NATIVE_BODY_BYTES) {
           return createErrorResponse('VALIDATION_ERROR', 413, '模型请求体过大')
         }
@@ -230,7 +200,7 @@ serve(async (req: Request) => {
       }
       let endpoint: URL
       try {
-        endpoint = parseRelayTarget(provider.apiUrl, provider.format)
+        endpoint = parseRelayTarget(provider.apiUrl, provider.format, ALLOWED_RELAY_HOSTS)
       } catch (error) {
         return createErrorResponse(
           'VALIDATION_ERROR',

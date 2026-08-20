@@ -9,7 +9,10 @@ export class ProviderTransportError extends TypeError {
 
 /** Add browser-specific diagnostics while preserving the original error cause. */
 export function formatProviderFetchError(error: unknown, endpoint: string): ProviderTransportError | null {
-  if (!(error instanceof TypeError)) return null
+  if (
+    !(error instanceof TypeError)
+    || !/fetch|network|load failed|failed to load|request failed/i.test(error.message)
+  ) return null
 
   const browserOrigin = typeof window !== 'undefined' ? window.location.origin : ''
   let crossOrigin = false

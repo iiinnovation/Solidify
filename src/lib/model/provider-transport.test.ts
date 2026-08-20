@@ -22,6 +22,13 @@ describe('provider transport diagnostics', () => {
     expect(providerTransportErrorMessage(wrapped)).toBe(diagnostic.message)
   })
 
+  it('does not relabel an unrelated programming TypeError as CORS', () => {
+    expect(formatProviderFetchError(
+      new TypeError("Cannot read properties of undefined (reading 'map')"),
+      'https://models.example/v1/chat/completions',
+    )).toBeNull()
+  })
+
   it('wraps a direct browser fetch failure with the actionable diagnostic', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch') }))
 
