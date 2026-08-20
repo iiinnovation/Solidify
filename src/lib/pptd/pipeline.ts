@@ -31,7 +31,11 @@ const MAX_DESIGN_ATTEMPTS = 2
 const MAX_REPAIR_ROUNDS = 2
 const MAX_EMPTY_OUTPUT_ATTEMPTS = 2
 const PREVIEW_INTERVAL = 4
-const MAX_PIPELINE_CONCURRENCY = 5
+// Long streaming requests are sensitive to gateway connection limits. Keep
+// the default conservative; callers can still opt into at most this bound.
+const MAX_PIPELINE_CONCURRENCY = 3
+const PPTD_MODEL_TIMEOUT_MS = 180_000
+const PPTD_TRANSIENT_RETRY_BASE_MS = 500
 const DEFAULT_MAX_PAGES = 24
 const MAX_KEY_POINTS = 6
 const MAX_MATERIAL_CHARS = 48_000
@@ -544,6 +548,7 @@ export async function generatePptdDeck(
       options.onProgress,
       sourceIndex,
       designSource.examplePage,
+      concurrency,
     )
     assembly = visual.assembly
     qualityNotices.push(...visual.notices)
@@ -653,6 +658,10 @@ export function createPptdModelCaller(ctx: QueryContext): PptdModelCaller {
       maxTokens: request.maxTokens,
       stream: true,
       signal,
+      timeout: PPTD_MODEL_TIMEOUT_MS,
+      // Retry at the PPTD layer where we can apply bounded jitter and account
+      // for partial-stream failures; avoid multiplying retries in the SDK.
+      maxRetries: 0,
     }
     let totalUsage: TokenUsage | undefined
     for (let attempt = 1; attempt <= MAX_EMPTY_OUTPUT_ATTEMPTS; attempt++) {
@@ -660,28 +669,49 @@ export function createPptdModelCaller(ctx: QueryContext): PptdModelCaller {
       let text = ''
       let usage: TokenUsage | undefined
       let stopReason: string | undefined
-      let streamError: PptdTechnicalModelError | undefined
+      let streamError: ModelError | undefined
+      let sawMessageEnd = false
       for await (const chunk of provider.stream(completion)) {
         if (chunk.type === 'content_delta') text += chunk.delta
         else if (chunk.type === 'message_end') {
           usage = chunk.usage
           stopReason = chunk.stopReason
+          sawMessageEnd = true
         } else if (chunk.type === 'error') {
-          if (!chunk.error.recoverable) {
-            const technical = new PptdTechnicalModelError(chunk.error)
-            if (attempt < MAX_EMPTY_OUTPUT_ATTEMPTS && isRetryablePptdStreamError(chunk.error)) {
-              streamError = technical
-              break
-            }
-            throw technical
-          }
+          streamError = chunk.error
+          if (chunk.error.recoverable) continue
+          if (attempt < MAX_EMPTY_OUTPUT_ATTEMPTS && isRetryablePptdStreamError(chunk.error)) break
+          throw new PptdTechnicalModelError(chunk.error)
         } else if (chunk.type === 'tool_call_start' || chunk.type === 'tool_call_delta' || chunk.type === 'tool_call_end') {
           throw new PptdContentGenerationError('PPTD 管线不接受模型工具调用')
         }
       }
-      if (streamError) {
+      if (streamError && isRetryablePptdStreamError(streamError)) {
         totalUsage = mergeTokenUsage(totalUsage, usage ?? estimateUsage(request, text))
-        continue
+        if (attempt < MAX_EMPTY_OUTPUT_ATTEMPTS) {
+          await waitForPptdRetry(attempt, signal, streamError)
+          continue
+        }
+        throw new PptdTechnicalModelError(streamError)
+      }
+      if (!sawMessageEnd) {
+        const interrupted: ModelError = streamError ?? {
+          code: 'stream_incomplete',
+          message: '模型流在 message_end 前断开',
+          type: 'network',
+          retryable: true,
+        }
+        totalUsage = mergeTokenUsage(totalUsage, usage ?? estimateUsage(request, text))
+        if (attempt < MAX_EMPTY_OUTPUT_ATTEMPTS) {
+          await waitForPptdRetry(attempt, signal, interrupted)
+          continue
+        }
+        throw new PptdTechnicalModelError(interrupted)
+      }
+      if (streamError) {
+        // Recoverable parse diagnostics may coexist with a complete message;
+        // preserve the complete response and let the stage parser validate it.
+        streamError = undefined
       }
       if (stopReason === 'max_tokens') throw new PptdOutputLimitError(request.stage)
       totalUsage = mergeTokenUsage(totalUsage, usage ?? estimateUsage(request, text))
@@ -689,6 +719,32 @@ export function createPptdModelCaller(ctx: QueryContext): PptdModelCaller {
     }
     throw new PptdEmptyModelOutputError(request.stage, MAX_EMPTY_OUTPUT_ATTEMPTS)
   }
+}
+
+async function waitForPptdRetry(attempt: number, signal: AbortSignal, error: ModelError): Promise<void> {
+  // Do not synchronize all page workers on the same retry instant. A small
+  // bounded jitter avoids turning one upstream blip into another request burst.
+  const jitter = error.kind === 'parse' ? 0 : Math.floor(Math.random() * 250)
+  const delay = PPTD_TRANSIENT_RETRY_BASE_MS * attempt + jitter
+  await new Promise<void>((resolve, reject) => {
+    if (signal.aborted) return reject(abortError(signal))
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort)
+      resolve()
+    }, delay)
+    const onAbort = () => {
+      clearTimeout(timer)
+      signal.removeEventListener('abort', onAbort)
+      reject(abortError(signal))
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
+function abortError(signal: AbortSignal): Error {
+  const error = new Error(typeof signal.reason === 'string' ? signal.reason : 'PPTD 管线已取消')
+  error.name = 'AbortError'
+  return error
 }
 
 interface VisualReviewOutcome {
@@ -711,6 +767,7 @@ async function runProductionVisualReview(
   onProgress?: (progress: PptdPipelineProgress) => void,
   sourceIndex?: PptdSourceIndex,
   referencePage?: string,
+  concurrency = MAX_PIPELINE_CONCURRENCY,
 ): Promise<VisualReviewOutcome> {
   if (options.visionAvailable === false) {
     const notice = '当前模型不支持 vision，已跳过 PPTD 截图审阅，仅执行结构校验'
@@ -792,7 +849,7 @@ async function runProductionVisualReview(
       const nextPages = [...project.pages]
       const targets = feedbackByPage.size > 0 ? [...feedbackByPage.keys()] : []
       onProgress?.({ stage: 'review', current: Math.max(0, reviewRound - 1), total: maxReviewRounds, message: `视觉审阅发现 ${targets.length} 页需要定向修复` })
-      const repairScheduler = new SubAgentScheduler(Math.min(MAX_PIPELINE_CONCURRENCY, Math.max(1, targets.length)))
+      const repairScheduler = new SubAgentScheduler(Math.min(concurrency, Math.max(1, targets.length)))
       const repairedPages = await repairScheduler.run(targets, async (pageIndex) => {
         throwIfAborted(signal)
         const page = project.pages[pageIndex]
@@ -1268,7 +1325,11 @@ function isPptdEmptyOutputError(error: unknown): boolean {
 
 function isRetryablePptdStreamError(error: ModelError): boolean {
   const message = error.message.toLowerCase()
-  return error.kind === 'parse'
+  return error.retryable
+    || error.type === 'network'
+    || error.type === 'rate_limit'
+    || error.type === 'timeout'
+    || error.kind === 'parse'
     || error.code.toLowerCase().includes('sse_parse')
     || message.includes('json parse')
     || message.includes('unterminated string')

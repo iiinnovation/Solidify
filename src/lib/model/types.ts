@@ -45,6 +45,10 @@ export interface CompletionRequest {
   stream: true // We only support streaming
   /** M1-12: Cancels the in-flight HTTP request when fired */
   signal?: AbortSignal
+  /** Optional per-request transport timeout, overriding the provider default. */
+  timeout?: number
+  /** Optional per-request SDK retry count, overriding the provider default. */
+  maxRetries?: number
 }
 
 /**

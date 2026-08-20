@@ -82,7 +82,11 @@ export class OpenAIProvider implements ModelProvider {
           stream: true,
           stream_options: { include_usage: true },
         },
-        { signal: request.signal },
+        {
+          signal: request.signal,
+          ...(request.timeout !== undefined ? { timeout: request.timeout } : {}),
+          ...(request.maxRetries !== undefined ? { maxRetries: request.maxRetries } : {}),
+        },
       )
 
       // Track tool calls across chunks

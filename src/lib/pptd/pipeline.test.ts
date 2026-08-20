@@ -780,6 +780,28 @@ elements:
     expect(progress.at(-1)?.message).toContain('已完成 2/2 页')
   })
 
+  it('keeps the default page-generation concurrency at three workers', async () => {
+    const pages = Array.from({ length: 4 }, (_, index) => ({
+      pageType: 'content', intent: `结论 ${index + 1}`, keyPoints: [`证据 ${index + 1}`],
+    }))
+    let active = 0
+    let peak = 0
+    const result = await generatePptdDeck({ brief: '默认并发上限', maxPages: 4 }, {
+      callModel: async (call) => {
+        if (call.stage === 'design') return { text: DESIGN }
+        if (call.stage === 'outline') return { text: JSON.stringify({ title: '默认并发上限', audience: '管理层', goal: '验证', themeId: 'business-light', pages }) }
+        active++
+        peak = Math.max(peak, active)
+        await new Promise((resolve) => setTimeout(resolve, 5))
+        active--
+        return { text: validPage(`第 ${(call.pageIndex ?? 0) + 1} 页`) }
+      },
+    })
+
+    expect(result.project.pages).toHaveLength(4)
+    expect(peak).toBeLessThanOrEqual(3)
+  })
+
   it('does not hold a page-generation slot while its checkpoint is being written', async () => {
     const pageCalls: number[] = []
     let checkpointStarted!: () => void
@@ -987,6 +1009,36 @@ describe('PPTD QueryContext model adapter', () => {
     expect(requests).toBe(2)
     expect(response.text).toBe('{"ok":true}')
     expect(response.usage).toEqual({ inputTokens: 14, outputTokens: 5, totalTokens: 19 })
+  })
+
+  it('retries an interrupted stream and rejects partial text as a successful response', async () => {
+    let requests = 0
+    const provider: ModelProvider = {
+      name: 'interrupted-once',
+      metadata: {
+        name: 'interrupted-once', displayName: 'Interrupted Once', supportsVision: false, supportsTools: true,
+        supportsStreaming: true, defaultMaxTokens: 4096, models: ['interrupted-once-model'],
+      },
+      async *stream() {
+        requests++
+        if (requests === 1) {
+          yield { type: 'content_delta', delta: '{"partial":' }
+          return
+        }
+        yield { type: 'content_delta', delta: '{"ok":true}' }
+        yield { type: 'message_end', stopReason: 'end_turn' }
+      },
+    }
+    const registry = new ProviderRegistry()
+    registry.register('interrupted-once', provider)
+    const ctx = {
+      runId: 'root', model: { provider: 'interrupted-once', model: 'interrupted-once-model' }, providerRegistry: registry,
+    } as unknown as QueryContext
+
+    await expect(createPptdModelCaller(ctx)({
+      stage: 'page', runId: 'pptd:page:1', system: 'system', prompt: 'prompt', maxTokens: 100,
+    }, new AbortController().signal)).resolves.toMatchObject({ text: '{"ok":true}' })
+    expect(requests).toBe(2)
   })
 
   it('caps empty-output retries and does not retry max-token responses', async () => {

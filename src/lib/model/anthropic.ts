@@ -72,7 +72,11 @@ export class AnthropicProvider implements ModelProvider {
           top_p: request.topP,
           stream: true,
         },
-        { signal: request.signal },
+        {
+          signal: request.signal,
+          ...(request.timeout !== undefined ? { timeout: request.timeout } : {}),
+          ...(request.maxRetries !== undefined ? { maxRetries: request.maxRetries } : {}),
+        },
       )
 
       yield { type: 'message_start' }
