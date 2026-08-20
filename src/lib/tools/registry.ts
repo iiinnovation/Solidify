@@ -36,9 +36,16 @@ export class ToolRegistry implements IToolRegistry {
 
     for (const tool of this.tools.values()) {
       // read_handle is a continuation capability that must remain reachable
-      // even when a prior tool result is temporarily hidden. Attachment tools
-      // are ordinary read-only capabilities and still honor Skill/user policy.
+      // even when a prior tool result is temporarily hidden.
       const runtimeRequired = tool.name === 'read_handle'
+      // An attachment belongs to this run, not to the user's system: once one is
+      // present, every Skill may read it whether or not its `allowed-tools`
+      // happens to name these two readers. Skipping this made the prompt
+      // advertise search_attachments under Skills that never declared it, and
+      // the model's first call died on "tool does not exist". User policy
+      // (Layer 3) still applies, so a disabled reader stays disabled.
+      const skillExempt = runtimeRequired
+        || (ctx.hasAttachments === true && ATTACHMENT_TOOLS.has(tool.name))
 
       // Layer 1: Environment filter
       if (tool.availability === 'tauri-only' && ctx.platform === 'web') {
@@ -52,9 +59,9 @@ export class ToolRegistry implements IToolRegistry {
       }
 
       // Layer 2: Skill whitelist filter
-      if (!runtimeRequired && ctx.skillActive && !DEFAULT_SKILL_TOOLS.has(tool.name)) {
+      if (!skillExempt && ctx.skillActive && !DEFAULT_SKILL_TOOLS.has(tool.name)) {
         if (!ctx.skillAllowedTools?.includes(tool.name)) continue
-      } else if (!runtimeRequired && ctx.skillAllowedTools && !ctx.skillAllowedTools.includes(tool.name)) {
+      } else if (!skillExempt && ctx.skillAllowedTools && !ctx.skillAllowedTools.includes(tool.name)) {
         continue
       }
 
@@ -98,6 +105,9 @@ export class ToolRegistry implements IToolRegistry {
 const DEFAULT_SKILL_TOOLS: ReadonlySet<string> = new Set([
   'read_file', 'list_dir', 'search_files', 'search_attachments', 'read_attachment',
 ])
+
+/** Readers for per-run user attachments; scoped by the run, not by the Skill. */
+const ATTACHMENT_TOOLS: ReadonlySet<string> = new Set(['search_attachments', 'read_attachment'])
 
 /**
  * Global tool registry instance

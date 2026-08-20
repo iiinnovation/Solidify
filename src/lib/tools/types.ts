@@ -169,6 +169,8 @@ export interface ResolveContext {
   skillActive?: boolean
   /** Allows read_file to expose only the selected Skill's bundled virtual root on Web. */
   skillResourceAccess?: boolean
+  /** The run carries user attachments, which unlocks the attachment readers. */
+  hasAttachments?: boolean
   userDisabledTools: string[]   // From settings
   isOnline: boolean
 }

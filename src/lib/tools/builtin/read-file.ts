@@ -29,7 +29,10 @@ export const readFileTool: Tool<ReadFileInput> = {
       return failure('permission_denied', '只能读取当前已选 Skill 的资源。', false)
     }
     const pathError = validateWorkspacePath(input.path, ctx)
-    if (pathError) return pathError
+    if (pathError) {
+      const guidance = attachmentGuidance(ctx)
+      return guidance ? { ...pathError, content: `${pathError.content}${guidance}` } : pathError
+    }
     try {
       const result = await readWorkspaceFile(input.path, ctx.cwd, input.offset, input.limit)
       if (result.binary) {
@@ -49,9 +52,18 @@ export const readFileTool: Tool<ReadFileInput> = {
         return { ...success(content, { ...result, content, binary: false, truncated }), truncated, metadata: { durationMs: 0, bytesRead: result.bytes } }
       }
       return { ...success(result.content ?? '', result), truncated: result.truncated, metadata: { durationMs: 0, bytesRead: result.bytes } }
-    } catch (error) { return failure(readErrorKind(error), `无法读取文件 ${input.path}：${errorMessage(error)}`, true) }
+    } catch (error) {
+      const guidance = attachmentGuidance(ctx)
+      return failure(readErrorKind(error), `无法读取文件 ${input.path}：${errorMessage(error)}${guidance}`, true)
+    }
   },
   renderCall: (input) => `读取文件 ${input.path}`,
+}
+
+function attachmentGuidance(ctx: { attachments?: ReadonlyArray<{ name: string }> | undefined }): string {
+  if (!ctx.attachments || ctx.attachments.length === 0) return ''
+  const names = ctx.attachments.map((a) => a.name).join(', ')
+  return `\n提示：用户上传的附件不在本地文件系统中，请使用 search_attachments / read_attachment 工具读取。可用附件：[${names}]。`
 }
 
 function isSkillVirtualPath(path: string): boolean {

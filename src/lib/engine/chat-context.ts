@@ -61,6 +61,7 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
   const settings = createSettings(options.provider, cwd)
   const localWorkspaceEnabled = isEnabled('localWorkspace') && Boolean(workspaceRoot)
   configureLedgerWorkspace(localWorkspaceEnabled ? workspaceRoot ?? null : null)
+  const hasAttachments = Boolean(options.attachments?.length)
   const resolvedTools = isEnabled('toolCalling')
     ? toolRegistry.resolve({
         // A real root is mandatory before exposing desktop filesystem tools.
@@ -68,12 +69,13 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
         skillAllowedTools: skill?.metadata.allowedTools,
         skillActive: skillV2Enabled && Boolean(skill),
         skillResourceAccess: Boolean(options.skillResources),
+        hasAttachments,
         userDisabledTools: settings.disabledTools,
         isOnline: typeof navigator === 'undefined' || navigator.onLine,
       })
     : []
   const tools = resolvedTools.filter((tool) =>
-    (tool.name !== 'search_attachments' && tool.name !== 'read_attachment') || Boolean(options.attachments?.length),
+    (tool.name !== 'search_attachments' && tool.name !== 'read_attachment') || hasAttachments,
   )
 
   const maxOutputTokens = inferMaxOutputTokens(options.provider.modelId)
@@ -109,6 +111,8 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
           defaultModel: options.provider.modelId,
           supportsTools: options.provider.supportsTools !== false,
           supportsVision: modelSupportsVision(options.provider.modelId, options.provider.supportsVision),
+          timeout: 60000,
+          maxRetries: 2,
         },
       },
     }),

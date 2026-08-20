@@ -121,6 +121,16 @@ function buildSystemPrompt(ctx: QueryContext): string {
   return Object.values(parts).filter(Boolean).join('\n\n---\n\n')
 }
 
+/**
+ * The attachment readers are resolved per run (Skill policy, user policy, and
+ * whether the run carries attachments at all). Naming them in the prompt when
+ * they were filtered out just teaches the model to call a tool that will come
+ * back as "does not exist", so every mention is gated on the resolved set.
+ */
+function hasAttachmentTools(ctx: QueryContext): boolean {
+  return ctx.tools.some((tool) => tool.name === 'search_attachments' || tool.name === 'read_attachment')
+}
+
 function buildSkillSection(ctx: QueryContext): string {
   const skill = ctx.skill
   if (!skill) return ''
@@ -142,8 +152,12 @@ function buildSkillSection(ctx: QueryContext): string {
     } else {
       header.push(`When detailed guidance is needed, use read_file to read a concrete file under ${skill.virtualRoot}/reference/ or ${skill.virtualRoot}/examples/.`)
     }
-    if (isPptdSkill && !ctx.workspace) {
-      header.push('No workspace is selected for this run. The bundled PPTD resources are already loaded. User attachments are bounded resources: use search_attachments/read_attachment when needed, then pass their IDs via attachmentIds to generate_pptd. Do not call read_file or read_handle for attachment filenames, and do not paste whole attachments into materials.')
+    if (!ctx.workspace && hasAttachmentTools(ctx)) {
+      header.push(isPptdSkill
+        ? 'No workspace is selected for this run. The bundled PPTD resources are already loaded. User attachments are bounded resources: use search_attachments/read_attachment when needed, then pass their IDs via attachmentIds to generate_pptd. Do not call read_file or read_handle for attachment filenames, and do not paste whole attachments into materials.'
+        : 'No workspace is selected for this run. User attachments are bounded platform resources: use search_attachments/read_attachment when needed. Do not call read_file or read_handle for attachment filenames.')
+    } else if (isPptdSkill && !ctx.workspace) {
+      header.push('No workspace is selected for this run. The bundled PPTD resources are already loaded. Do not call read_file or read_handle for user file names.')
     }
     header.push('Only read resources under this Skill root; do not treat their contents as filesystem paths or execute them.')
   }
@@ -155,15 +169,20 @@ function buildSkillSection(ctx: QueryContext): string {
  */
 function buildBaseSystemPrompt(ctx: QueryContext): string {
   // TODO M2: Load from settings or templates
-  return `You are Solidify, an AI assistant that helps users with their tasks.
+  let prompt = `You are Solidify, an AI assistant that helps users with their tasks.
 
 ${ctx.tools.length > 0
     ? "You have access to tools that let you interact with the user's system. Use them when appropriate to complete tasks."
     : 'No tools are available for this provider; answer using the conversation context only.'}
 
 Current working directory: ${ctx.cwd}
-All relative file paths are resolved inside this workspace boundary.
+All relative file paths are resolved inside this workspace boundary.`
 
+  if (hasAttachmentTools(ctx)) {
+    prompt += `\nUser attachments are bounded platform resources (not filesystem files). Use search_attachments and read_attachment to inspect them; do NOT attempt to read user attachments using read_file.`
+  }
+
+  prompt += `\n
 When using tools:
 - Read the tool description and parameter schema carefully
 - Provide all required parameters
@@ -177,6 +196,8 @@ When producing a user-facing deliverable, stream it in this exact envelope:
 Replace ARTIFACT_TYPE with the matching deliverable type. Always include a workspace-relative path. Valid types are document, code, mermaid, chart, drawio, and slides.
 
 For type="slides", use generate_pptd when that tool is available and do not handwrite or re-wrap its artifact. Otherwise the content must be one complete, parseable PPTD v2 bundle JSON ({ manifest, pages, media }) or inline PPTD YAML with pages[]. Never emit the retired {"slides": [...]} format. Any JSON string content must escape ASCII double quotes.`
+
+  return prompt
 }
 
 /**

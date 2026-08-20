@@ -102,6 +102,41 @@ describe('chat Agent workspace context', () => {
     expect(context.pptdMedia).toBe(media)
   })
 
+  it('exposes attachment readers to a Skill whose allowed-tools omits them', () => {
+    // Reproduces the drawio-diagram run: no workspace, one attached document,
+    // and a Skill that only declares [read_file, write_file].
+    const context = createChatQueryContext({
+      runId: 'run-attachment', conversationId: 'conversation', messages: [{ role: 'user', content: '根据文档绘制架构图' }],
+      provider, signal: new AbortController().signal,
+      loadedSkill: {
+        metadata: { name: 'drawio-diagram', version: '1.0.0', description: '绘制流程图', allowedTools: ['read_file', 'write_file'] },
+        content: '根据材料绘制流程图。',
+        path: 'builtin://drawio-diagram/SKILL.md',
+      },
+      attachments: [{ id: 'att-1', name: '技术服务项目.docx', size: 77_600, text: '总体技术架构……' }],
+    })
+
+    expect(context.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining([
+      'search_attachments', 'read_attachment',
+    ]))
+  })
+
+  it('hides attachment readers when the run has no attachments', () => {
+    const context = createChatQueryContext({
+      runId: 'run-no-attachment', conversationId: 'conversation', messages: [{ role: 'user', content: 'hello' }],
+      provider, signal: new AbortController().signal,
+      loadedSkill: {
+        metadata: { name: 'drawio-diagram', version: '1.0.0', description: '绘制流程图', allowedTools: ['read_file', 'write_file'] },
+        content: '根据材料绘制流程图。',
+        path: 'builtin://drawio-diagram/SKILL.md',
+      },
+    })
+
+    const names = context.tools.map((tool) => tool.name)
+    expect(names).not.toContain('search_attachments')
+    expect(names).not.toContain('read_attachment')
+  })
+
   it('treats unknown custom models as non-vision unless explicitly enabled', () => {
     const unknown = createChatQueryContext({
       runId: 'run-custom', conversationId: 'conversation', messages: [{ role: 'user', content: 'hello' }],

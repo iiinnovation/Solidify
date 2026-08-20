@@ -57,6 +57,37 @@ describe('ToolRegistry runtime tools', () => {
     expect(denied.map((tool) => tool.name)).toEqual(['search_attachments'])
   })
 
+  it('exposes attachment readers to a Skill whose allowed-tools omits them', () => {
+    const registry = new ToolRegistry()
+    registry.register(readFileTool as Tool)
+    registry.register(searchAttachmentsTool as Tool)
+    registry.register(readAttachmentTool as Tool)
+
+    // drawio-diagram ships `allowed-tools: [read_file, write_file]`; the user
+    // still attaches a document to the run and expects it to be readable.
+    const withAttachments = registry.resolve({
+      platform: 'web', skillActive: true, skillAllowedTools: ['read_file', 'write_file'],
+      hasAttachments: true, userDisabledTools: [], isOnline: true,
+    })
+    expect(withAttachments.map((tool) => tool.name)).toContain('search_attachments')
+    expect(withAttachments.map((tool) => tool.name)).toContain('read_attachment')
+
+    // Nothing attached: the readers have nothing to read, so they stay hidden.
+    const withoutAttachments = registry.resolve({
+      platform: 'web', skillActive: true, skillAllowedTools: ['read_file', 'write_file'],
+      userDisabledTools: [], isOnline: true,
+    })
+    expect(withoutAttachments.map((tool) => tool.name)).not.toContain('search_attachments')
+
+    // The run-scoped exemption covers Skill policy only, never user policy.
+    const userDisabled = registry.resolve({
+      platform: 'web', skillActive: true, skillAllowedTools: ['read_file', 'write_file'],
+      hasAttachments: true, userDisabledTools: ['search_attachments', 'read_attachment'], isOnline: true,
+    })
+    expect(userDisabled.map((tool) => tool.name)).not.toContain('search_attachments')
+    expect(userDisabled.map((tool) => tool.name)).not.toContain('read_attachment')
+  })
+
   it('exposes read_file on Web only when a selected Skill resource resolver exists', () => {
     const registry = new ToolRegistry()
     registry.register(readFileTool as Tool)

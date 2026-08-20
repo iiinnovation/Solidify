@@ -25,10 +25,19 @@ export async function* streamModel(
   // Get provider from registry
   const provider = ctx.providerRegistry.get(ctx.model.provider)
 
+  // Resolve the visible tool set first: the system prompt names tools by hand
+  // (attachment readers, handles), so it has to be built against the same list
+  // the provider receives or the model calls something that isn't there.
+  const visibleTools = provider.metadata.supportsTools
+    ? ctx.tools.filter((tool) => {
+        if (tool.name === 'read_handle') return hasReadableHandle(ctx.messages)
+        if (tool.name === 'search_attachments' || tool.name === 'read_attachment') return (ctx.attachments?.length ?? 0) > 0
+        return true
+      })
+    : []
+
   // Build messages with context assembly
-  const modelCtx = provider.metadata.supportsTools
-    ? ctx
-    : { ...ctx, tools: [] }
+  const modelCtx = visibleTools.length === ctx.tools.length ? ctx : { ...ctx, tools: visibleTools }
   const { system, messages } = await buildMessages(modelCtx)
 
   // Convert messages to unified format
@@ -62,13 +71,6 @@ export async function* streamModel(
   }))
 
   // Convert tools to unified format
-  const visibleTools = provider.metadata.supportsTools
-    ? ctx.tools.filter((tool) => {
-        if (tool.name === 'read_handle') return hasReadableHandle(ctx.messages)
-        if (tool.name === 'search_attachments' || tool.name === 'read_attachment') return (ctx.attachments?.length ?? 0) > 0
-        return true
-      })
-    : []
   const tools: ToolDefinition[] = visibleTools.map((tool) => ({
     name: tool.name,
     description: tool.description,

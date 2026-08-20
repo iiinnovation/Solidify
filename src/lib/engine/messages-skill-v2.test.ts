@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { buildMessages } from './messages'
+import { readAttachmentTool, searchAttachmentsTool } from '@/lib/tools/builtin/attachments'
+import type { Tool } from '@/lib/tools/types'
 import type { QueryContext } from './types'
+
+function attachmentTools(): Tool[] {
+  return [searchAttachmentsTool as Tool, readAttachmentTool as Tool]
+}
 
 function context(overrides: Partial<QueryContext> = {}): QueryContext {
   return {
@@ -75,11 +81,46 @@ describe('Skill progressive disclosure context', () => {
         virtualRoot: '.solidify/skills/pptd-deck',
         resourceFiles: { 'reference/slide-categories/management-report.md': 'guidance' },
       },
+      tools: attachmentTools(),
       workspace: undefined,
     }))
 
     expect(result.system).toContain('bundled PPTD resources are already loaded')
     expect(result.system).toContain('Do not call read_file or read_handle for attachment filenames')
+  })
+
+  it('points a non-PPTD Skill at the attachment readers when they are resolved', async () => {
+    const result = await buildMessages(context({
+      skill: {
+        metadata: { name: 'drawio-diagram', version: '1.0.0', description: '绘制流程图' },
+        content: '根据材料绘制流程图。',
+        path: 'builtin://drawio-diagram/SKILL.md',
+        virtualRoot: '.solidify/skills/drawio-diagram',
+      },
+      tools: attachmentTools(),
+      workspace: undefined,
+    }))
+
+    expect(result.system).toContain('use search_attachments/read_attachment when needed')
+  })
+
+  it('never names the attachment readers when they were filtered out of the run', async () => {
+    const result = await buildMessages(context({
+      skill: {
+        metadata: { name: 'pptd-deck', version: '1.2.0', description: '制作演示文稿' },
+        content: '读取必要参考并生成 deck。',
+        path: 'builtin://pptd-deck/SKILL.md',
+        virtualRoot: '.solidify/skills/pptd-deck',
+      },
+      tools: [],
+      workspace: undefined,
+    }))
+
+    // Advertising an unresolved tool is what produced "Tool 'search_attachments'
+    // does not exist" mid-run, so the prompt must stay silent about them.
+    expect(result.system).not.toContain('search_attachments')
+    expect(result.system).not.toContain('read_attachment')
+    expect(result.system).toContain('bundled PPTD resources are already loaded')
   })
 
   it('rejects an oversized layer-0 index instead of silently exceeding the budget', async () => {

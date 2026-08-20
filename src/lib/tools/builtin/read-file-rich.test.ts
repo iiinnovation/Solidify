@@ -42,4 +42,17 @@ describe('M3 rich workspace read', () => {
     const denied = await readFileTool.execute({ path: '.solidify/skills/other/reference/guide.md' }, skillContext, new AbortController().signal)
     expect(denied).toMatchObject({ success: false, error: { kind: 'permission_denied' } })
   })
+
+  it('provides actionable guidance when file is missing and attachments exist', async () => {
+    mocks.readWorkspaceFile.mockRejectedValueOnce(new Error('No such file or directory'))
+    const attachContext = {
+      ...context,
+      attachments: [{ name: '客户需求.pdf', id: 'att-1' }],
+    } as unknown as ToolUseContext
+    const result = await readFileTool.execute({ path: '客户需求.pdf' }, attachContext, new AbortController().signal)
+    expect(result.success).toBe(false)
+    expect(result.content).toContain('用户上传的附件不在本地文件系统中')
+    expect(result.content).toContain('read_attachment')
+    expect(result.content).toContain('客户需求.pdf')
+  })
 })
