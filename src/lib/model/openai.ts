@@ -5,6 +5,7 @@
 
 import OpenAI from 'openai'
 import type { ModelProvider } from './provider'
+import { iterateWithStallTimeout, resolveStallTimeout } from './stream-watchdog'
 import type {
   ProviderConfig,
   CompletionRequest,
@@ -56,13 +57,17 @@ export class OpenAIProvider implements ModelProvider {
     this.client = new OpenAI({
       apiKey: config.apiKey,
       baseURL: config.baseURL,
-      timeout: config.timeout,
-      maxRetries: config.maxRetries,
+      timeout: config.timeout ?? 60000,
+      maxRetries: config.maxRetries ?? 2,
       dangerouslyAllowBrowser: true, // Allow in browser/test environments
     })
   }
 
   async *stream(request: CompletionRequest): AsyncGenerator<CompletionChunk> {
+    const abortController = new AbortController()
+    const onExternalAbort = () => abortController.abort()
+    request.signal?.addEventListener('abort', onExternalAbort, { once: true })
+
     try {
       // Convert messages to OpenAI format
       const messages = this.convertMessages(request.messages, request.system)
@@ -83,8 +88,11 @@ export class OpenAIProvider implements ModelProvider {
           stream_options: { include_usage: true },
         },
         {
-          signal: request.signal,
+          signal: abortController.signal,
           ...(request.timeout !== undefined ? { timeout: request.timeout } : {}),
+          // Only override the client-level retry policy when the caller asked
+          // for one. SDK retries fire while establishing the connection, before
+          // any chunk is consumed, so they cannot duplicate streamed output.
           ...(request.maxRetries !== undefined ? { maxRetries: request.maxRetries } : {}),
         },
       )
@@ -93,9 +101,46 @@ export class OpenAIProvider implements ModelProvider {
       const toolCalls = new Map<number, { id: string; name: string; args: string }>()
       let usage: TokenUsage | undefined
       let stopReason: 'end_turn' | 'max_tokens' | 'stop_sequence' | 'tool_use' | undefined
+      let toolCallsEmitted = false
 
-      // Process stream events
-      for await (const chunk of stream) {
+      const emitPendingToolCalls = function* () {
+        if (toolCallsEmitted || toolCalls.size === 0) return
+        toolCallsEmitted = true
+        if (stopReason !== 'max_tokens') {
+          stopReason = 'tool_use'
+        }
+        for (const toolCall of toolCalls.values()) {
+          try {
+            const input = toolCall.args.trim() ? JSON.parse(toolCall.args) : {}
+            yield {
+              type: 'tool_call_end' as const,
+              id: toolCall.id,
+              input,
+            }
+          } catch {
+            yield {
+              type: 'error' as const,
+              error: {
+                code: 'tool_input_parse_error',
+                message: `Failed to parse tool input JSON for call ${toolCall.id}`,
+                type: 'unknown' as const,
+                retryable: false,
+                kind: 'parse' as const,
+                recoverable: true,
+              },
+            }
+            yield {
+              type: 'tool_call_end' as const,
+              id: toolCall.id,
+              input: null,
+            }
+          }
+        }
+      }
+
+      // Process stream events with a chunk stall watchdog
+      const stallTimeoutMs = resolveStallTimeout(request)
+      for await (const chunk of iterateWithStallTimeout(stream, stallTimeoutMs, () => abortController.abort())) {
         if (chunk.usage) {
           usage = {
             inputTokens: chunk.usage.prompt_tokens,
@@ -142,43 +187,22 @@ export class OpenAIProvider implements ModelProvider {
 
         // Finish reason
         const finishReason = chunk.choices[0]?.finish_reason
-        if (finishReason) stopReason = this.mapStopReason(finishReason)
-        if (finishReason === 'tool_calls') {
-          // Emit tool call end events
-          for (const toolCall of toolCalls.values()) {
-            try {
-              const input = JSON.parse(toolCall.args)
-              yield {
-                type: 'tool_call_end',
-                id: toolCall.id,
-                input,
-              }
-            } catch {
-              yield {
-                type: 'error',
-                error: {
-                  code: 'tool_input_parse_error',
-                  message: `Failed to parse tool input JSON for call ${toolCall.id}`,
-                  type: 'unknown',
-                  retryable: false,
-                  kind: 'parse',
-                  recoverable: true,
-                },
-              }
-              yield {
-                type: 'tool_call_end',
-                id: toolCall.id,
-                input: null,
-              }
-            }
+        if (finishReason) {
+          stopReason = this.mapStopReason(finishReason)
+          if (toolCalls.size > 0) {
+            yield* emitPendingToolCalls()
           }
         }
-
       }
+
+      // Ensure any trailing tool calls are emitted before ending the message
+      yield* emitPendingToolCalls()
 
       yield { type: 'message_end', usage, stopReason }
     } catch (error) {
       yield { type: 'error', error: this.convertError(error) }
+    } finally {
+      request.signal?.removeEventListener('abort', onExternalAbort)
     }
   }
 
@@ -250,7 +274,7 @@ export class OpenAIProvider implements ModelProvider {
             content: this.convertContent(visible),
           } as OpenAI.ChatCompletionMessageParam)
         }
-        if (toolResults.length > 0) continue
+        continue
       }
 
       result.push({
@@ -327,11 +351,14 @@ export class OpenAIProvider implements ModelProvider {
     }
 
     if (error instanceof Error) {
+      const isTimeout = error.name === 'TimeoutError'
+        || error.message.toLowerCase().includes('timeout')
+        || error.message.toLowerCase().includes('stalled')
       return {
-        code: 'unknown',
+        code: isTimeout ? 'timeout' : 'unknown',
         message: error.message,
-        type: 'unknown',
-        retryable: false,
+        type: isTimeout ? 'timeout' : 'unknown',
+        retryable: isTimeout,
       }
     }
 

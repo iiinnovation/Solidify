@@ -191,4 +191,114 @@ describe('OpenAIProvider', () => {
       stopReason: 'max_tokens',
     })
   })
+
+  it('converts array content without duplicate push', () => {
+    const converted = provider.convertMessages([
+      { role: 'user', content: [{ type: 'text', text: 'hi' }] },
+    ])
+    expect(converted).toHaveLength(1)
+    expect(converted[0]).toEqual({
+      role: 'user',
+      content: [{ type: 'text', text: 'hi' }],
+    })
+  })
+
+  it('emits tool_call_end even if finish_reason is stop or missing', async () => {
+    installStream(provider, [
+      {
+        choices: [{
+          delta: {
+            tool_calls: [{
+              index: 0,
+              id: 'call-1',
+              function: { name: 'search', arguments: '{"q":"test"}' },
+            }],
+          },
+          finish_reason: 'stop',
+        }],
+      },
+    ])
+
+    const events = await collectStream(provider)
+    expect(events.map((e) => e.type)).toContain('tool_call_start')
+    expect(events.map((e) => e.type)).toContain('tool_call_end')
+    const endEvent = events.find((e) => e.type === 'tool_call_end')
+    expect(endEvent).toMatchObject({
+      type: 'tool_call_end',
+      id: 'call-1',
+      input: { q: 'test' },
+    })
+    expect(events.at(-1)).toMatchObject({
+      type: 'message_end',
+      stopReason: 'tool_use',
+    })
+  })
+
+  it('retains max_tokens stopReason when finish_reason is length even with tool calls', async () => {
+    installStream(provider, [
+      {
+        choices: [{
+          delta: {
+            tool_calls: [{
+              index: 0,
+              id: 'call-truncated',
+              function: { name: 'gen', arguments: '{"partial":' },
+            }],
+          },
+          finish_reason: 'length',
+        }],
+      },
+    ])
+
+    const events = await collectStream(provider)
+    expect(events.at(-1)).toMatchObject({
+      type: 'message_end',
+      stopReason: 'max_tokens',
+    })
+  })
+
+  it('yields timeout error when stream stalls beyond stallTimeoutMs and triggers abort', async () => {
+    let aborted = false
+    async function* stalledStream() {
+      yield { choices: [{ delta: { content: 'chunk1' } }] }
+      // Stall for longer than stallTimeoutMs
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      yield { choices: [{ delta: { content: 'chunk2' } }] }
+    }
+    Object.defineProperty(provider, 'client', {
+      value: {
+        chat: {
+          completions: {
+            create: async (_params: unknown, options?: { signal?: AbortSignal }) => {
+              options?.signal?.addEventListener('abort', () => { aborted = true })
+              return stalledStream()
+            },
+          },
+        },
+      },
+    })
+
+    const events = []
+    for await (const event of provider.stream({
+      model: 'test-model',
+      messages: [{ role: 'user', content: 'hello' }],
+      stream: true,
+      stallTimeoutMs: 20, // 20ms stall timeout for test
+    })) {
+      events.push(event)
+    }
+
+    expect(events[0]).toEqual({ type: 'content_delta', delta: 'chunk1' })
+    const errorEvent = events.find((e) => e.type === 'error')
+    expect(errorEvent).toBeDefined()
+    expect(errorEvent).toMatchObject({
+      type: 'error',
+      error: {
+        code: 'timeout',
+        type: 'timeout',
+        retryable: true,
+      },
+    })
+    expect(aborted).toBe(true)
+  })
 })

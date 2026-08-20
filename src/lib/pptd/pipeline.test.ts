@@ -414,10 +414,10 @@ elements:
 
     const pageCalls = calls.filter((call) => call.stage === 'page')
     expect(pageCalls).toHaveLength(2)
-    expect(pageCalls[0].prompt).toContain('Kimi PPTD')
+    expect(pageCalls[0].prompt).toContain('YAML 紧凑风格')
     expect(pageCalls[0].prompt).toContain('<layout_reference_page>')
-    expect(pageCalls[0].prompt).toContain('style: "$title"')
-    expect(pageCalls[1].prompt).toContain('至少包含 6 个元素和至少 1 个非文本元素')
+    expect(pageCalls[0].prompt).toContain('style: "$title/$subtitle/$body/$caption"')
+    expect(pageCalls[1].prompt).toContain('≥6 元素且≥1 非文本元素')
     expect(pageCalls[0].prompt).not.toContain('"scenario":"management-report"')
     expect(pageCalls[0].prompt).not.toContain('"designSystemId":"work/warm-jade-annual-report"')
     expect(pageCalls.every((call) => !call.prompt.includes('原始需求泄漏'))).toBe(true)
@@ -800,6 +800,30 @@ elements:
 
     expect(result.project.pages).toHaveLength(4)
     expect(peak).toBeLessThanOrEqual(3)
+  })
+
+  it('backs a large deck off to two workers to survive gateway connection limits', async () => {
+    const pages = Array.from({ length: 8 }, (_, index) => ({
+      pageType: 'content', intent: `结论 ${index + 1}`, keyPoints: [`证据 ${index + 1}`],
+    }))
+    let active = 0
+    let peak = 0
+    const result = await generatePptdDeck({ brief: '大 deck 并发退让', maxPages: 12 }, {
+      callModel: async (call) => {
+        if (call.stage === 'design') return { text: DESIGN }
+        if (call.stage === 'outline') return { text: JSON.stringify({ title: '大 deck 并发退让', audience: '管理层', goal: '验证', themeId: 'business-light', pages }) }
+        active++
+        peak = Math.max(peak, active)
+        await new Promise((resolve) => setTimeout(resolve, 5))
+        active--
+        return { text: validPage(`第 ${(call.pageIndex ?? 0) + 1} 页`) }
+      },
+    })
+
+    // Long decks hit "Load failed" at three concurrent streams, so the default
+    // has to stay at two here even though there is more work to overlap.
+    expect(result.project.pages).toHaveLength(8)
+    expect(peak).toBe(2)
   })
 
   it('does not hold a page-generation slot while its checkpoint is being written', async () => {

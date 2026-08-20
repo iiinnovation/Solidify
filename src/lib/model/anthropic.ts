@@ -5,6 +5,7 @@
 
 import Anthropic from '@anthropic-ai/sdk'
 import type { ModelProvider } from './provider'
+import { iterateWithStallTimeout, resolveStallTimeout } from './stream-watchdog'
 import type {
   CompletionRequest,
   CompletionChunk,
@@ -49,6 +50,10 @@ export class AnthropicProvider implements ModelProvider {
   }
 
   async *stream(request: CompletionRequest): AsyncGenerator<CompletionChunk> {
+    const abortController = new AbortController()
+    const onExternalAbort = () => abortController.abort()
+    request.signal?.addEventListener('abort', onExternalAbort, { once: true })
+
     try {
       // Convert to Anthropic format
       const messages = this.convertMessages(request.messages)
@@ -73,8 +78,11 @@ export class AnthropicProvider implements ModelProvider {
           stream: true,
         },
         {
-          signal: request.signal,
+          signal: abortController.signal,
           ...(request.timeout !== undefined ? { timeout: request.timeout } : {}),
+          // Only override the client-level retry policy when the caller asked
+          // for one. SDK retries fire while establishing the connection, before
+          // any chunk is consumed, so they cannot duplicate streamed output.
           ...(request.maxRetries !== undefined ? { maxRetries: request.maxRetries } : {}),
         },
       )
@@ -90,8 +98,9 @@ export class AnthropicProvider implements ModelProvider {
       let outputTokens = 0
       let stopReason: 'end_turn' | 'max_tokens' | 'stop_sequence' | 'tool_use' | undefined
 
-      // Convert Anthropic events to unified format
-      for await (const event of stream) {
+      // Convert Anthropic events to unified format with a chunk stall watchdog
+      const stallTimeoutMs = resolveStallTimeout(request)
+      for await (const event of iterateWithStallTimeout(stream, stallTimeoutMs, () => abortController.abort())) {
         try {
           switch (event.type) {
             case 'content_block_start':
@@ -210,6 +219,8 @@ export class AnthropicProvider implements ModelProvider {
       }
     } catch (error) {
       yield { type: 'error', error: this.convertError(error) }
+    } finally {
+      request.signal?.removeEventListener('abort', onExternalAbort)
     }
   }
 
@@ -345,11 +356,11 @@ export class AnthropicProvider implements ModelProvider {
     }
 
     if (error instanceof Error) {
-      const isTimeout = error.message.includes('timeout')
+      const isTimeout = error.message.includes('timeout') || error.message.includes('stalled')
       const isNetwork = error.message.includes('fetch') || error.message.includes('network')
 
       return {
-        code: 'client_error',
+        code: isTimeout ? 'timeout' : 'client_error',
         message: error.message,
         type: isTimeout ? 'timeout' : isNetwork ? 'network' : 'unknown',
         retryable: isTimeout || isNetwork,

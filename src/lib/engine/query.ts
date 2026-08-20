@@ -138,6 +138,8 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       }
     }
 
+    const consecutiveToolFailures = new Map<string, number>()
+
     // Main agent loop: continue until completion or limit reached
     while (turn < ctx.limits.maxTurns) {
       turn++
@@ -327,17 +329,37 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       currentMessages = [...dropPrefill(currentMessages, prefill), assistantMessage]
       prefill = ''
 
+      // Update consecutive tool failure counts for safety loop guard
+      for (const call of response.toolCalls) {
+        const matchingResult = results.find((r) => r.callId === call.id)
+        if (matchingResult?.success) {
+          consecutiveToolFailures.set(call.name, 0)
+        } else {
+          const current = (consecutiveToolFailures.get(call.name) ?? 0) + 1
+          consecutiveToolFailures.set(call.name, current)
+        }
+      }
+
       // Append tool results as next message
       const toolResultContent: MessageContent[] = results.flatMap((result) => {
-        const content: MessageContent[] = [{
+        const call = response.toolCalls.find((c) => c.id === result.callId)
+        let content = result.content
+        if (!result.success && call) {
+          const failCount = consecutiveToolFailures.get(call.name) ?? 0
+          if (failCount >= 3) {
+            content += `\n[安全熔断] 工具 ${call.name} 已连续失败 ${failCount} 次。请勿继续尝试此工具，请根据现有信息直接回答或切换其它策略。`
+          }
+        }
+
+        const itemContent: MessageContent[] = [{
           type: 'tool_result',
           tool_use_id: result.callId,
-          content: result.content,
+          content,
           is_error: !result.success,
         }]
         const imageUrl = getToolImageUrl(result)
-        if (imageUrl) content.push({ type: 'image_url', image_url: { url: imageUrl } })
-        return content
+        if (imageUrl) itemContent.push({ type: 'image_url', image_url: { url: imageUrl } })
+        return itemContent
       })
       const toolResultMessage: Message = {
         role: 'user',

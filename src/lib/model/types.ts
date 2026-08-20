@@ -47,6 +47,11 @@ export interface CompletionRequest {
   signal?: AbortSignal
   /** Optional per-request transport timeout, overriding the provider default. */
   timeout?: number
+  /**
+   * Max allowed quiet time (ms) between consecutive stream chunks, covering the
+   * wait for the first chunk. Defaults to `timeout` when set, else 30_000ms.
+   */
+  stallTimeoutMs?: number
   /** Optional per-request SDK retry count, overriding the provider default. */
   maxRetries?: number
 }

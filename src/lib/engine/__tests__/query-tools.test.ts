@@ -12,7 +12,7 @@ import type { CompletionChunk, CompletionRequest } from '../../model/types'
 import type { Tool, ToolResult } from '../../tools/types'
 import type { MemoryState } from '../../memory/types'
 
-function makeMockProvider(script: CompletionChunk[][]): ModelProvider {
+function makeMockProvider(script: CompletionChunk[][], requests?: CompletionRequest[]): ModelProvider {
   let callIndex = 0
   return {
     name: 'mock',
@@ -25,7 +25,8 @@ function makeMockProvider(script: CompletionChunk[][]): ModelProvider {
       defaultMaxTokens: 4096,
       models: ['mock-model'],
     },
-    async *stream(_request: CompletionRequest): AsyncGenerator<CompletionChunk> {
+    async *stream(request: CompletionRequest): AsyncGenerator<CompletionChunk> {
+      requests?.push(request)
       const chunks = script[Math.min(callIndex++, script.length - 1)]
       yield { type: 'message_start' }
       yield* chunks
@@ -390,5 +391,90 @@ describe('runQuery tool execution (M1-14/15)', () => {
     expect(completed[1].result.success).toBe(true)
 
     expect(events[events.length - 1].type).toBe('run.completed')
+  })
+
+  it('appends safety circuit breaker warning when same tool fails 3 consecutive times', async () => {
+    const failingTool: Tool = {
+      name: 'fail_tool',
+      description: 'always fails',
+      inputSchema: { type: 'object' },
+      readOnly: true,
+      concurrencySafe: true,
+      destructive: false,
+      requiresConfirmation: false,
+      availability: 'always',
+      permissions: [],
+      async execute(): Promise<ToolResult> {
+        return { success: false, content: 'failed to do work' }
+      },
+      renderCall: () => 'fail_tool',
+    }
+
+    const failTurn = (id: string): CompletionChunk[] => [
+      { type: 'tool_call_start', id, name: 'fail_tool' },
+      { type: 'tool_call_end', id, input: {} },
+      { type: 'message_end', stopReason: 'tool_use' },
+    ]
+
+    const requests: CompletionRequest[] = []
+    const ctx = makeCtx(
+      makeMockProvider([failTurn('f1'), failTurn('f2'), failTurn('f3'), finalTurn], requests),
+      [failingTool],
+    )
+
+    const events: QueryEvent[] = []
+    for await (const ev of runQuery(ctx)) events.push(ev)
+
+    expect(events.filter((e) => e.type === 'tool.completed')).toHaveLength(3)
+    expect(events.at(-1)?.type).toBe('run.completed')
+
+    // The warning has to reach the model, so assert on what the provider was
+    // actually sent: silent until the third consecutive failure, then present.
+    const sent = requests.map((request) => JSON.stringify(request.messages))
+    expect(sent).toHaveLength(4)
+    expect(sent[1]).not.toContain('安全熔断')
+    expect(sent[2]).not.toContain('安全熔断')
+    expect(sent[3]).toContain('安全熔断')
+    expect(sent[3]).toContain('fail_tool')
+  })
+
+  it('resets the failure streak once the tool succeeds again', async () => {
+    let attempt = 0
+    const flakyTool: Tool = {
+      name: 'flaky_tool',
+      description: 'fails, then succeeds, then fails',
+      inputSchema: { type: 'object' },
+      readOnly: true,
+      concurrencySafe: true,
+      destructive: false,
+      requiresConfirmation: false,
+      availability: 'always',
+      permissions: [],
+      async execute(): Promise<ToolResult> {
+        attempt++
+        return attempt === 2
+          ? { success: true, content: 'recovered' }
+          : { success: false, content: 'failed to do work' }
+      },
+      renderCall: () => 'flaky_tool',
+    }
+
+    const callTurn = (id: string): CompletionChunk[] => [
+      { type: 'tool_call_start', id, name: 'flaky_tool' },
+      { type: 'tool_call_end', id, input: {} },
+      { type: 'message_end', stopReason: 'tool_use' },
+    ]
+
+    const requests: CompletionRequest[] = []
+    const ctx = makeCtx(
+      makeMockProvider([callTurn('k1'), callTurn('k2'), callTurn('k3'), callTurn('k4'), finalTurn], requests),
+      [flakyTool],
+    )
+
+    for await (const _ev of runQuery(ctx)) { /* drain */ }
+
+    // fail, succeed, fail, fail — the streak restarts at the success, so two
+    // later failures must not trip a breaker meant for three in a row.
+    expect(requests.every((request) => !JSON.stringify(request.messages).includes('安全熔断'))).toBe(true)
   })
 })

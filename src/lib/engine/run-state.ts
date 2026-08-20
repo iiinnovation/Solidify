@@ -56,7 +56,11 @@ function computeMetrics(state: RunState, usage?: UsageStats): ExecutionMetrics {
   const durationMs = Math.max(0, completedAt - state.startedAt)
   const ttftMs = state.firstTokenAt ? Math.max(0, state.firstTokenAt - state.startedAt) : undefined
   const outputTokens = usage?.outputTokens ?? (state.text ? Math.ceil(state.text.length * 0.75) : 0)
-  const genDurationSec = (state.firstTokenAt ? (completedAt - state.firstTokenAt) : durationMs) / 1000
+  const totalGenMs = Math.max(
+    0,
+    (state.firstTokenAt ? (completedAt - state.firstTokenAt) : durationMs) - toolExecutionMs(state),
+  )
+  const genDurationSec = totalGenMs / 1000
   const tokensPerSecond = genDurationSec > 0 && outputTokens > 0
     ? Number((outputTokens / genDurationSec).toFixed(1))
     : undefined
@@ -67,6 +71,42 @@ function computeMetrics(state: RunState, usage?: UsageStats): ExecutionMetrics {
     outputTokens,
     totalTokens: usage?.totalTokens,
   }
+}
+
+/**
+ * Wall-clock time the run spent inside tools, excluded from the token-rate
+ * window so a slow tool does not read as a slow model.
+ *
+ * Read-only tools run concurrently (query.ts §M1-15), so summing per-tool
+ * durations would charge one wall-clock second several times over and could
+ * subtract more than the run actually lasted — which clamped the window to
+ * zero and made the rate disappear. Overlapping spans are merged instead.
+ */
+function toolExecutionMs(state: RunState): number {
+  const spans = state.tools
+    .filter((tool): tool is typeof tool & { startedAt: number; completedAt: number } =>
+      typeof tool.startedAt === 'number' && typeof tool.completedAt === 'number' && tool.completedAt > tool.startedAt)
+    .map((tool) => ({ start: tool.startedAt, end: tool.completedAt }))
+    .sort((a, b) => a.start - b.start)
+
+  let total = 0
+  let mergedStart: number | undefined
+  let mergedEnd = 0
+  for (const span of spans) {
+    if (mergedStart === undefined) {
+      mergedStart = span.start
+      mergedEnd = span.end
+      continue
+    }
+    if (span.start <= mergedEnd) {
+      mergedEnd = Math.max(mergedEnd, span.end)
+      continue
+    }
+    total += mergedEnd - mergedStart
+    mergedStart = span.start
+    mergedEnd = span.end
+  }
+  return mergedStart === undefined ? 0 : total + (mergedEnd - mergedStart)
 }
 
 export function applyRunEvent(state: RunState, event: QueryEvent): RunState {
@@ -86,6 +126,7 @@ export function applyRunEvent(state: RunState, event: QueryEvent): RunState {
     case 'tool.requested':
       return {
         ...state,
+        ...(!state.firstTokenAt ? { firstTokenAt: Date.now() } : {}),
         tools: [...state.tools, { call: event.call, status: 'requested', startedAt: Date.now() }],
       }
     case 'tool.progress':
