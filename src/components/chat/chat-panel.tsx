@@ -610,6 +610,12 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
                   </>
                 ) : (
                   <>
+                    {agentUiEnabled && msg.agentRun && (
+                      <RunTimeline
+                        run={msg.agentRun}
+                        onStop={msg.agentRun.status === 'running' ? stopStreaming : undefined}
+                      />
+                    )}
                     {msg.content ? (
                       <MarkdownRenderer content={msg.content} />
                     ) : (
@@ -621,12 +627,6 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
                     <ArtifactRefCard messageId={msg.id} />
                     {msg.knowledgeSources && msg.knowledgeSources.length > 0 && (
                       <KnowledgeSourcesCard sources={msg.knowledgeSources} />
-                    )}
-                    {agentUiEnabled && msg.agentRun && (
-                      <RunTimeline
-                        run={msg.agentRun}
-                        onStop={msg.agentRun.status === 'running' ? stopStreaming : undefined}
-                      />
                     )}
                   </>
                 )}

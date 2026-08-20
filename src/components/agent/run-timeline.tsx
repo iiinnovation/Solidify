@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { CircleAlert, CircleCheck, LoaderCircle, Play, Square, TimerReset, Zap, Gauge } from 'lucide-react'
+import { ChevronDown, CircleAlert, CircleCheck, LoaderCircle, Play, Square, TimerReset, Zap, Gauge } from 'lucide-react'
 import { cn, formatDuration } from '@/lib/utils'
 import type { RunState } from '@/lib/engine/run-state'
 import { ToolCallCard } from './tool-call-card'
@@ -27,9 +27,13 @@ function ElapsedTime({ startedAt, completedAt }: { startedAt: number; completedA
 }
 
 export function RunTimeline({ run, onStop }: { run: RunState | null; onStop?: () => void }) {
+  const [showAllTools, setShowAllTools] = useState(false)
+
   if (!run) return null
   const active = run.status === 'running'
   const statusLabel = run.status === 'running' ? '运行中' : run.status === 'completed' ? '已完成' : run.status === 'aborted' ? '已停止' : run.status === 'exhausted' ? '已达上限' : run.status === 'failed' ? '失败' : '准备中'
+  const hiddenToolCount = Math.max(0, run.tools.length - 2)
+  const visibleTools = showAllTools ? run.tools : run.tools.slice(-2)
 
   return (
     <section className="mb-4 border-y border-border-light bg-background-secondary/70" aria-label="Agent 运行过程">
@@ -73,7 +77,18 @@ export function RunTimeline({ run, onStop }: { run: RunState | null; onStop?: ()
       )}
       {(run.tools.length > 0 || run.error) && (
         <div className="pb-3 space-y-2">
-          {run.tools.map((item) => <ToolCallCard key={item.call.id} item={item} />)}
+          {hiddenToolCount > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowAllTools((value) => !value)}
+              className="w-full flex items-center justify-center gap-1 py-1 text-[11px] text-text-tertiary hover:text-text-secondary transition-colors"
+              aria-expanded={showAllTools}
+            >
+              {showAllTools ? '收起早期调用' : `展开早期 ${hiddenToolCount} 次调用`}
+              <ChevronDown size={12} className={cn('transition-transform', showAllTools && 'rotate-180')} />
+            </button>
+          )}
+          {visibleTools.map((item) => <ToolCallCard key={item.call.id} item={item} />)}
           {run.error && <div className={cn('text-xs px-3 py-2 rounded-sm', run.status === 'failed' ? 'text-error bg-error-light' : 'text-text-secondary bg-surface')}>{run.error}</div>}
         </div>
       )}

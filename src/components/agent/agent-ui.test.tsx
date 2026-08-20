@@ -55,6 +55,31 @@ describe('agent run UI', () => {
     expect(screen.getByText(/notes.md/)).not.toBeNull()
   })
 
+  it('keeps only the latest two tool calls visible until earlier calls are expanded', async () => {
+    const tools = Array.from({ length: 4 }, (_, index) => ({
+      call: { id: `call-${index + 1}`, name: `tool_${index + 1}`, input: {} },
+      status: 'completed' as const,
+      startedAt: 110 + index,
+      completedAt: 120 + index,
+      result: { success: true, content: `result-${index + 1}` },
+    }))
+
+    render(<RunTimeline run={{ ...completedRun, tools }} />)
+
+    expect(screen.queryByText('tool_1')).toBeNull()
+    expect(screen.queryByText('tool_2')).toBeNull()
+    expect(screen.getByText('tool_3')).not.toBeNull()
+    expect(screen.getByText('tool_4')).not.toBeNull()
+
+    await userEvent.click(screen.getByRole('button', { name: '展开早期 2 次调用' }))
+    expect(screen.getByText('tool_1')).not.toBeNull()
+    expect(screen.getByText('tool_2')).not.toBeNull()
+
+    await userEvent.click(screen.getByRole('button', { name: '收起早期调用' }))
+    expect(screen.queryByText('tool_1')).toBeNull()
+    expect(screen.getByText('tool_4')).not.toBeNull()
+  })
+
 
   it('only exposes stop control for a running run', async () => {
     const onStop = vi.fn()
