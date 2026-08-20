@@ -33,9 +33,21 @@ function ProviderForm({
   const [format, setFormat] = useState<ApiFormat>(initial?.format ?? 'openai')
   const [supportsTools, setSupportsTools] = useState(initial?.supportsTools ?? true)
   const [supportsVision, setSupportsVision] = useState(modelSupportsVision(initial?.modelId ?? '', initial?.supportsVision))
+  const [contextWindow, setContextWindow] = useState(initial?.contextWindow?.toString() ?? '')
+  const [maxOutputTokens, setMaxOutputTokens] = useState(initial?.maxOutputTokens?.toString() ?? '')
   const [showKey, setShowKey] = useState(false)
 
-  const isValid = name.trim() && apiUrl.trim() && apiKey.trim() && modelId.trim()
+  const parseOptionalLimit = (value: string) => {
+    if (!value.trim()) return undefined
+    const parsed = Number(value)
+    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null
+  }
+  const parsedContextWindow = parseOptionalLimit(contextWindow)
+  const parsedMaxOutputTokens = parseOptionalLimit(maxOutputTokens)
+  const limitsValid = parsedContextWindow !== null
+    && parsedMaxOutputTokens !== null
+    && (parsedContextWindow === undefined || parsedMaxOutputTokens === undefined || parsedMaxOutputTokens < parsedContextWindow)
+  const isValid = name.trim() && apiUrl.trim() && apiKey.trim() && modelId.trim() && limitsValid
 
   return (
     <div className="space-y-4">
@@ -115,6 +127,36 @@ function ProviderForm({
         />
       </div>
 
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-1.5">
+          <label className="text-sm font-medium text-text-primary">上下文窗口（可选）</label>
+          <input
+            type="number"
+            min={1}
+            step={1}
+            value={contextWindow}
+            onChange={(event) => setContextWindow(event.target.value)}
+            placeholder="例如 64000"
+            className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text-primary font-mono placeholder:text-text-tertiary focus:outline-none focus:border-border-focus"
+          />
+        </div>
+        <div className="space-y-1.5">
+          <label className="text-sm font-medium text-text-primary">单轮输出上限（可选）</label>
+          <input
+            type="number"
+            min={1}
+            step={1}
+            value={maxOutputTokens}
+            onChange={(event) => setMaxOutputTokens(event.target.value)}
+            placeholder="例如 8192"
+            className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text-primary font-mono placeholder:text-text-tertiary focus:outline-none focus:border-border-focus"
+          />
+        </div>
+      </div>
+      <p className="text-xs text-text-tertiary">
+        留空时使用保守的模型族推断；自建或代理端点建议按实际能力填写，输出上限必须小于上下文窗口。
+      </p>
+
       <div className="space-y-1.5">
         <label className="flex items-center gap-2 text-sm text-text-primary">
           <input
@@ -148,7 +190,18 @@ function ProviderForm({
       <div className="flex gap-2 pt-2">
         <Button
           onClick={() =>
-            onSave({ name, apiUrl, apiKey, modelId, format, enabled: true, supportsTools, supportsVision })
+            onSave({
+              name,
+              apiUrl,
+              apiKey,
+              modelId,
+              format,
+              enabled: true,
+              supportsTools,
+              supportsVision,
+              contextWindow: typeof parsedContextWindow === 'number' ? parsedContextWindow : undefined,
+              maxOutputTokens: typeof parsedMaxOutputTokens === 'number' ? parsedMaxOutputTokens : undefined,
+            })
           }
           disabled={!isValid}
         >

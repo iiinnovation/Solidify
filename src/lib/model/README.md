@@ -66,12 +66,15 @@ interface CompletionRequest {
 type CompletionChunk =
   | { type: 'content_start' }
   | { type: 'content_delta'; delta: string }
+  | { type: 'reasoning_delta'; delta: string }
   | { type: 'tool_call_start'; id: string; name: string }
   | { type: 'tool_call_delta'; id: string; delta: string }
   | { type: 'tool_call_end'; id: string; input: unknown }
   | { type: 'message_end'; usage?: TokenUsage }
   | { type: 'error'; error: ModelError }
 ```
+
+`reasoning_delta` 只用于引擎识别模型活动和输出预算消耗。原始推理文本不得进入用户答案、UI 事件或持久化账本。
 
 ## Provider 接口
 
@@ -187,8 +190,8 @@ case 'newprovider':
 // 可以添加 Agent 特有功能
 type CompletionChunk = 
   | StandardChunk
-  | { type: 'thinking'; content: string }  // 思考过程
-  | { type: 'tool_progress'; id: string; partial: string }  // 工具参数实时显示
+  | { type: 'reasoning_delta'; delta: string }  // 仅供引擎聚合计量，不直接对用户展示
+  | { type: 'tool_call_delta'; id: string; delta: string }  // 工具参数增量
 ```
 
 ### 4. 灵活的错误处理

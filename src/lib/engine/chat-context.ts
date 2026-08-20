@@ -79,7 +79,7 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
     (tool.name !== 'search_attachments' && tool.name !== 'read_attachment') || hasAttachments,
   )
 
-  const maxOutputTokens = inferMaxOutputTokens(options.provider.modelId)
+  const maxOutputTokens = options.provider.maxOutputTokens ?? inferMaxOutputTokens(options.provider.modelId)
 
   const context: QueryContext = {
     runId: options.runId,
@@ -314,7 +314,7 @@ function createSettings(provider: ModelProvider, cwd: string): Settings {
       apiKey: provider.apiKey,
       baseUrl: providerBaseURL(provider.apiUrl, provider.format),
       temperature: 0.7,
-      maxTokens: inferMaxOutputTokens(provider.modelId),
+      maxTokens: provider.maxOutputTokens ?? inferMaxOutputTokens(provider.modelId),
     },
     ui: { theme: 'auto', fontSize: 14, codeTheme: 'default', compactMode: false },
     privacy: { allowTelemetry: false, allowCrashReports: false, shareUsageData: false },

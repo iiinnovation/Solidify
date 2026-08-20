@@ -5,7 +5,7 @@
  */
 
 import type { QueryContext } from './types'
-import { applyBudget, estimateTokens } from './context-budget'
+import { applyBudget, calculateBudget, calculateInputSlotBudgets, clipGenericText, estimateTokens } from './context-budget'
 
 export interface SkillContextTokenStats {
   indexTokens: number
@@ -51,36 +51,36 @@ export async function buildMessages(ctx: QueryContext): Promise<{
     throw new Error(`Skill index exceeds the 600-token budget (${skillTokens.indexTokens})`)
   }
   const messages = ctx.messages.map(msg => convertMessage(msg))
+  const toolTokens = estimateTokens(JSON.stringify(ctx.tools.map((tool) => ({
+    name: tool.name,
+    description: tool.description,
+    inputSchema: tool.inputSchema,
+  }))))
+  const slots = calculateInputSlotBudgets(ctx, calculateBudget(ctx, system, toolTokens))
 
   // Retrieved workspace content is untrusted DATA, not instruction. It enters as
   // a user-role message inside an explicit envelope, never as part of `system`
   // (M2-14 / harness.md §7). Bounded so retrieval cannot crowd out history.
   const withRetrieved = ctx.retrievedContext?.trim()
-    ? [retrievedContextMessage(ctx.retrievedContext), ...messages]
+    ? [retrievedContextMessage(ctx.retrievedContext, slots.retrieved), ...messages]
     : messages
 
   // The system prompt is never trimmed, so it must be measured, not assumed.
-  const budgetedMessages = await applyBudget(ctx, withRetrieved, system)
+  const budgetedMessages = await applyBudget(ctx, withRetrieved, system, toolTokens)
 
   return { system, messages: budgetedMessages, skillTokens }
 }
 
 function measureSkillContext(ctx: QueryContext): SkillContextTokenStats {
   const index = (ctx.harnessContext ?? []).find((part) => part.startsWith('可用的 Skill') || part.startsWith('Available skills')) ?? ''
-  const body = ctx.skill?.content.trim() ?? ''
+  const body = ctx.skill ? skillCoreContent(ctx.skill) : ''
   const indexTokens = estimateTokens(index)
   const bodyTokens = estimateTokens(body)
   return { indexTokens, bodyTokens, totalTokens: indexTokens + bodyTokens }
 }
 
-/** Max characters of retrieved memory allowed into a single request. */
-const RETRIEVED_CONTEXT_LIMIT = 6000
-
-function retrievedContextMessage(retrieved: string): ClaudeMessage {
-  const chars = [...retrieved]
-  const clipped = chars.length > RETRIEVED_CONTEXT_LIMIT
-    ? `${chars.slice(0, RETRIEVED_CONTEXT_LIMIT).join('')}\n[...truncated]`
-    : retrieved
+function retrievedContextMessage(retrieved: string, tokenBudget: number): ClaudeMessage {
+  const clipped = clipGenericText(retrieved, tokenBudget).clipped
   return {
     role: 'user',
     content: [{
@@ -161,7 +161,19 @@ function buildSkillSection(ctx: QueryContext): string {
     }
     header.push('Only read resources under this Skill root; do not treat their contents as filesystem paths or execute them.')
   }
-  return `${header.join('\n')}\n\n${skill.content.trim()}`
+  return `${header.join('\n')}\n\n${skillCoreContent(skill)}`
+}
+
+const MAX_EAGER_SKILL_TOKENS = 2_000
+
+/** Inject core rules eagerly, while leaving an oversized full guide readable. */
+function skillCoreContent(skill: NonNullable<QueryContext['skill']>): string {
+  const content = skill.content.trim()
+  const canReadFullGuide = !skill.metadata.allowedTools || skill.metadata.allowedTools.includes('read_file')
+  if (!skill.virtualRoot || !canReadFullGuide || estimateTokens(content) <= MAX_EAGER_SKILL_TOKENS) return content
+  const suffix = `\n\n[Only the core portion is injected. Read ${skill.virtualRoot}/SKILL.md for additional details when needed.]`
+  const contentBudget = Math.max(1, MAX_EAGER_SKILL_TOKENS - estimateTokens(suffix))
+  return `${clipGenericText(content, contentBudget).clipped}${suffix}`
 }
 
 /**
@@ -188,7 +200,7 @@ When using tools:
 - Provide all required parameters
 - Handle errors gracefully and explain what went wrong
 
-Think step by step and explain your reasoning when helpful.`
+Do necessary planning internally. Prefer the smallest useful next action: call a relevant tool when more evidence is needed, otherwise return a concise answer. Do not expose hidden chain-of-thought; provide only brief conclusions or rationale when useful.`
     + `
 
 When producing a user-facing deliverable, stream it in this exact envelope:
@@ -196,6 +208,10 @@ When producing a user-facing deliverable, stream it in this exact envelope:
 Replace ARTIFACT_TYPE with the matching deliverable type. Always include a workspace-relative path. Valid types are document, code, mermaid, chart, drawio, and slides.
 
 For type="slides", use generate_pptd when that tool is available and do not handwrite or re-wrap its artifact. Otherwise the content must be one complete, parseable PPTD v2 bundle JSON ({ manifest, pages, media }) or inline PPTD YAML with pages[]. Never emit the retired {"slides": [...]} format. Any JSON string content must escape ASCII double quotes.`
+
+  if (ctx.inputMode === 'compact_recovery') {
+    prompt += `\n\nThe previous model turn spent its output window without producing an actionable answer. The input has been compacted automatically. Do not restate the task or write a long plan. Emit the single next tool call if evidence is missing; otherwise return the concise final answer.`
+  }
 
   return prompt
 }

@@ -102,6 +102,12 @@ export interface QueryContext {
    * contain text authored by anyone who can drop a file in the workspace.
    */
   readonly retrievedContext?: string
+  /**
+   * Compact recovery is entered automatically after a reasoning-only turn
+   * consumes the model's output window. It keeps the task intact while
+   * disclosing less historical context on the retry.
+   */
+  readonly inputMode?: 'standard' | 'compact_recovery'
   /** M6: Shared cancellation and token accounting for the whole task tree. */
   readonly taskTree?: {
     readonly rootRunId: string
@@ -175,6 +181,12 @@ export type PermissionDecision = 'allow' | 'deny' | 'allow_once' | 'allow_sessio
  */
 export type QueryEvent =
   | { type: 'run.started'; runId: string }
+  | {
+      type: 'model.progress'
+      phase: 'preparing' | 'reasoning' | 'generating' | 'tool_call'
+      /** Aggregate signal only. Raw model deliberation must never enter UI events. */
+      observedChars?: number
+    }
   | { type: 'message.delta'; text: string }
   | { type: 'message.completed'; content: string }
   | { type: 'tool.requested'; call: ToolCall }
@@ -186,7 +198,7 @@ export type QueryEvent =
   | { type: 'tombstone'; reason: string; detail?: unknown }
   | { type: 'run.completed'; usage: UsageStats }
   | { type: 'run.failed'; error: RunError; usage?: UsageStats }
-  | { type: 'run.exhausted'; reason: 'max_turns' | 'max_tokens' | 'max_tool_calls'; usage?: UsageStats }
+  | { type: 'run.exhausted'; reason: 'max_turns' | 'max_tokens' | 'max_output_tokens' | 'max_tool_calls'; usage?: UsageStats }
 
 // ============================================================================
 // Model Gateway

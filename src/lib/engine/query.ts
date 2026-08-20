@@ -44,6 +44,8 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
   let completed = false
   let continuations = 0
   let prefill = ''
+  let compactNextTurn = ctx.inputMode === 'compact_recovery'
+  let reasoningRecoveryUsed = ctx.inputMode === 'compact_recovery'
   // `usage.totalTokens` remains the provider-reported cost for telemetry. The
   // run budget deliberately does not charge the same history input again on
   // every turn: only the first input plus all generated output counts toward
@@ -161,13 +163,17 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       }
 
       // Stream model response (M1-05, M1-06, M1-07)
-      let response: { text: string; toolCalls: ToolCall[]; usage?: UsageStats; stopReason?: string }
+      yield { type: 'model.progress', phase: 'preparing' }
+      const usingCompactInput = compactNextTurn
+      compactNextTurn = false
+      let response: { text: string; toolCalls: ToolCall[]; usage?: UsageStats; stopReason?: string; reasoningLength: number }
       try {
         response = yield* streamModelResponse({
           ...runCtx,
           messages: currentMessages,
           harnessContext,
           retrievedContext: isFirstTurn ? retrievedContext : undefined,
+          inputMode: usingCompactInput ? 'compact_recovery' : 'standard',
         }, logger, {
           onModelPrepared: harness ? (request) => {
             const preparedAt = Date.now()
@@ -188,7 +194,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       // Retrieved workspace memory is useful for grounding the initial request;
       // subsequent turns should rely on the conversation and tool results.
       isFirstTurn = false
-      harness?.ledger.append('model.completed', { turn, text: response.text, toolCalls: response.toolCalls, usage: response.usage, stopReason: response.stopReason })
+      harness?.ledger.append('model.completed', { turn, text: response.text, toolCalls: response.toolCalls, usage: response.usage, stopReason: response.stopReason, reasoningLength: response.reasoningLength })
       previousModelCompletedAt = Date.now()
       await harness?.hooks.observe('after_model_call', { type: 'after_model_call', runId: ctx.runId, response, onHookError: (id, error) => logger.warn('hook.failed', { id, error: String(error) }) })
 
@@ -233,6 +239,41 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       }
 
       if (response.stopReason === 'max_tokens') {
+        // A turn that spent its whole output window deliberating returns no
+        // text, so the continuation above cannot prefill anything and the run
+        // ends here. Reporting only "token limit reached" hid the actual cause:
+        // the budget was consumed by reasoning the answer never got to use.
+        const thoughtOnly = !response.text.trim()
+          && response.toolCalls.length === 0
+          && response.reasoningLength > 0
+        if (thoughtOnly) {
+          if (!reasoningRecoveryUsed && turn < ctx.limits.maxTurns) {
+            reasoningRecoveryUsed = true
+            compactNextTurn = true
+            harness?.ledger.append('model.retrying', {
+              turn,
+              reason: 'reasoning_exhausted_output',
+              reasoningLength: response.reasoningLength,
+              strategy: 'compact_recovery',
+            })
+            logger.warn('model.retrying', {
+              reason: 'reasoning_exhausted_output',
+              reasoningLength: response.reasoningLength,
+              strategy: 'compact_recovery',
+            })
+            continue
+          }
+
+          harness?.ledger.append('run.exhausted', {
+            reason: 'max_output_tokens',
+            recoveryAttempted: true,
+            reasoningLength: response.reasoningLength,
+            usage,
+          })
+          yield { type: 'run.exhausted', reason: 'max_output_tokens', usage: { ...usage } }
+          logger.warn('run.exhausted', { reason: 'reasoning_exhausted_after_compaction', reasoningLength: response.reasoningLength, usage })
+          return
+        }
         harness?.ledger.append('run.exhausted', { reason: 'max_tokens', usage })
         yield { type: 'run.exhausted', reason: 'max_tokens', usage: { ...usage } }
         logger.log('run.exhausted', { reason: 'stop_reason_max_tokens', usage })
@@ -582,12 +623,16 @@ async function* streamModelResponse(
   toolCalls: ToolCall[]
   usage?: UsageStats
   stopReason?: string
+  reasoningLength: number
 }> {
   let accumulatedText = ''
   const toolCalls: ToolCall[] = []
   const toolCallBuilders = new Map<string, { id: string; name: string; input: string }>()
   let usage: UsageStats | undefined
   let stopReason: string | undefined
+  let reasoningLength = 0
+  let progressPhase: Extract<QueryEvent, { type: 'model.progress' }>['phase'] | undefined
+  let lastReasoningProgressAt = 0
 
   try {
     // Call model gateway (M1-05) - streamModel uses ctx internally
@@ -599,11 +644,32 @@ async function* streamModelResponse(
 
       switch (chunk.type) {
         case 'content_delta':
+          if (progressPhase !== 'generating') {
+            progressPhase = 'generating'
+            yield { type: 'model.progress', phase: 'generating' }
+          }
           accumulatedText += chunk.delta
           yield { type: 'message.delta', text: chunk.delta }
           break
 
+        case 'reasoning_delta':
+          // Deliberation is not the answer, so it never joins accumulatedText
+          // or the artifact stream. It is measured because it spends the output
+          // budget: a turn that thinks past max_tokens returns no text at all,
+          // and this length is the only thing that explains why.
+          reasoningLength += chunk.delta.length
+          if (progressPhase !== 'reasoning' || Date.now() - lastReasoningProgressAt >= 500) {
+            progressPhase = 'reasoning'
+            lastReasoningProgressAt = Date.now()
+            yield { type: 'model.progress', phase: 'reasoning', observedChars: reasoningLength }
+          }
+          break
+
         case 'tool_call_start':
+          if (progressPhase !== 'tool_call') {
+            progressPhase = 'tool_call'
+            yield { type: 'model.progress', phase: 'tool_call' }
+          }
           // Start building a new tool call
           toolCallBuilders.set(chunk.id, {
             id: chunk.id,
@@ -691,7 +757,7 @@ async function* streamModelResponse(
       }
     }
 
-    return { text: accumulatedText, toolCalls, usage, stopReason }
+    return { text: accumulatedText, toolCalls, usage, stopReason, reasoningLength }
 
   } catch (error) {
     logger.error('stream.failed', error)

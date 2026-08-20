@@ -91,6 +91,13 @@ export type StopReason = 'end_turn' | 'max_tokens' | 'stop_sequence' | 'tool_use
 export type CompletionChunk =
   | { type: 'content_start' }
   | { type: 'content_delta'; delta: string }
+  /**
+   * Model deliberation that is billed as output and counted against
+   * `max_tokens`, but is not part of the answer. Dropping it made a reasoning
+   * model that spent its whole output window thinking look like a model that
+   * returned nothing at all.
+   */
+  | { type: 'reasoning_delta'; delta: string }
   | { type: 'content_end' }
   | { type: 'tool_call_start'; id: string; name: string }
   | { type: 'tool_call_delta'; id: string; delta: string }

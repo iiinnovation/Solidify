@@ -18,6 +18,18 @@ import type {
   ModelError,
 } from './types'
 
+/**
+ * Read an extended-thinking delta. The SDK only declares `thinking_delta` once
+ * the installed version supports it, so the shape is probed structurally to
+ * keep this adapter working across SDK upgrades.
+ */
+function thinkingDeltaText(delta: unknown): string | undefined {
+  if (!delta || typeof delta !== 'object') return undefined
+  const candidate = delta as { type?: unknown; thinking?: unknown }
+  if (candidate.type !== 'thinking_delta') return undefined
+  return typeof candidate.thinking === 'string' && candidate.thinking ? candidate.thinking : undefined
+}
+
 export class AnthropicProvider implements ModelProvider {
   readonly name = 'anthropic'
   readonly metadata: ProviderMetadata
@@ -121,9 +133,14 @@ export class AnthropicProvider implements ModelProvider {
               }
               break
 
-            case 'content_block_delta':
+            case 'content_block_delta': {
+              // Extended thinking is billed as output and spends the same
+              // max_tokens budget as the answer, so it cannot be dropped.
+              const thinking = thinkingDeltaText(event.delta)
               if (event.delta.type === 'text_delta') {
                 yield { type: 'content_delta', delta: event.delta.text }
+              } else if (thinking) {
+                yield { type: 'reasoning_delta', delta: thinking }
               } else if (event.delta.type === 'input_json_delta') {
                 const block = toolBlocks.get(event.index)
                 if (block) {
@@ -136,6 +153,7 @@ export class AnthropicProvider implements ModelProvider {
                 }
               }
               break
+            }
 
             case 'content_block_stop': {
               const block = toolBlocks.get(event.index)

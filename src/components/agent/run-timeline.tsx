@@ -40,6 +40,9 @@ export function RunTimeline({ run, onStop }: { run: RunState | null; onStop?: ()
       <div className="py-2.5 flex flex-wrap items-center gap-2.5">
         {active ? <LoaderCircle size={14} className="text-accent animate-spin" /> : run.status === 'completed' ? <CircleCheck size={14} className="text-success" /> : run.status === 'aborted' ? <Square size={12} className="text-warning" /> : run.status === 'failed' ? <CircleAlert size={14} className="text-error" /> : <Play size={14} className="text-text-tertiary" />}
         <span className="text-xs font-medium text-text-primary">{statusLabel}</span>
+        {active && run.activity && (
+          <span className="text-[11px] text-text-secondary" aria-live="polite">{run.activity.label}</span>
+        )}
         <span className="text-[11px] text-text-tertiary font-mono">{run.tools.length} 次工具调用</span>
         {run.usage && (
           <span className="text-[11px] text-text-tertiary tabular-nums">

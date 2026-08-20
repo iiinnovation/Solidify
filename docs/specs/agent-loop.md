@@ -68,6 +68,7 @@ export interface RunLimits {
 /** 事件流 */
 export type QueryEvent =
   | { type: 'run.started';         runId: string }
+  | { type: 'model.progress';      phase: 'preparing' | 'reasoning' | 'generating' | 'tool_call'; observedChars?: number }
   | { type: 'message.delta';       text: string }
   | { type: 'message.completed';   content: string }
   | { type: 'tool.requested';      call: ToolCall }
@@ -79,10 +80,10 @@ export type QueryEvent =
   | { type: 'tombstone';           reason: string; detail?: unknown }
   | { type: 'run.completed';       usage: UsageStats }
   | { type: 'run.failed';          error: RunError }
-  | { type: 'run.exhausted';       reason: 'max_turns' | 'max_tokens' | 'max_tool_calls' }
+  | { type: 'run.exhausted';       reason: 'max_turns' | 'max_tokens' | 'max_output_tokens' | 'max_tool_calls' }
 ```
 
-事件遵循 [ADR-0008](../04-decisions.md#adr-0008)：UI 与账本共享领域命名和 `runId` / `callId` / `requestId`，但不是同一个序列化投影。`message.delta`、`tool.progress`、`permission.required` 属于可丢弃的实时控制事件；账本只保存无损 JSON 的稳定事实。禁止把 Promise resolver、`AbortSignal` 或其他运行时对象放入账本。
+事件遵循 [ADR-0008](../04-decisions.md#adr-0008)：UI 与账本共享领域命名和 `runId` / `callId` / `requestId`，但不是同一个序列化投影。`message.delta`、`model.progress`、`tool.progress`、`permission.required` 属于可丢弃的实时控制事件；账本只保存无损 JSON 的稳定事实。`model.progress` 只携带阶段和计数，禁止携带原始思维链。禁止把 Promise resolver、`AbortSignal` 或其他运行时对象放入账本。
 
 这不是维护两套状态机：执行边界只产生一次领域事实，实时总线与账本分别投影所需形态。模型实际看到的消息、工具结果和权限拒绝必须能从持久事实重建。
 
@@ -183,18 +184,18 @@ export interface ModelCapabilities {
 每轮重新组装，优先级从高到低，超出预算时从低优先级开始裁剪：
 
 ```
-1. System prompt（人格 + 环境信息 + 工作目录）      不裁
-2. 当前 Skill 的 SKILL.md 正文                     不裁
-3. 可用 Skill 的 name + description 索引            不裁（很小）
-4. 最近 N 轮消息                                    按轮裁剪
-5. 工具结果                                         大结果句柄化
-6. 记忆检索片段                                     按相关度裁剪
+1. System 核心规则（人格 + 环境 + 输出契约）     不裁
+2. 当前 Skill 核心规则                           预注入最多 2k token，详情按需读取
+3. 工具 schema                                      纳入上下文预算
+4. 当前用户任务与最近对话                          按 tool pair 成组裁剪
+5. 工具结果                                         单项句柄化 + 全局累计上限
+6. 记忆检索片段                                     独立插槽预算，仅首轮注入
 ```
 
 **大结果句柄化**（关键机制）：
 
 ```ts
-if (byteLength(result.data) > HANDLE_THRESHOLD) {   // 默认 8KB
+if (byteLength(result.data) > HANDLE_THRESHOLD) {   // 默认 24KB
   const handle = await memory.store(result.data)
   return {
     summary: truncate(result.data, 500),
@@ -204,7 +205,7 @@ if (byteLength(result.data) > HANDLE_THRESHOLD) {   // 默认 8KB
 }
 ```
 
-没有这个机制，读几个大文件就会撑爆上下文并让 token 成本失控。
+句柄化只解决“单个大结果”。多个小结果仍可能累积失控，因此每次模型请求还必须对所有 `tool_result` 实施累计 token 上限，优先保留最新结果。推理模型如果只消耗输出预算而没有产生正文或工具调用，引擎自动进入 `compact_recovery`、精简输入后重试一次，不把换模型或修改额度作为首选恢复手段。
 
 ## 7. 验收测试
 

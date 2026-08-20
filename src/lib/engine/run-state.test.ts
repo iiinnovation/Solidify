@@ -63,6 +63,18 @@ describe('run state reducer', () => {
     expect(state.firstTokenAt).toEqual(expect.any(Number))
   })
 
+  it('shows aggregate reasoning progress without carrying deliberation text', () => {
+    let state = createRunState('run-progress')
+    state = applyRunEvent(state, { type: 'model.progress', phase: 'preparing' })
+    expect(state.activity).toMatchObject({ phase: 'preparing', label: '正在准备上下文…' })
+    expect(state.firstTokenAt).toBeUndefined()
+
+    state = applyRunEvent(state, { type: 'model.progress', phase: 'reasoning', observedChars: 320 })
+    expect(state.activity).toEqual({ phase: 'reasoning', label: '正在分析任务…', observedChars: 320 })
+    expect(state.firstTokenAt).toEqual(expect.any(Number))
+    expect(JSON.stringify(state)).not.toContain('隐藏思维链')
+  })
+
   it('charges concurrent tools once instead of once per call', () => {
     // Three read-only tools run in parallel for 1s inside a 2s run. Summing
     // their durations would subtract 3s from the 2s window, clamp it to zero

@@ -3,7 +3,9 @@ import { runQuery } from '../query'
 import { buildMessages } from '../messages'
 import {
   applyBudget,
+  capToolResultContext,
   calculateBudget,
+  calculateInputSlotBudgets,
   clipCodeFile,
   clipLogFile,
   detectAttachmentType,
@@ -129,6 +131,55 @@ describe('context budget accounting', () => {
     const bare = calculateBudget(ctx, '')
     const heavy = calculateBudget(ctx, 'x'.repeat(40_000))
     expect(heavy.available).toBeLessThan(bare.available)
+  })
+
+  it('reserves context for native tool definitions', () => {
+    const ctx = makeCtx(provider([doneTurn]))
+    const bare = calculateBudget(ctx, '', 0)
+    const withTools = calculateBudget(ctx, '', 2_000)
+    expect(withTools.tools).toBe(2_000)
+    expect(withTools.available).toBe(bare.available - 2_000)
+  })
+
+  it('uses smaller retrieved and tool-result slots during compact recovery', () => {
+    const standardCtx = makeCtx(provider([doneTurn]))
+    const compactCtx = { ...standardCtx, inputMode: 'compact_recovery' as const }
+    const budget = calculateBudget(standardCtx)
+    const standard = calculateInputSlotBudgets(standardCtx, budget)
+    const compact = calculateInputSlotBudgets(compactCtx, budget)
+
+    expect(compact.retrieved).toBeLessThan(standard.retrieved)
+    expect(compact.toolResults).toBeLessThan(standard.toolResults)
+  })
+
+  it('bounds proactively retrieved memory before generic history trimming', async () => {
+    const result = await buildMessages(makeCtx(provider([doneTurn]), {
+      retrievedContext: '检'.repeat(20_000),
+      model: { provider: 'mock', model: 'mock-model', contextWindow: 8_000 },
+    }))
+    const retrieved = result.messages.find((message) => typeof message.content !== 'string'
+      && message.content.some((part) => part.type === 'text' && part.text.includes('<retrieved_workspace_memory>')))
+    expect(retrieved).toBeDefined()
+    expect(estimateMessageTokens(retrieved!.content)).toBeLessThan(1_000)
+  })
+
+  it('caps tool results cumulatively while preserving the newest evidence', () => {
+    const messages: ClaudeMessage[] = Array.from({ length: 4 }, (_, index) => ({
+      role: 'user' as const,
+      content: [{
+        type: 'tool_result' as const,
+        tool_use_id: `call-${index + 1}`,
+        content: `${index === 3 ? 'NEWEST' : `OLD-${index + 1}`}:${'数'.repeat(400)}`,
+      }],
+    }))
+    const capped = capToolResultContext(messages, 520)
+    const contents = capped.flatMap((message) => typeof message.content === 'string'
+      ? []
+      : message.content.filter((part) => part.type === 'tool_result').map((part) => part.content))
+
+    expect(contents.at(-1)).toContain('NEWEST')
+    expect(contents[0]).toContain('omitted')
+    expect(contents.reduce((sum, content) => sum + estimateTokens(content), 0)).toBeLessThanOrEqual(520)
   })
 
   it('counts CJK at roughly one token per character', () => {

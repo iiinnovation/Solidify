@@ -42,6 +42,25 @@ const OPENAI_METADATA: ProviderMetadata = {
 }
 
 /**
+ * Pull deliberation text out of a streaming delta.
+ *
+ * There is no standard field: DeepSeek and Qwen use `reasoning_content`,
+ * OpenRouter and several proxies use `reasoning`. Neither is in the SDK types,
+ * so the delta is probed structurally rather than cast to a fixed shape.
+ */
+function readReasoningDelta(delta: unknown): string | undefined {
+  if (!delta || typeof delta !== 'object') return undefined
+  const candidate = delta as { reasoning_content?: unknown; reasoning?: unknown }
+  if (typeof candidate.reasoning_content === 'string' && candidate.reasoning_content) {
+    return candidate.reasoning_content
+  }
+  if (typeof candidate.reasoning === 'string' && candidate.reasoning) {
+    return candidate.reasoning
+  }
+  return undefined
+}
+
+/**
  * OpenAI provider implementation
  */
 export class OpenAIProvider implements ModelProvider {
@@ -156,6 +175,16 @@ export class OpenAIProvider implements ModelProvider {
           // Content delta
           if (delta.content) {
             yield { type: 'content_delta', delta: delta.content }
+          }
+
+          // Deliberation from reasoning models. DeepSeek and most
+          // OpenAI-compatible gateways carry it beside `content` rather than in
+          // it, and the SDK types do not declare the field. It is billed as
+          // output and spends the same `max_tokens` budget, so dropping it made
+          // a turn that thought for 8k tokens look like an empty response.
+          const reasoning = readReasoningDelta(delta)
+          if (reasoning) {
+            yield { type: 'reasoning_delta', delta: reasoning }
           }
 
           // Tool calls

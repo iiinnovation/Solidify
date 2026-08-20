@@ -290,6 +290,8 @@ describe('M1-27 agent loop acceptance', () => {
     const generator = runQuery(makeContext(provider))
 
     expect((await generator.next()).value).toMatchObject({ type: 'run.started' })
+    expect((await generator.next()).value).toMatchObject({ type: 'model.progress', phase: 'preparing' })
+    expect((await generator.next()).value).toMatchObject({ type: 'model.progress', phase: 'generating' })
     expect((await generator.next()).value).toMatchObject({ type: 'message.delta' })
     expect(produced).toBe(1)
 

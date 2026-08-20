@@ -68,6 +68,8 @@ export interface ContextBudget {
   total: number
   /** Measured system prompt cost (not trimmable) */
   system: number
+  /** Native tool definitions sent beside the messages. */
+  tools: number
   /** Reserved for output generation */
   output: number
   /** Remaining for messages and tool results */
@@ -90,7 +92,7 @@ export const DEFAULT_CONTEXT_WINDOW = 128_000
  * body, the tool section and retrieved context, all of which vary by orders of
  * magnitude.
  */
-export function calculateBudget(ctx: QueryContext, systemPrompt = ''): ContextBudget {
+export function calculateBudget(ctx: QueryContext, systemPrompt = '', toolTokens = 0): ContextBudget {
   const declared = ctx.model?.contextWindow
   const total = declared && declared > 0 ? declared : DEFAULT_CONTEXT_WINDOW
   const output = ctx.limits.maxOutputTokens || 4096
@@ -99,9 +101,30 @@ export function calculateBudget(ctx: QueryContext, systemPrompt = ''): ContextBu
   // Never hand back a negative or absurdly small budget: if the system prompt
   // alone crowds out the window, still allow a floor so the run can report a
   // real provider error rather than sending zero messages.
-  const available = Math.max(1024, total - output - system)
+  const tools = Math.max(0, toolTokens)
+  const available = Math.max(1024, total - output - system - tools)
 
-  return { total, system, output, available }
+  return { total, system, tools, output, available }
+}
+
+export interface InputSlotBudgets {
+  /** Proactive workspace-memory disclosure on the first turn. */
+  retrieved: number
+  /** Cumulative inline budget across every tool result in the request. */
+  toolResults: number
+}
+
+/**
+ * Allocate bounded input slots before generic history trimming. This prevents
+ * several individually-small tool results from collectively monopolizing the
+ * context window. Compact recovery deliberately discloses much less evidence.
+ */
+export function calculateInputSlotBudgets(ctx: QueryContext, budget: ContextBudget): InputSlotBudgets {
+  const compact = ctx.inputMode === 'compact_recovery'
+  return {
+    retrieved: Math.max(256, Math.min(compact ? 512 : 1_500, Math.floor(budget.available * (compact ? 0.04 : 0.1)))),
+    toolResults: Math.max(512, Math.min(compact ? 2_000 : 12_000, Math.floor(budget.available * (compact ? 0.12 : 0.3)))),
+  }
 }
 
 /**
@@ -538,8 +561,10 @@ export async function applyBudget(
   ctx: QueryContext,
   messages: ClaudeMessage[],
   systemPrompt = '',
+  toolTokens = 0,
 ): Promise<ClaudeMessage[]> {
-  const budget = calculateBudget(ctx, systemPrompt)
+  const budget = calculateBudget(ctx, systemPrompt, toolTokens)
+  const slots = calculateInputSlotBudgets(ctx, budget)
 
   // Step 1: Handleize large tool results
   const processedMessages = await Promise.all(messages.map(async msg => {
@@ -561,32 +586,96 @@ export async function applyBudget(
     return { ...msg, content: processedContent }
   }))
 
-  // Step 2: Trim if over budget
-  const currentTokens = processedMessages.reduce(
+  // Step 2: Bound tool-result history as a cumulative slot. Results are kept
+  // newest-first; older payloads retain a small model-visible tombstone so the
+  // tool_use/tool_result protocol pairing remains valid.
+  const slottedMessages = capToolResultContext(processedMessages, slots.toolResults)
+
+  // Step 3: Trim if over budget
+  const currentTokens = slottedMessages.reduce(
     (sum, msg) => sum + estimateMessageTokens(msg.content),
     0,
   )
   const trimmed = currentTokens > budget.available
-    ? trimMessages(processedMessages, budget.available)
-    : processedMessages
-  if (trimmed.length !== processedMessages.length) {
+    ? trimMessages(slottedMessages, budget.available)
+    : slottedMessages
+  if (trimmed.length !== slottedMessages.length) {
     console.debug(
-      `[context-budget] Trimmed ${processedMessages.length - trimmed.length} message(s): ${currentTokens} > ${budget.available}`,
+      `[context-budget] Trimmed ${slottedMessages.length - trimmed.length} message(s): ${currentTokens} > ${budget.available}`,
     )
   }
 
-  // Step 3: M1-11 - Detect and remove orphan tool_results left by the trim
+  // Step 4: M1-11 - Detect and remove orphan tool_results left by the trim
   const { cleanedMessages, orphanCount } = removeOrphanToolResults(trimmed)
   if (orphanCount > 0) {
     console.warn(`[context-budget] Removed ${orphanCount} orphan tool_result(s)`)
   }
 
-  // Step 4: Drop messages the sweep emptied — both APIs reject empty content
+  // Step 5: Drop messages the sweep emptied — both APIs reject empty content
   const nonEmpty = cleanedMessages.filter(
     msg => typeof msg.content === 'string' ? msg.content.length > 0 : msg.content.length > 0,
   )
 
   return nonEmpty.length > 0 ? nonEmpty : messages.slice(-1)
+}
+
+const OMITTED_TOOL_RESULT = '[Earlier result omitted; re-read if needed.]'
+
+/**
+ * Keep recent tool evidence within a single cumulative token allowance.
+ * Exported for boundary tests because this is a core progressive-disclosure
+ * invariant, not a provider implementation detail.
+ */
+export function capToolResultContext(messages: ClaudeMessage[], maxTokens: number): ClaudeMessage[] {
+  const output = messages.map((message) => ({
+    ...message,
+    content: typeof message.content === 'string' ? message.content : [...message.content],
+  }))
+  const results: Array<{ messageIndex: number; partIndex: number; content: string }> = []
+
+  for (let messageIndex = 0; messageIndex < output.length; messageIndex++) {
+    const content = output[messageIndex].content
+    if (typeof content === 'string') continue
+    for (let partIndex = 0; partIndex < content.length; partIndex++) {
+      const part = content[partIndex]
+      if (part.type === 'tool_result') results.push({ messageIndex, partIndex, content: part.content })
+    }
+  }
+
+  const markerTokens = estimateTokens(OMITTED_TOOL_RESULT)
+  // Reserve a valid non-empty result for every tool call before spending the
+  // rest on recent evidence. maxToolCalls is bounded, so the 512-token floor in
+  // calculateInputSlotBudgets covers this reserve in normal operation.
+  let remaining = Math.max(0, maxTokens - markerTokens * results.length)
+  for (const result of results) {
+    const message = output[result.messageIndex]
+    if (typeof message.content === 'string') continue
+    const part = message.content[result.partIndex]
+    if (part.type === 'tool_result') message.content[result.partIndex] = { ...part, content: OMITTED_TOOL_RESULT }
+  }
+
+  for (let index = results.length - 1; index >= 0 && remaining > 0; index--) {
+    const result = results[index]
+    const message = output[result.messageIndex]
+    if (typeof message.content === 'string') continue
+    const part = message.content[result.partIndex]
+    if (part.type !== 'tool_result') continue
+    const originalTokens = estimateTokens(result.content)
+    const extraForFull = Math.max(0, originalTokens - markerTokens)
+    if (extraForFull <= remaining) {
+      message.content[result.partIndex] = { ...part, content: result.content }
+      remaining -= extraForFull
+      continue
+    }
+    const separatorTokens = estimateTokens('\n\n')
+    const previewBudget = Math.max(0, remaining - separatorTokens)
+    const preview = previewBudget > 0 ? clipGenericText(result.content, previewBudget).clipped.trim() : ''
+    const replacement = preview ? `${preview}\n\n${OMITTED_TOOL_RESULT}` : OMITTED_TOOL_RESULT
+    message.content[result.partIndex] = { ...part, content: replacement }
+    remaining = 0
+  }
+
+  return output
 }
 
 /**

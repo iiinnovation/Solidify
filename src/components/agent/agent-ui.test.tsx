@@ -55,6 +55,17 @@ describe('agent run UI', () => {
     expect(screen.getByText(/notes.md/)).not.toBeNull()
   })
 
+  it('shows safe live model activity above the tool count', () => {
+    render(<RunTimeline run={{
+      ...completedRun,
+      status: 'running',
+      completedAt: undefined,
+      activity: { phase: 'reasoning', label: '正在分析任务…', observedChars: 200 },
+    }} />)
+
+    expect(screen.getByText('正在分析任务…')).not.toBeNull()
+  })
+
   it('keeps only the latest two tool calls visible until earlier calls are expanded', async () => {
     const tools = Array.from({ length: 4 }, (_, index) => ({
       call: { id: `call-${index + 1}`, name: `tool_${index + 1}`, input: {} },

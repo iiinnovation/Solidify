@@ -514,4 +514,69 @@ describe('runQuery tool execution (M1-14/15)', () => {
     // later failures must not trip a breaker meant for three in a row.
     expect(requests.every((request) => !JSON.stringify(request.messages).includes('安全熔断'))).toBe(true)
   })
+
+  it('compacts and retries a reasoning-only turn without exposing deliberation', async () => {
+    // Reproduces the ledger from the drawio run: the turn came back with
+    // text:"", toolCalls:[], outputTokens:8192, stopReason:"max_tokens". The
+    // old code ended it as run.exhausted/max_tokens, which said nothing useful.
+    let calls = 0
+    const systems: string[] = []
+    const privateReasoning = '思考架构分层'.repeat(50)
+    const provider: ModelProvider = {
+      ...makeMockProvider([]),
+      async *stream(request): AsyncGenerator<CompletionChunk> {
+        calls++
+        systems.push(request.system ?? '')
+        yield { type: 'message_start' }
+        yield { type: 'reasoning_delta', delta: privateReasoning }
+        yield {
+          type: 'message_end',
+          usage: { inputTokens: 17_079, outputTokens: 8_192, totalTokens: 25_271 },
+          stopReason: 'max_tokens',
+        }
+      },
+    }
+
+    const events: QueryEvent[] = []
+    for await (const event of runQuery(makeCtx(provider, []))) events.push(event)
+
+    // The engine retries once with compact input. Reasoning is represented only
+    // by aggregate progress and never enters the answer/event payload.
+    expect(calls).toBe(2)
+    expect(systems[0]).not.toContain('previous model turn')
+    expect(systems[1]).toContain('previous model turn')
+    expect(events.some((event) => event.type === 'message.delta')).toBe(false)
+    expect(events).toContainEqual(expect.objectContaining({ type: 'model.progress', phase: 'reasoning' }))
+    expect(JSON.stringify(events)).not.toContain(privateReasoning)
+    expect(events.at(-1)).toMatchObject({
+      type: 'run.exhausted',
+      reason: 'max_output_tokens',
+    })
+  })
+
+  it('still continues a truncated turn that produced real text alongside reasoning', async () => {
+    let call = 0
+    const provider: ModelProvider = {
+      ...makeMockProvider([]),
+      async *stream(): AsyncGenerator<CompletionChunk> {
+        call++
+        yield { type: 'message_start' }
+        if (call === 1) {
+          yield { type: 'reasoning_delta', delta: '先想一下' }
+          yield { type: 'content_delta', delta: '前半段' }
+          yield { type: 'message_end', stopReason: 'max_tokens' }
+          return
+        }
+        yield { type: 'content_delta', delta: '后半段' }
+        yield { type: 'message_end', stopReason: 'end_turn' }
+      },
+    }
+
+    const events: QueryEvent[] = []
+    for await (const event of runQuery(makeCtx(provider, []))) events.push(event)
+
+    // Reasoning next to real text must not block the existing continuation.
+    expect(call).toBe(2)
+    expect(events.at(-1)?.type).toBe('run.completed')
+  })
 })

@@ -74,4 +74,25 @@ describe('AnthropicProvider', () => {
     })
     expect(aborted).toBe(true)
   })
+
+  it('surfaces extended-thinking deltas without treating them as answer text', async () => {
+    async function* thinkingStream() {
+      yield { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: '内部分析' } }
+      yield { type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: '最终答案' } }
+    }
+
+    Object.defineProperty(provider, 'client', {
+      value: { messages: { create: async () => thinkingStream() } },
+    })
+
+    const events = []
+    for await (const event of provider.stream({
+      model: 'claude-test',
+      messages: [{ role: 'user', content: 'hello' }],
+      stream: true,
+    })) events.push(event)
+
+    expect(events).toContainEqual({ type: 'reasoning_delta', delta: '内部分析' })
+    expect(events).toContainEqual({ type: 'content_delta', delta: '最终答案' })
+  })
 })

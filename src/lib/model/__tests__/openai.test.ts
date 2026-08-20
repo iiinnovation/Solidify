@@ -317,4 +317,33 @@ describe('OpenAIProvider', () => {
     })
     expect(aborted).toBe(true)
   })
+
+  it('surfaces reasoning deltas that arrive beside empty content', async () => {
+    // DeepSeek spent a whole 8k output window on reasoning_content while
+    // delta.content stayed empty, so the run saw a turn that "returned nothing".
+    installStream(provider, [
+      { choices: [{ delta: { content: null, reasoning_content: '先分析架构层次' } }] },
+      { choices: [{ delta: { reasoning_content: '再确定节点关系' } }] },
+      { choices: [{ delta: {}, finish_reason: 'length' }] },
+    ])
+
+    const events = await collectStream(provider)
+    expect(events.filter((event) => event.type === 'reasoning_delta')).toEqual([
+      { type: 'reasoning_delta', delta: '先分析架构层次' },
+      { type: 'reasoning_delta', delta: '再确定节点关系' },
+    ])
+    expect(events.some((event) => event.type === 'content_delta')).toBe(false)
+    expect(events.at(-1)).toMatchObject({ type: 'message_end', stopReason: 'max_tokens' })
+  })
+
+  it('reads the alternative reasoning field used by proxy gateways', async () => {
+    installStream(provider, [
+      { choices: [{ delta: { reasoning: 'OpenRouter 风格字段' } }] },
+      { choices: [{ delta: { content: '正文' }, finish_reason: 'stop' }] },
+    ])
+
+    const events = await collectStream(provider)
+    expect(events).toContainEqual({ type: 'reasoning_delta', delta: 'OpenRouter 风格字段' })
+    expect(events).toContainEqual({ type: 'content_delta', delta: '正文' })
+  })
 })

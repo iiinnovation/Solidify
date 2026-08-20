@@ -891,7 +891,7 @@ ${result.content}
               // the text is already accumulated into `run.text` by applyRunEvent.
               // Persisting them grew runEvents without bound and made every patch
               // copy an ever-larger array into localStorage.
-              const isDurableFact = event.type !== 'tool.progress'
+              const isDurableFact = event.type !== 'tool.progress' && event.type !== 'model.progress'
               if (isDurableFact) runEvents.push(event)
               const pptdPreview = getPptdProgressPreview(event)
               const reducedEvent = pptdPreview && event.type === 'tool.progress'

@@ -20,6 +20,8 @@ export interface ModelProvider {
    * fall back to a conservative default rather than assuming a 200k window.
    */
   contextWindow?: number
+  /** Optional provider/model-specific output ceiling. */
+  maxOutputTokens?: number
 }
 
 // 预设模板：用户可一键添加，只需填 Key

@@ -127,4 +127,19 @@ describe('Skill progressive disclosure context', () => {
     await expect(buildMessages(context({ harnessContext: [`可用的 Skill\n${'x'.repeat(4000)}`] })))
       .rejects.toThrow(/600-token budget/)
   })
+
+  it('injects only bounded Skill core rules and points to the full guide', async () => {
+    const result = await buildMessages(context({
+      skill: {
+        metadata: { name: 'large-skill', version: '1.0.0', description: '大型技能' },
+        content: '核心规则\n'.repeat(3_000),
+        path: 'builtin://large-skill/SKILL.md',
+        virtualRoot: '.solidify/skills/large-skill',
+        resourceFiles: { 'SKILL.md': 'full document' },
+      },
+    }))
+
+    expect(result.skillTokens.bodyTokens).toBeLessThanOrEqual(2_000)
+    expect(result.system).toContain('Read .solidify/skills/large-skill/SKILL.md')
+  })
 })

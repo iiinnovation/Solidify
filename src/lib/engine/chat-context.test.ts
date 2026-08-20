@@ -179,4 +179,16 @@ describe('chat Agent workspace context', () => {
     })
     expect(enabled.providerRegistry.get('openai').metadata.supportsVision).toBe(true)
   })
+
+  it('uses explicit provider context and output capabilities before model-name inference', () => {
+    const context = createChatQueryContext({
+      runId: 'run-explicit-limits', conversationId: 'conversation', messages: [{ role: 'user', content: 'hello' }],
+      provider: { ...provider, modelId: 'unknown-proxy-model', contextWindow: 24_000, maxOutputTokens: 3_000 },
+      signal: new AbortController().signal,
+    })
+
+    expect(context.model.contextWindow).toBe(24_000)
+    expect(context.limits.maxOutputTokens).toBe(3_000)
+    expect(context.model.maxTokens).toBe(3_000)
+  })
 })

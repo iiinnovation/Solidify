@@ -28,6 +28,12 @@ export interface RunState {
   usage?: UsageStats
   metrics?: ExecutionMetrics
   firstTokenAt?: number
+  /** Safe aggregate model activity; never contains raw deliberation text. */
+  activity?: {
+    phase: Extract<QueryEvent, { type: 'model.progress' }>['phase']
+    label: string
+    observedChars?: number
+  }
   error?: string
   startedAt: number
   completedAt?: number
@@ -111,6 +117,16 @@ function toolExecutionMs(state: RunState): number {
 
 export function applyRunEvent(state: RunState, event: QueryEvent): RunState {
   switch (event.type) {
+    case 'model.progress':
+      return {
+        ...state,
+        activity: {
+          phase: event.phase,
+          label: modelProgressLabel(event.phase),
+          ...(event.observedChars === undefined ? {} : { observedChars: event.observedChars }),
+        },
+        ...(event.phase !== 'preparing' && !state.firstTokenAt ? { firstTokenAt: Date.now() } : {}),
+      }
     case 'message.delta':
       return {
         ...state,
@@ -159,6 +175,7 @@ export function applyRunEvent(state: RunState, event: QueryEvent): RunState {
     case 'run.completed':
       return {
         ...state,
+        activity: undefined,
         status: 'completed',
         usage: event.usage,
         metrics: computeMetrics(state, event.usage),
@@ -167,6 +184,7 @@ export function applyRunEvent(state: RunState, event: QueryEvent): RunState {
     case 'run.failed':
       return {
         ...state,
+        activity: undefined,
         status: event.error.kind === 'aborted' ? 'aborted' : 'failed',
         error: event.error.message,
         usage: event.usage,
@@ -176,6 +194,7 @@ export function applyRunEvent(state: RunState, event: QueryEvent): RunState {
     case 'run.exhausted':
       return {
         ...state,
+        activity: undefined,
         status: 'exhausted',
         error: exhaustedLabel(event.reason),
         usage: event.usage,
@@ -185,6 +204,13 @@ export function applyRunEvent(state: RunState, event: QueryEvent): RunState {
     default:
       return state
   }
+}
+
+function modelProgressLabel(phase: Extract<QueryEvent, { type: 'model.progress' }>['phase']): string {
+  if (phase === 'preparing') return '正在准备上下文…'
+  if (phase === 'reasoning') return '正在分析任务…'
+  if (phase === 'generating') return '正在生成结果…'
+  return '正在准备工具调用…'
 }
 
 
@@ -242,6 +268,7 @@ function isBudget(value: unknown): value is TaskTreeBudgetSnapshot {
 
 function exhaustedLabel(reason: Extract<QueryEvent, { type: 'run.exhausted' }>['reason']): string {
   if (reason === 'max_turns') return '已达到最大运行轮数'
+  if (reason === 'max_output_tokens') return '已自动精简上下文重试，但模型仍未在本轮输出预算内产生有效结果'
   if (reason === 'max_tokens') return '已达到 token 上限'
   return '已达到工具调用上限'
 }
