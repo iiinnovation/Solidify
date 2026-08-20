@@ -119,6 +119,7 @@ export type ToolErrorKind =
   | 'permission_denied'
   | 'timeout'
   | 'aborted'
+  | 'circuit_breaker'
   | 'runtime'
 
 export interface ToolError {

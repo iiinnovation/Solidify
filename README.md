@@ -119,6 +119,13 @@ VITE_RAGFLOW_API_URL=http://localhost:9380
 VITE_RAGFLOW_API_KEY=ragflow-...
 ```
 
+部署 `chat` Edge Function 时会强制校验 Supabase 登录态，并且只代理受信任的模型主机。
+默认允许 OpenAI、Anthropic 和 DeepSeek；如需自定义兼容服务，请通过 Edge Secret 增加精确主机名：
+
+```bash
+supabase secrets set MODEL_PROXY_ALLOWED_HOSTS=api.example.com,models.example.org
+```
+
 ### 开发模式
 
 ```bash

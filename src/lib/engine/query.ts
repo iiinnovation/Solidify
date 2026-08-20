@@ -282,6 +282,18 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
         consecutiveToolFailures,
       )
 
+      // Three real executions are enough evidence that repeating the same
+      // strategy is unsafe. A fourth request is reported once and terminates
+      // the run immediately; it is not counted as another execution failure.
+      const circuitFailure = results.find((result) => result.error?.kind === 'circuit_breaker')
+      if (circuitFailure) {
+        const error: RunError = { kind: 'internal', message: circuitFailure.error!.message }
+        appendTerminalFact(harness, logger, 'run.failed', { ...error, usage })
+        yield { type: 'run.failed', error, usage: { ...usage } }
+        logger.error('run.failed', error)
+        return
+      }
+
       // Some deterministic generators own their final artifact contract. Their
       // tool result stores the complete assistant payload behind a memory
       // handle so it bypasses another lossy model round and the normal 24KB tool
@@ -717,7 +729,7 @@ async function* executeTools(
         callId: call.id,
         success: false,
         content: message,
-        error: { kind: 'runtime', message, recoverable: false },
+        error: { kind: 'circuit_breaker', message, recoverable: false },
         metadata: { durationMs: 0 },
       }
       results.push(result)

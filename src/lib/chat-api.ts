@@ -1,4 +1,6 @@
 import type { ModelProvider } from '@/stores/model-store'
+import { supabase, supabaseConfigured } from '@/lib/supabase'
+import { createDirectProviderFetch } from '@/lib/model/provider-transport'
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string
@@ -9,14 +11,13 @@ const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string
  * relay preserves multipart messages and tool calls instead of flattening them.
  */
 export function createModelProviderFetch(provider: ModelProvider): typeof globalThis.fetch | undefined {
-  if (!SUPABASE_URL?.trim() || !SUPABASE_ANON_KEY?.trim()) {
-    return import.meta.env.DEV ? createLocalProviderFetch() : undefined
+  const relayClient = supabase
+  if (!supabaseConfigured || !relayClient || !SUPABASE_URL?.trim() || !SUPABASE_ANON_KEY?.trim()) {
+    return import.meta.env.DEV ? createLocalProviderFetch() : createDirectProviderFetch()
   }
 
   return async (input, init) => {
-    const { createClient } = await import('@supabase/supabase-js')
-    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
-    const { data: { session } } = await supabase.auth.getSession()
+    const { data: { session } } = await relayClient.auth.getSession()
     if (!session?.access_token) throw new Error('未登录或会话已过期')
 
     const nativeBody = await readFetchJsonBody(input, init)

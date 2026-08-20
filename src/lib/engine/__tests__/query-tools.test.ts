@@ -204,9 +204,15 @@ describe('runQuery tool execution (M1-14/15)', () => {
     expect(executions).toBe(3)
     expect(events.filter((event) => event.type === 'tool.requested')).toHaveLength(4)
     expect(events.filter((event) => event.type === 'tool.completed').at(-1)).toMatchObject({
-      result: { success: false, error: { recoverable: false } },
+      result: {
+        success: false,
+        error: { kind: 'circuit_breaker', recoverable: false, message: expect.stringContaining('连续失败 3 次') },
+      },
     })
-    expect(events.at(-1)?.type).toBe('run.completed')
+    expect(events.at(-1)).toMatchObject({
+      type: 'run.failed',
+      error: { message: expect.stringContaining('连续失败 3 次') },
+    })
   })
 
   it('lets the model correct invalid generate_pptd arguments before the pipeline starts', async () => {

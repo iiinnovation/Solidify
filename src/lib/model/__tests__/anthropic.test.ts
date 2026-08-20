@@ -1,10 +1,33 @@
 import { describe, expect, it } from 'vitest'
 import { AnthropicProvider } from '../anthropic'
+import { ProviderTransportError } from '../provider-transport'
 
 describe('AnthropicProvider', () => {
   const provider = new AnthropicProvider({
     apiKey: 'test-key',
     baseURL: 'https://api.anthropic.com',
+  })
+
+  it('surfaces a browser transport diagnostic wrapped by the SDK', async () => {
+    const localProvider = new AnthropicProvider({ apiKey: 'test-key' })
+    const diagnostic = '无法连接模型服务。浏览器可能拦截了跨域请求（CORS）'
+    Object.defineProperty(localProvider, 'client', {
+      value: {
+        messages: { create: async () => { throw new Error('Connection error.', { cause: new ProviderTransportError(diagnostic) }) } },
+      },
+    })
+
+    const events = []
+    for await (const event of localProvider.stream({
+      model: 'claude-test',
+      messages: [{ role: 'user', content: 'hello' }],
+      stream: true,
+    })) events.push(event)
+
+    expect(events.at(-1)).toMatchObject({
+      type: 'error',
+      error: { code: 'network', type: 'network', message: diagnostic },
+    })
   })
 
   it('yields timeout error when stream stalls beyond stallTimeoutMs and triggers abort', async () => {

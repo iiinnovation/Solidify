@@ -6,6 +6,7 @@
 import OpenAI from 'openai'
 import type { ModelProvider } from './provider'
 import { iterateWithStallTimeout, resolveStallTimeout } from './stream-watchdog'
+import { providerTransportErrorMessage } from './provider-transport'
 import type {
   ProviderConfig,
   CompletionRequest,
@@ -341,6 +342,15 @@ export class OpenAIProvider implements ModelProvider {
    * Convert error to unified format
    */
   private convertError(error: unknown): ModelError {
+    const transportMessage = providerTransportErrorMessage(error)
+    if (transportMessage) {
+      return {
+        code: 'network',
+        message: transportMessage,
+        type: 'network',
+        retryable: true,
+      }
+    }
     if (error instanceof OpenAI.APIError) {
       const type = this.mapErrorType(error.type)
       return {

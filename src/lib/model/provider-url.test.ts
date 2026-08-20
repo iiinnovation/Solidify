@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { providerBaseURL } from './provider-url'
+import { normalizeProviderEndpoint, providerBaseURL } from './provider-url'
 
 describe('providerBaseURL', () => {
   it('removes the OpenAI chat completion endpoint and keeps /v1', () => {
@@ -27,7 +27,21 @@ describe('providerBaseURL', () => {
       .toBe('https://proxy.example/api')
   })
 
-  it('uses the SDK default for an empty endpoint', () => {
-    expect(providerBaseURL('  ', 'openai')).toBeUndefined()
+  it('rejects an empty endpoint with an actionable error', () => {
+    expect(() => providerBaseURL('  ', 'openai')).toThrow('模型 API URL 不能为空')
+  })
+
+  it('rejects malformed and non-http endpoints', () => {
+    expect(() => normalizeProviderEndpoint('not a URL', 'openai'))
+      .toThrow('模型 API URL 无效')
+    expect(() => normalizeProviderEndpoint('ftp://models.example/v1', 'openai'))
+      .toThrow('必须使用 http:// 或 https://')
+  })
+
+  it('normalizes standard endpoint paths before deriving the SDK base URL', () => {
+    expect(normalizeProviderEndpoint('https://proxy.example/v1', 'openai'))
+      .toBe('https://proxy.example/v1/chat/completions')
+    expect(normalizeProviderEndpoint('https://proxy.example/v1', 'anthropic'))
+      .toBe('https://proxy.example/v1/messages')
   })
 })

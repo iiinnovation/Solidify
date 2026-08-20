@@ -6,6 +6,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import type { ModelProvider } from './provider'
 import { iterateWithStallTimeout, resolveStallTimeout } from './stream-watchdog'
+import { providerTransportErrorMessage } from './provider-transport'
 import type {
   CompletionRequest,
   CompletionChunk,
@@ -334,6 +335,15 @@ export class AnthropicProvider implements ModelProvider {
    * Convert Anthropic error to unified format
    */
   private convertError(error: unknown): ModelError {
+    const transportMessage = providerTransportErrorMessage(error)
+    if (transportMessage) {
+      return {
+        code: 'network',
+        message: transportMessage,
+        type: 'network',
+        retryable: true,
+      }
+    }
     if (error instanceof Anthropic.APIError) {
       let type: ModelError['type'] = 'api_error'
       let retryable = false

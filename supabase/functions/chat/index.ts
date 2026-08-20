@@ -6,11 +6,26 @@ import {
   streamChat,
   streamChatCustom,
   streamNativeCustom,
+  buildNativeRequestBody,
   getDefaultModel,
   type AIModel,
   type ApiFormat,
   type ToolDefinition,
 } from '../_shared/ai-providers.ts'
+
+const DEFAULT_RELAY_HOSTS = new Set([
+  'api.openai.com',
+  'api.anthropic.com',
+  'api.deepseek.com',
+])
+const ALLOWED_RELAY_HOSTS = new Set([
+  ...DEFAULT_RELAY_HOSTS,
+  ...(Deno.env.get('MODEL_PROXY_ALLOWED_HOSTS') ?? '')
+    .split(',')
+    .map((host) => host.trim().toLowerCase())
+    .filter(Boolean),
+])
+const MAX_NATIVE_BODY_BYTES = 12_000_000
 
 const BASE_SYSTEM_PROMPT = `你是 Solidify 的 AI 助手，专门服务于项目实施人员（项目经理、实施工程师、售前顾问）。
 
@@ -115,16 +130,50 @@ interface ChatRequest {
   targetUrl?: string
 }
 
+function parseRelayTarget(rawUrl: string, format: ApiFormat): URL {
+  if (format !== 'openai' && format !== 'anthropic') throw new Error('不支持的 Provider 格式')
+
+  let endpoint: URL
+  try {
+    endpoint = new URL(rawUrl)
+  } catch {
+    throw new Error('模型 API URL 必须是有效的 https 地址')
+  }
+  if (endpoint.protocol !== 'https:' || endpoint.username || endpoint.password) {
+    throw new Error('模型 API URL 必须使用不含凭据的 https:// 地址')
+  }
+
+  if (!ALLOWED_RELAY_HOSTS.has(endpoint.hostname.toLowerCase())) {
+    throw new Error(`模型服务主机未获准代理：${endpoint.hostname}`)
+  }
+
+  const path = endpoint.pathname.replace(/\/+$/, '')
+  const expectedPath = format === 'openai' ? /\/chat\/completions$/ : /\/v1\/messages$/
+  if (!expectedPath.test(path)) {
+    throw new Error(`模型 API 路径与 ${format} 格式不匹配`)
+  }
+  return endpoint
+}
+
+function relayResponse(upstream: Response, streaming: boolean): Response {
+  const headers: Record<string, string> = {
+    ...corsHeaders,
+    'Content-Type': upstream.headers.get('Content-Type')
+      ?? (streaming ? 'text/event-stream' : 'application/json'),
+  }
+  if (streaming) {
+    headers['Cache-Control'] = 'no-cache'
+    headers.Connection = 'keep-alive'
+  }
+  return new Response(upstream.body, { headers })
+}
+
 serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return handleCors()
 
   try {
-    // 验证用户身份（可选，Phase 2 启用后强制要求）
-    const _user = await getAuthUser(req)
-    // 如果需要强制登录，取消下面的注释（并把 _user 改回 user）
-    // if (!_user) {
-    //   return createErrorResponse('UNAUTHORIZED', 401, '未登录')
-    // }
+    const user = await getAuthUser(req)
+    if (!user) return createErrorResponse('AUTH_REQUIRED', 401, '未登录或会话已过期')
 
     const { messages, model, provider, skillSystemPrompt, skillSkipConfirmation, tools, nativeBody, targetUrl }: ChatRequest = await req.json()
 
@@ -137,18 +186,25 @@ serve(async (req: Request) => {
         return createErrorResponse('VALIDATION_ERROR', 422, 'Provider 配置不完整')
       }
       let endpoint: URL
+      let upstreamBody: Record<string, unknown>
       try {
-        endpoint = new URL(targetUrl)
-        if (!/^https?:$/.test(endpoint.protocol)) throw new Error('unsupported protocol')
-      } catch {
-        return createErrorResponse('VALIDATION_ERROR', 422, '模型 API URL 必须是有效的 http(s) 地址')
+        endpoint = parseRelayTarget(targetUrl, provider.format)
+        if (new TextEncoder().encode(JSON.stringify(nativeBody)).byteLength > MAX_NATIVE_BODY_BYTES) {
+          return createErrorResponse('VALIDATION_ERROR', 413, '模型请求体过大')
+        }
+        upstreamBody = buildNativeRequestBody(nativeBody, provider.modelId, provider.format)
+      } catch (error) {
+        return createErrorResponse(
+          'VALIDATION_ERROR',
+          422,
+          error instanceof Error ? error.message : '模型代理请求无效',
+        )
       }
       const upstreamRes = await streamNativeCustom(
         endpoint.toString(),
         provider.apiKey,
-        provider.modelId,
         provider.format,
-        nativeBody,
+        upstreamBody,
       )
       if (!upstreamRes.ok) {
         const errText = await upstreamRes.text()
@@ -156,14 +212,7 @@ serve(async (req: Request) => {
         if (upstreamRes.status === 429) return createErrorResponse('AI_RATE_LIMITED', 503, '请求过于频繁，请稍后再试')
         return createErrorResponse('AI_PROVIDER_ERROR', 502, `AI 服务异常: ${upstreamRes.status}`)
       }
-      return new Response(upstreamRes.body, {
-        headers: {
-          ...corsHeaders,
-          'Content-Type': 'text/event-stream',
-          'Cache-Control': 'no-cache',
-          Connection: 'keep-alive',
-        },
-      })
+      return relayResponse(upstreamRes, upstreamBody.stream === true)
     }
 
     const systemPrompt = getSystemPrompt(skillSystemPrompt, skillSkipConfirmation)
@@ -179,8 +228,18 @@ serve(async (req: Request) => {
       if (!provider.apiUrl || !provider.apiKey || !provider.modelId) {
         return createErrorResponse('VALIDATION_ERROR', 422, 'Provider 配置不完整')
       }
+      let endpoint: URL
+      try {
+        endpoint = parseRelayTarget(provider.apiUrl, provider.format)
+      } catch (error) {
+        return createErrorResponse(
+          'VALIDATION_ERROR',
+          422,
+          error instanceof Error ? error.message : '模型 API URL 无效',
+        )
+      }
       upstreamRes = await streamChatCustom(
-        provider.apiUrl,
+        endpoint.toString(),
         provider.apiKey,
         provider.modelId,
         provider.format,
@@ -203,14 +262,7 @@ serve(async (req: Request) => {
       return createErrorResponse('AI_PROVIDER_ERROR', 502, `AI 服务异常: ${upstreamRes.status}`)
     }
 
-    return new Response(upstreamRes.body, {
-      headers: {
-        ...corsHeaders,
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        Connection: 'keep-alive',
-      },
-    })
+    return relayResponse(upstreamRes, true)
   } catch (error) {
     console.error('Chat function error:', error)
     return createErrorResponse(

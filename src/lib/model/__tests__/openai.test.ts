@@ -5,6 +5,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { OpenAIProvider } from '../openai'
 import { AnthropicProvider } from '../anthropic'
+import { ProviderTransportError } from '../provider-transport'
 import type { CompletionRequest, ToolDefinition } from '../types'
 
 function installStream(provider: OpenAIProvider, chunks: unknown[]) {
@@ -65,6 +66,21 @@ describe('OpenAIProvider', () => {
     expect(models).toContain('gpt-4-turbo')
     expect(models).toContain('gpt-3.5-turbo')
     expect(models).toContain('o1-preview')
+  })
+
+  it('surfaces a browser transport diagnostic wrapped by the SDK', async () => {
+    const diagnostic = '无法连接模型服务。浏览器可能拦截了跨域请求（CORS）'
+    Object.defineProperty(provider, 'client', {
+      value: {
+        chat: { completions: { create: async () => { throw new Error('Connection error.', { cause: new ProviderTransportError(diagnostic) }) } } },
+      },
+    })
+
+    const events = await collectStream(provider)
+    expect(events.at(-1)).toMatchObject({
+      type: 'error',
+      error: { code: 'network', type: 'network', message: diagnostic },
+    })
   })
 
   it('should convert messages correctly', () => {
