@@ -120,7 +120,7 @@ describe('runQuery tool execution (M1-14/15)', () => {
     const generator: Tool = {
       name: 'generate_pptd', description: 'generate', inputSchema: { type: 'object' },
       readOnly: true, concurrencySafe: false, destructive: false,
-      requiresConfirmation: false, availability: 'always', permissions: [],
+      requiresConfirmation: false, terminalOnFailure: true, availability: 'always', permissions: [],
       async execute(): Promise<ToolResult> {
         const contentHandle = await memory.store(artifact)
         return {
@@ -161,7 +161,7 @@ describe('runQuery tool execution (M1-14/15)', () => {
     const generator: Tool = {
       name: 'generate_pptd', description: 'generate', inputSchema: { type: 'object' },
       readOnly: true, concurrencySafe: false, destructive: false,
-      requiresConfirmation: false, availability: 'always', permissions: [],
+      requiresConfirmation: false, terminalOnFailure: true, availability: 'always', permissions: [],
       async execute(): Promise<ToolResult> {
         throw new Error('PPTD page 输出达到 token 上限')
       },
@@ -176,6 +176,37 @@ describe('runQuery tool execution (M1-14/15)', () => {
       type: 'run.failed',
       error: { kind: 'internal', message: 'PPTD page 输出达到 token 上限' },
     })
+  })
+
+  it('blocks a fourth execution after three consecutive failures', async () => {
+    const scripts: CompletionChunk[][] = [0, 1, 2, 3].map((index) => [
+      { type: 'tool_call_start' as const, id: `read-${index}`, name: 'flaky_read' },
+      { type: 'tool_call_end' as const, id: `read-${index}`, input: {} },
+      { type: 'message_end' as const, stopReason: 'tool_use' as const },
+    ])
+    scripts.push(finalTurn)
+    let executions = 0
+    const provider = makeMockProvider(scripts)
+    const flaky: Tool = {
+      name: 'flaky_read', description: 'flaky read', inputSchema: { type: 'object' },
+      readOnly: true, concurrencySafe: false, destructive: false,
+      requiresConfirmation: false, availability: 'always', permissions: [],
+      async execute(): Promise<ToolResult> {
+        executions++
+        throw new Error('temporary failure')
+      },
+      renderCall: () => 'flaky read',
+    }
+
+    const events: QueryEvent[] = []
+    for await (const event of runQuery(makeCtx(provider, [flaky]))) events.push(event)
+
+    expect(executions).toBe(3)
+    expect(events.filter((event) => event.type === 'tool.requested')).toHaveLength(4)
+    expect(events.filter((event) => event.type === 'tool.completed').at(-1)).toMatchObject({
+      result: { success: false, error: { recoverable: false } },
+    })
+    expect(events.at(-1)?.type).toBe('run.completed')
   })
 
   it('lets the model correct invalid generate_pptd arguments before the pipeline starts', async () => {

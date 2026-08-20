@@ -30,8 +30,7 @@ vi.mock('@/lib/tauri', async (importOriginal) => ({
 vi.mock('@/lib/engine/query', () => ({ runQuery: mocks.runQuery }))
 
 vi.mock('@/lib/chat-api', () => ({
-  compressMessages: (messages: unknown[]) => messages,
-  fetchChatStream: vi.fn(),
+  createModelProviderFetch: () => undefined,
   getSystemPrompt: () => 'base prompt',
 }))
 

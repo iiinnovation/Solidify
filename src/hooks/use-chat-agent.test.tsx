@@ -13,7 +13,6 @@ import { saveAttachmentMedia } from '@/lib/attachment-media'
 
 const mocks = vi.hoisted(() => ({
   agentLoop: true,
-  fetchChatStream: vi.fn(),
   runQuery: vi.fn(),
 }))
 
@@ -33,8 +32,7 @@ vi.mock('@/lib/harness/flags', () => ({
 vi.mock('@/lib/engine/query', () => ({ runQuery: mocks.runQuery }))
 
 vi.mock('@/lib/chat-api', () => ({
-  compressMessages: (messages: unknown[]) => messages,
-  fetchChatStream: mocks.fetchChatStream,
+  createModelProviderFetch: () => undefined,
   getSystemPrompt: (skill?: string) => ['base prompt', skill].filter(Boolean).join('\n'),
 }))
 
@@ -49,7 +47,6 @@ function strictWrapper({ children }: PropsWithChildren) {
 describe('useChat agent loop switch', () => {
   beforeEach(() => {
     mocks.agentLoop = true
-    mocks.fetchChatStream.mockReset()
     mocks.runQuery.mockReset()
     localStorage.clear()
     useChatStore.setState({ conversations: [], artifacts: [], activeArtifactId: null })
@@ -87,7 +84,6 @@ describe('useChat agent loop switch', () => {
 
     await waitFor(() => expect(result.current.isStreaming).toBe(false))
     expect(mocks.runQuery).toHaveBeenCalledOnce()
-    expect(mocks.fetchChatStream).not.toHaveBeenCalled()
     const assistant = result.current.messages.find((message) => message.role === 'assistant')
     expect(assistant?.content).toBe('Agent reply')
     // Deltas are transient UI signal and are deliberately not persisted onto the
@@ -350,32 +346,19 @@ describe('useChat agent loop switch', () => {
     expect(result.current.messages.at(-1)).toMatchObject({ role: 'assistant', content: 'second reply' })
   })
 
-  it('keeps using the legacy stream when the switch is off', async () => {
+  it('keeps using the unified query runtime when Agent tools are switched off', async () => {
     mocks.agentLoop = false
-    mocks.fetchChatStream.mockResolvedValue(new Response('data: [DONE]\n\n', { status: 200 }))
-    const { result } = renderHook(() => useChat(), { wrapper })
-
-    await act(async () => result.current.sendMessage('hello'))
-
-    await waitFor(() => expect(result.current.isStreaming).toBe(false))
-    expect(mocks.fetchChatStream).toHaveBeenCalledOnce()
-    expect(mocks.runQuery).not.toHaveBeenCalled()
-  })
-
-  it('stores legacy output tokens without mislabeling them as total tokens', async () => {
-    mocks.agentLoop = false
-    mocks.fetchChatStream.mockResolvedValue(new Response(
-      'data: {"choices":[{"delta":{"content":"hello"}}]}\n\ndata: [DONE]\n\n',
-      { status: 200 },
-    ))
+    mocks.runQuery.mockImplementation(async function* () {
+      yield { type: 'message.delta', text: 'plain reply' }
+      yield { type: 'message.completed', content: 'plain reply' }
+      yield { type: 'run.completed', usage: { inputTokens: 2, outputTokens: 2, totalTokens: 4, turns: 1, toolCalls: 0 } }
+    })
     const { result } = renderHook(() => useChat(), { wrapper })
 
     await act(async () => result.current.sendMessage('hello'))
     await waitFor(() => expect(result.current.isStreaming).toBe(false))
-
-    const metrics = result.current.messages.find((message) => message.role === 'assistant')?.metrics
-    expect(metrics?.outputTokens).toBeGreaterThan(0)
-    expect(metrics?.totalTokens).toBeUndefined()
+    expect(mocks.runQuery).toHaveBeenCalledOnce()
+    expect(result.current.messages.at(-1)?.content).toBe('plain reply')
   })
 
   it('invalidates a running request and cleans related state when recalling a message', async () => {
@@ -430,31 +413,6 @@ describe('useChat agent loop switch', () => {
     expect(useChatStore.getState().activeArtifactId).toBeNull()
     expect(useDocumentStore.getState().documents).toEqual({})
     expect(useUIStore.getState().composerDrafts[composerDraftKey('conv-recall')].input).toBe('recall this')
-  })
-
-  it('removes an empty legacy assistant when stopped before the response arrives', async () => {
-    mocks.agentLoop = false
-    useChatStore.setState({
-      conversations: [{ id: 'conv-legacy-stop', title: 'Legacy stop', createdAt: 1, messages: [] }],
-      artifacts: [],
-      activeArtifactId: null,
-    })
-    let resolveResponse: ((response: Response) => void) | undefined
-    mocks.fetchChatStream.mockReturnValue(new Promise<Response>((resolve) => { resolveResponse = resolve }))
-    const { result } = renderHook(() => useChat('conv-legacy-stop'), { wrapper })
-
-    let request: Promise<void> | undefined
-    await act(async () => {
-      request = result.current.sendMessage('legacy prompt')
-      await Promise.resolve()
-    })
-    await waitFor(() => expect(result.current.isStreaming).toBe(true))
-    act(() => result.current.stopStreaming())
-    resolveResponse?.(new Response(''))
-    await act(async () => { await request })
-
-    expect(result.current.messages.map((message) => message.role)).toEqual(['user'])
-    expect(useChatStore.getState().conversations[0].messages.map((message) => message.role)).toEqual(['user'])
   })
 
   it('resumes one persisted running Agent without duplicating messages', async () => {

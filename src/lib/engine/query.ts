@@ -274,7 +274,13 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       // Tool input repairs (for example resolving a mistaken read_handle
       // placeholder) need the latest tool-result messages, not only the
       // immutable context from the start of the run.
-      const results = yield* executeTools({ ...runCtx, messages: currentMessages }, response.toolCalls, logger, harness)
+      const results = yield* executeTools(
+        { ...runCtx, messages: currentMessages },
+        response.toolCalls,
+        logger,
+        harness,
+        consecutiveToolFailures,
+      )
 
       // Some deterministic generators own their final artifact contract. Their
       // tool result stores the complete assistant payload behind a memory
@@ -293,18 +299,17 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
         break
       }
 
-      // generate_pptd owns a stateful, one-shot pipeline. If it fails after
-      // starting, feeding the error back to the model invites a second call
-      // that can never succeed and only produces the misleading "already
-      // started" guard error. Preserve the original pipeline failure and end
-      // this run; the user can start a fresh run after adjusting the brief.
-      const failedPptd = results.find((result) =>
-        !result.success
-        && result.error?.kind !== 'invalid_input'
-        && response.toolCalls.some((call) => call.id === result.callId && call.name === 'generate_pptd'),
-      )
-      if (failedPptd) {
-        const message = failedPptd.error?.message || failedPptd.content || 'generate_pptd 执行失败'
+      // A stateful terminal tool owns its failure contract. Validation errors
+      // remain recoverable so the model can correct its arguments; runtime
+      // failures are returned as the terminal run error instead of inviting a
+      // replay that may restart an irreversible pipeline.
+      const terminalFailure = results.find((result) => {
+        if (result.success || result.error?.kind === 'invalid_input') return false
+        const call = response.toolCalls.find((candidate) => candidate.id === result.callId)
+        return call && runCtx.tools.find((tool) => tool.name === call.name)?.terminalOnFailure === true
+      })
+      if (terminalFailure) {
+        const message = terminalFailure.error?.message || terminalFailure.content || '工具执行失败'
         const error: RunError = { kind: 'internal', message }
         appendTerminalFact(harness, logger, 'run.failed', { ...error, usage })
         yield { type: 'run.failed', error, usage: { ...usage } }
@@ -334,7 +339,10 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
         const matchingResult = results.find((r) => r.callId === call.id)
         if (matchingResult?.success) {
           consecutiveToolFailures.set(call.name, 0)
-        } else {
+        } else if (
+          matchingResult
+          && !['invalid_input', 'permission_denied', 'aborted'].includes(matchingResult.error?.kind ?? '')
+        ) {
           const current = (consecutiveToolFailures.get(call.name) ?? 0) + 1
           consecutiveToolFailures.set(call.name, current)
         }
@@ -691,6 +699,7 @@ async function* executeTools(
   calls: ToolCall[],
   logger: SimpleRunLogger,
   harness?: HarnessRuntime,
+  consecutiveToolFailures?: ReadonlyMap<string, number>,
 ): AsyncGenerator<QueryEvent, Array<ToolResult & { callId: string }>> {
   logger.log('tools.executing', { count: calls.length })
 
@@ -701,6 +710,22 @@ async function* executeTools(
   // can self-correct, with tombstones for the recoverable cases (M1-11)
   const runnable: Array<{ call: ToolCall; tool: Tool }> = []
   for (const call of calls) {
+    const priorFailures = consecutiveToolFailures?.get(call.name) ?? 0
+    if (priorFailures >= 3) {
+      const message = `工具 ${call.name} 已连续失败 ${priorFailures} 次，本次运行已阻止继续执行。请改用其它策略或开始新的运行。`
+      const result: ToolResult & { callId: string } = {
+        callId: call.id,
+        success: false,
+        content: message,
+        error: { kind: 'runtime', message, recoverable: false },
+        metadata: { durationMs: 0 },
+      }
+      results.push(result)
+      harness?.ledger.append('tool.completed', { callId: result.callId, success: false, content: result.content, error: result.error, metadata: result.metadata })
+      yield { type: 'tool.completed', callId: call.id, result }
+      logger.warn('tool.circuit_breaker', { callId: call.id, name: call.name, priorFailures })
+      continue
+    }
     const prep = prepareCall(call, ctx.tools, ctx.platform)
     if (prep.ok) {
       runnable.push({ call, tool: prep.tool })

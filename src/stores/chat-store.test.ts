@@ -59,4 +59,32 @@ describe('chat store truncation', () => {
     expect(attachment.mediaId).toBe('stored-media')
     expect(attachment.recoverable).toBe(true)
   })
+
+  it('drops completed raw agent text from localStorage while keeping resumable runs', () => {
+    const largeArtifactEnvelope = '<solidify-artifact>' + 'x'.repeat(50_000) + '</solidify-artifact>'
+    useChatStore.setState({
+      conversations: [{
+        id: 'conv-runs', title: 'Runs', createdAt: 1,
+        messages: [
+          {
+            id: 'assistant-completed', role: 'assistant', content: 'clean result',
+            agentRun: { runId: 'run-completed', status: 'completed', text: largeArtifactEnvelope, tools: [], startedAt: 1 },
+            runEvents: [{ type: 'message.completed', content: largeArtifactEnvelope }],
+          },
+          {
+            id: 'assistant-running', role: 'assistant', content: '',
+            agentRun: { runId: 'run-running', status: 'running', text: largeArtifactEnvelope, tools: [], startedAt: 1 },
+            runEvents: [{ type: 'message.delta', text: 'partial' }],
+          },
+        ],
+      }],
+    })
+
+    const persisted = JSON.parse(localStorage.getItem('solidify-chat') ?? '{}')
+    const messages = persisted.state.conversations[0].messages
+    expect(messages[0].agentRun.text).toBe('')
+    expect(messages[0].runEvents).toBeUndefined()
+    expect(messages[1].agentRun.text).toBe(largeArtifactEnvelope)
+    expect(messages[1].runEvents).toHaveLength(1)
+  })
 })

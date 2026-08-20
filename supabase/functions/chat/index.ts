@@ -5,6 +5,7 @@ import { getAuthUser } from '../_shared/auth.ts'
 import {
   streamChat,
   streamChatCustom,
+  streamNativeCustom,
   getDefaultModel,
   type AIModel,
   type ApiFormat,
@@ -93,12 +94,12 @@ function getSystemPrompt(skillSystemPrompt?: string, skillSkipConfirmation?: boo
 }
 
 interface ChatRequest {
-  messages: { role: 'user' | 'assistant'; content: string }[]
+  messages?: { role: 'user' | 'assistant'; content: string }[]
   // 预设模型（使用环境变量中的 Key）
   model?: AIModel
   // 自定义 Provider 配置（前端传入，优先级高于 model）
   provider?: {
-    apiUrl: string
+    apiUrl?: string
     apiKey: string
     modelId: string
     format: ApiFormat
@@ -108,6 +109,10 @@ interface ChatRequest {
   skillSkipConfirmation?: boolean
   // 工具定义（M1-07：透传给 AI Provider）
   tools?: ToolDefinition[]
+  /** Native OpenAI/Anthropic SDK body used by the unified Agent runtime. */
+  nativeBody?: Record<string, unknown>
+  /** Fully resolved SDK endpoint (for example /v1/chat/completions). */
+  targetUrl?: string
 }
 
 serve(async (req: Request) => {
@@ -121,16 +126,50 @@ serve(async (req: Request) => {
     //   return createErrorResponse('UNAUTHORIZED', 401, '未登录')
     // }
 
-    const { messages, model, provider, skillSystemPrompt, skillSkipConfirmation, tools }: ChatRequest = await req.json()
+    const { messages, model, provider, skillSystemPrompt, skillSkipConfirmation, tools, nativeBody, targetUrl }: ChatRequest = await req.json()
 
-    if (!messages || messages.length === 0) {
+    if ((!messages || messages.length === 0) && !nativeBody) {
       return createErrorResponse('VALIDATION_ERROR', 422, '消息不能为空')
+    }
+
+    if (nativeBody) {
+      if (!targetUrl || !provider?.apiKey || !provider.modelId) {
+        return createErrorResponse('VALIDATION_ERROR', 422, 'Provider 配置不完整')
+      }
+      let endpoint: URL
+      try {
+        endpoint = new URL(targetUrl)
+        if (!/^https?:$/.test(endpoint.protocol)) throw new Error('unsupported protocol')
+      } catch {
+        return createErrorResponse('VALIDATION_ERROR', 422, '模型 API URL 必须是有效的 http(s) 地址')
+      }
+      const upstreamRes = await streamNativeCustom(
+        endpoint.toString(),
+        provider.apiKey,
+        provider.modelId,
+        provider.format,
+        nativeBody,
+      )
+      if (!upstreamRes.ok) {
+        const errText = await upstreamRes.text()
+        console.error('AI provider error:', upstreamRes.status, errText)
+        if (upstreamRes.status === 429) return createErrorResponse('AI_RATE_LIMITED', 503, '请求过于频繁，请稍后再试')
+        return createErrorResponse('AI_PROVIDER_ERROR', 502, `AI 服务异常: ${upstreamRes.status}`)
+      }
+      return new Response(upstreamRes.body, {
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+        },
+      })
     }
 
     const systemPrompt = getSystemPrompt(skillSystemPrompt, skillSkipConfirmation)
     const fullMessages = [
       { role: 'system' as const, content: systemPrompt },
-      ...messages,
+      ...messages!,
     ]
 
     let upstreamRes: Response

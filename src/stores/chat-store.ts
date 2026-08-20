@@ -262,13 +262,7 @@ export const useChatStore = create<ChatState>()(
       partialize: (state) => ({
         conversations: state.conversations.map((conversation) => ({
           ...conversation,
-          messages: conversation.messages.map((message) => ({
-            ...message,
-            attachments: message.attachments?.map(({ mediaUrl, extractedText: _extractedText, ...attachment }) => ({
-              ...attachment,
-              recoverable: mediaUrl && !attachment.mediaId && !attachment.attachmentId ? false : attachment.recoverable,
-            })),
-          })),
+          messages: conversation.messages.map(toPersistedMessage),
         })),
         activeConversationId: state.activeConversationId,
         artifacts: state.artifacts,
@@ -329,3 +323,28 @@ export const useChatStore = create<ChatState>()(
     },
   ),
 )
+
+/**
+ * Keep the durable conversation record useful without duplicating completed
+ * streamed payloads. A completed RunState's `text` contains the raw artifact
+ * envelope, while the cleaned message/artifact or workspace document is the
+ * user-facing source of truth. Running/failed runs retain their text so a
+ * renderer restart can still resume or diagnose them.
+ */
+function toPersistedMessage(message: Message): Message {
+  const persistedAttachments = message.attachments?.map(({ mediaUrl, extractedText: _text, ...attachment }) => ({
+    ...attachment,
+    recoverable: mediaUrl && !attachment.mediaId && !attachment.attachmentId ? false : attachment.recoverable,
+  }))
+
+  if (message.agentRun?.status !== 'completed') {
+    return { ...message, ...(persistedAttachments ? { attachments: persistedAttachments } : {}) }
+  }
+
+  const { runEvents: _completedEvents, ...withoutEvents } = message
+  return {
+    ...withoutEvents,
+    agentRun: { ...message.agentRun, text: '' },
+    ...(persistedAttachments ? { attachments: persistedAttachments } : {}),
+  }
+}

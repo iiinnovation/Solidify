@@ -59,6 +59,7 @@ export class OpenAIProvider implements ModelProvider {
       baseURL: config.baseURL,
       timeout: config.timeout ?? 60000,
       maxRetries: config.maxRetries ?? 2,
+      fetch: config.fetch,
       dangerouslyAllowBrowser: true, // Allow in browser/test environments
     })
   }

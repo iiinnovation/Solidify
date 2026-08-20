@@ -58,6 +58,13 @@ export interface Tool<I = unknown, O = unknown> {
   /** Requires user confirmation before execution */
   requiresConfirmation: boolean | ((input: I, ctx: ToolUseContext) => boolean)
 
+  /**
+   * A failed call normally becomes a tool_result so the model can recover.
+   * Stateful generators may instead terminate the run after a non-validation
+   * failure, because replaying them would repeat an irreversible pipeline.
+   */
+  terminalOnFailure?: boolean
+
   // ── Environment requirements ──
   /** Runtime availability constraint */
   availability: ToolAvailability

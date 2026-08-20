@@ -218,3 +218,21 @@ export async function streamChatCustom(
     body: JSON.stringify(body),
   })
 }
+
+/** Forward a provider SDK request without flattening its native message shape. */
+export function streamNativeCustom(
+  targetUrl: string,
+  apiKey: string,
+  modelId: string,
+  format: ApiFormat,
+  nativeBody: Record<string, unknown>,
+): Promise<Response> {
+  const body = { ...nativeBody, model: modelId, stream: true }
+  return fetch(targetUrl, {
+    method: 'POST',
+    headers: format === 'openai'
+      ? { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }
+      : { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}

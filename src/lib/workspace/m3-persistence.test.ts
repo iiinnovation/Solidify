@@ -111,4 +111,23 @@ describe('M3 workspace conversation persistence', () => {
     expect(written).not.toContain('runEvents')
     expect(written).toContain('含事件流')
   })
+
+  it('does not duplicate completed raw agent output in workspace snapshots', async () => {
+    useChatStore.setState({
+      conversations: [{
+        id: 'conv-6', title: '完成运行', createdAt: 6,
+        messages: [{
+          id: 'm6', role: 'assistant', content: 'clean result',
+          agentRun: { runId: 'run-6', status: 'completed', text: 'x'.repeat(50_000), tools: [], startedAt: 1 },
+        }],
+      }],
+    })
+    const stop = startWorkspaceConversationPersistence('/workspace')
+    await vi.advanceTimersByTimeAsync(300)
+    await stop()
+
+    const written = JSON.stringify(appendWorkspaceRecord.mock.calls.at(-1)?.[3])
+    expect(written).toContain('"text":""')
+    expect(written).not.toContain('x'.repeat(1_000))
+  })
 })

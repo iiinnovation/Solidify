@@ -304,8 +304,10 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
   const [templateFormOpen, setTemplateFormOpen] = useState(false)
   const [approvalRequests, setApprovalRequests] = useState<ApprovalRequest[]>([])
   const { messages, isStreaming, error, sendMessage, stopStreaming, recallMessage, regenerate, retry } = useChat(conversationId)
-  const activeRun = [...messages].reverse()
-    .find((message) => message.agentRun?.status === 'running')?.agentRun ?? null
+  const agentUiEnabled = isEnabled('agentLoop')
+  const activeRun = agentUiEnabled
+    ? [...messages].reverse().find((message) => message.agentRun?.status === 'running')?.agentRun ?? null
+    : null
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -613,14 +615,14 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
                     ) : (
                       isStreaming
                         && index === messages.length - 1
-                        && !msg.agentRun
+                        && (!agentUiEnabled || !msg.agentRun)
                         && <StreamingIndicator />
                     )}
                     <ArtifactRefCard messageId={msg.id} />
                     {msg.knowledgeSources && msg.knowledgeSources.length > 0 && (
                       <KnowledgeSourcesCard sources={msg.knowledgeSources} />
                     )}
-                    {msg.agentRun && (
+                    {agentUiEnabled && msg.agentRun && (
                       <RunTimeline
                         run={msg.agentRun}
                         onStop={msg.agentRun.status === 'running' ? stopStreaming : undefined}
@@ -681,7 +683,7 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
               )}
             </div>
             <div className="flex items-center gap-2">
-              <RunControls run={activeRun} onStop={stopStreaming} />
+              {agentUiEnabled && <RunControls run={activeRun} onStop={stopStreaming} />}
               <button
                 onClick={() => setKnowledgeEnabled(!knowledgeEnabled)}
                 className={cn(

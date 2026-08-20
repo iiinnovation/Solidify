@@ -1,6 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { fetchChatStream, compressMessages } from '@/lib/chat-api'
 import { useChatStore, type ArtifactType, type Message, type MessageAttachment } from '@/stores/chat-store'
 import { useModelStore } from '@/stores/model-store'
 import { useKnowledgeEnhancementStore } from '@/stores/knowledge-store'
@@ -364,7 +363,7 @@ export function useChat(conversationId?: string) {
         ? savedAgentContext.workspaceRoot
         : useWorkspaceStore.getState().workspaceRoot
       const preloadSkillId = savedAgentContext ? savedAgentContext.skillId : skillId
-      const skillRuntimePromise = isEnabled('agentLoop') && isEnabled('skillV2')
+      const skillRuntimePromise = isEnabled('skillV2')
         ? loadChatSkillRuntime({
             workspaceRoot: preloadWorkspaceRoot,
             skillName: preloadSkillId,
@@ -564,7 +563,9 @@ ${result.content}
       ).values()]
       const pptdMedia = await rebuildPptdAttachmentMedia(attachmentResources, attachmentResult.pptdMedia)
       const knowledgeSources = knowledgeResult.sources
-      const canReadAttachments = isEnabled('agentLoop') && activeProvider.supportsTools !== false
+      const canReadAttachments = isEnabled('agentLoop')
+        && isEnabled('toolCalling')
+        && activeProvider.supportsTools !== false
       const attachmentContext = attachmentResources.length > 0
         ? `\n\n${formatAttachmentManifest(attachmentResources)}\n\n${canReadAttachments
           ? '附件正文不会自动展开；需要时请使用 search_attachments 和 read_attachment 按需读取。'
@@ -784,8 +785,9 @@ ${result.content}
           content: m.content,
         }))
 
-        // 应用上下文压缩：保留首轮 + 最近 10 轮
-        const apiMessages = compressMessages(allMessages, 10)
+        // The unified engine performs pair-aware, provider-sized trimming in
+        // context-budget.ts. Do not discard history before it can measure it.
+        const apiMessages = allMessages
 
         // The stored user message remains the user's original text. Resource
         // manifests are reconstructed per run so stale attachment previews do
@@ -801,7 +803,7 @@ ${result.content}
           }
         }
 
-        if (isEnabled('agentLoop')) {
+        {
           const runId = assistantMsg.agentRun?.runId ?? newId('run')
           let run = assistantMsg.agentRun
             ? {
@@ -1001,92 +1003,6 @@ ${result.content}
           return
         }
 
-        const requestStartTime = Date.now()
-        let firstTokenTime: number | undefined
-
-        const response = await fetchChatStream({
-          messages: messagesWithFiles,
-          provider: {
-            apiUrl: activeProvider.apiUrl,
-            apiKey: activeProvider.apiKey,
-            modelId: activeProvider.modelId,
-            format: activeProvider.format,
-          },
-          skillSystemPrompt,
-          skillSkipConfirmation,
-        })
-
-        if (!response.ok) {
-          const errData = await response.json().catch(() => null)
-          throw new Error(
-            errData?.error?.message ?? errData?.message ?? `请求失败: ${response.status}`,
-          )
-        }
-
-        const reader = response.body?.getReader()
-        if (!reader) throw new Error('无法读取响应流')
-
-        const decoder = new TextDecoder()
-        let fullContent = ''
-        let buffer = ''
-
-        while (true) {
-          if (abortController.signal.aborted) break
-
-          const { done, value } = await reader.read()
-          if (done) break
-
-          buffer += decoder.decode(value, { stream: true })
-
-          const lines = buffer.split('\n')
-          buffer = lines.pop() ?? ''
-
-          for (const line of lines) {
-            if (!line.startsWith('data: ')) continue
-            const data = line.slice(6).trim()
-            if (data === '[DONE]') continue
-
-            try {
-              const parsed = JSON.parse(data)
-              // OpenAI 格式: choices[0].delta.content
-              // Anthropic 格式: type=content_block_delta, delta.type=text_delta, delta.text
-              const delta =
-                parsed.choices?.[0]?.delta?.content
-                ?? (parsed.type === 'content_block_delta' && parsed.delta?.type === 'text_delta'
-                  ? parsed.delta.text
-                  : undefined)
-              if (delta) {
-                if (!firstTokenTime) firstTokenTime = Date.now()
-                fullContent += delta
-                consumeArtifactContent(fullContent, false, false)
-              }
-            } catch {
-              // 非 JSON 行，跳过
-            }
-          }
-        }
-
-        reader.releaseLock()
-
-        const requestEndTime = Date.now()
-        const durationMs = Math.max(0, requestEndTime - requestStartTime)
-        const ttftMs = firstTokenTime ? Math.max(0, firstTokenTime - requestStartTime) : undefined
-        const outputTokens = Math.ceil(fullContent.length * 0.75)
-        const genDurationSec = (firstTokenTime ? (requestEndTime - firstTokenTime) : durationMs) / 1000
-        const tokensPerSecond = genDurationSec > 0 && outputTokens > 0
-          ? Number((outputTokens / genDurationSec).toFixed(1))
-          : undefined
-        const metrics = {
-          durationMs,
-          ttftMs,
-          tokensPerSecond,
-          outputTokens,
-        }
-
-        consumeArtifactContent(fullContent, true)
-        patchAssistantMessage({ metrics }, true)
-        await flushMaterializations()
-        if (abortController.signal.aborted) discardAssistantPlaceholder()
       } catch (err) {
         if (abortController.signal.aborted || !isCurrentRequest()) {
           if (isCurrentRequest()) discardAssistantPlaceholder()
@@ -1131,7 +1047,6 @@ ${result.content}
     if (
       !conversationId
       || isStreaming
-      || !isEnabled('agentLoop')
       || resumedConversationsRef.current.has(conversationId)
     ) return
 
@@ -1153,7 +1068,6 @@ ${result.content}
 
   const stopStreaming = useCallback(() => {
     abortRef.current?.abort()
-    if (!isEnabled('agentLoop')) setIsStreaming(false)
   }, [])
 
   const recallMessage = useCallback((messageId?: string) => {

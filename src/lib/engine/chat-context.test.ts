@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ModelProvider } from '@/stores/model-store'
 
+const featureFlags = vi.hoisted(() => ({ agentLoop: true, toolCalling: true, subAgents: false }))
+
 vi.mock('@/lib/tauri', () => ({
   isTauri: true,
   appendWorkspaceSnapshot: vi.fn(async () => {}),
@@ -12,15 +14,15 @@ vi.mock('@/lib/harness/flags', async (importOriginal) => {
   const original = await importOriginal<typeof import('@/lib/harness/flags')>()
   return {
     ...original,
-    isEnabled: (flag: string) => flag === 'toolCalling',
+    isEnabled: (flag: string) => featureFlags[flag as keyof typeof featureFlags] ?? false,
     getFlags: () => ({
-      agentLoop: true,
-      toolCalling: true,
+      agentLoop: featureFlags.agentLoop,
+      toolCalling: featureFlags.toolCalling,
       harness: false,
       localWorkspace: false,
       skillV2: false,
       pptdEngine: false,
-      subAgents: false,
+      subAgents: featureFlags.subAgents,
     }),
   }
 })
@@ -49,7 +51,34 @@ function create(workspaceRoot?: string | null) {
 }
 
 describe('chat Agent workspace context', () => {
-  beforeEach(() => localStorage.clear())
+  beforeEach(() => {
+    localStorage.clear()
+    featureFlags.agentLoop = true
+    featureFlags.toolCalling = true
+    featureFlags.subAgents = false
+  })
+
+  it('keeps plain chat tool-free when subordinate tool flags are enabled independently', () => {
+    featureFlags.agentLoop = false
+    featureFlags.subAgents = true
+    const context = createChatQueryContext({
+      runId: 'run-plain',
+      conversationId: 'conversation-plain',
+      messages: [{ role: 'user', content: 'hello' }],
+      provider,
+      signal: new AbortController().signal,
+      loadedSkill: {
+        metadata: {
+          name: 'pptd-deck', version: '1.0.0', description: 'deck', allowedTools: ['generate_pptd'],
+        },
+        content: 'Generate a deck.',
+        path: 'builtin://pptd-deck/SKILL.md',
+      },
+    })
+
+    expect(context.tools).toEqual([])
+    expect(context.taskTree).toBeUndefined()
+  })
 
   it('does not expose desktop file tools without an explicitly selected root', () => {
     const context = create()

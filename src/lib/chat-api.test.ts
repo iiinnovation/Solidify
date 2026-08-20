@@ -1,21 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeProviderEndpoint } from './chat-api'
+import { getSystemPrompt } from './chat-api'
 
-describe('model provider endpoint', () => {
-  it('completes an OpenAI-compatible root or v1 URL', () => {
-    expect(normalizeProviderEndpoint('https://example.com', 'openai'))
-      .toBe('https://example.com/v1/chat/completions')
-    expect(normalizeProviderEndpoint('https://example.com/v1', 'openai'))
-      .toBe('https://example.com/v1/chat/completions')
+describe('base system prompt', () => {
+  it('injects the selected skill instructions', () => {
+    expect(getSystemPrompt('SKILL RULES', true)).toContain('SKILL RULES')
+    expect(getSystemPrompt('SKILL RULES', true)).toContain('不需要先分析再确认')
   })
 
-  it('completes an Anthropic-compatible root URL', () => {
-    expect(normalizeProviderEndpoint('https://example.com/', 'anthropic'))
-      .toBe('https://example.com/v1/messages')
-  })
-
-  it('preserves an explicit endpoint', () => {
-    expect(normalizeProviderEndpoint('https://example.com/custom/chat', 'openai'))
-      .toBe('https://example.com/custom/chat')
+  it('keeps the confirmation workflow without an active skill', () => {
+    expect(getSystemPrompt()).toContain('先分析，后生成')
   })
 })

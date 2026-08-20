@@ -106,6 +106,8 @@ export type CompletionChunk =
 export interface ProviderConfig {
   apiKey: string
   baseURL?: string // Support custom endpoints (e.g., API proxies)
+  /** Optional transport override (for example the authenticated Supabase relay). */
+  fetch?: typeof globalThis.fetch
   /** Explicit capability override for custom/provider models. Defaults true. */
   supportsTools?: boolean
   /** Model capability override; provider defaults are not model-specific. */

@@ -1,226 +1,75 @@
-import type { ApiFormat } from '@/stores/model-store'
+import type { ModelProvider } from '@/stores/model-store'
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string
 
-export interface ChatRequestBody {
-  messages: { role: 'user' | 'assistant'; content: string }[]
-  model?: string
-  provider?: {
-    apiUrl: string
-    apiKey: string
-    modelId: string
-    format: ApiFormat
-  }
-  skillSystemPrompt?: string
-  skillSkipConfirmation?: boolean
-}
-
-/** Normalize the common base-URL forms accepted in the model settings UI. */
-export function normalizeProviderEndpoint(apiUrl: string, format: ApiFormat): string {
-  const value = apiUrl.trim()
-  if (!value) throw new Error('模型 API URL 不能为空')
-
-  let url: URL
-  try {
-    url = new URL(value)
-  } catch {
-    throw new Error('模型 API URL 无效，请填写完整的 http(s) 地址')
-  }
-  if (!/^https?:$/.test(url.protocol)) {
-    throw new Error('模型 API URL 必须使用 http:// 或 https://')
-  }
-
-  const path = url.pathname.replace(/\/+$/, '')
-  if (!path || path === '/v1') {
-    url.pathname = format === 'openai'
-      ? '/v1/chat/completions'
-      : '/v1/messages'
-  }
-  return url.toString()
-}
-
-function formatProviderFetchError(error: unknown, endpoint: string): Error | null {
-  if (!(error instanceof TypeError) || !/fetch/i.test(error.message)) return null
-  const browserOrigin = typeof window !== 'undefined' ? window.location.origin : ''
-  let crossOrigin = false
-  try {
-    crossOrigin = Boolean(browserOrigin && new URL(endpoint).origin !== browserOrigin)
-  } catch {
-    // URL validation has already produced the actionable error above.
-  }
-  if (crossOrigin) {
-    return new Error(
-      `无法连接模型服务。浏览器拦截了跨域请求（CORS）：${endpoint}。请让该 API 返回 Access-Control-Allow-Origin，或配置服务端代理/使用桌面版。`,
-    )
-  }
-  return new Error(`无法连接模型服务：${endpoint}。请检查网络、API 地址和服务状态。`)
-}
-
-function providerRequestTarget(endpoint: string): { url: string; headers: Record<string, string> } {
-  if (import.meta.env.DEV) {
-    return {
-      url: '/__solidify/model-proxy',
-      headers: { 'X-Solidify-Target': endpoint },
-    }
-  }
-  return { url: endpoint, headers: {} }
-}
-
 /**
- * 上下文压缩：保留首轮对话 + 最近 N 轮对话
- * 适用于项目实施场景，首轮通常包含项目背景，最近对话保持连贯性
+ * Route the provider SDK's native request through the authenticated Edge
+ * Function, or through Vite's development proxy when Supabase is absent. The
+ * relay preserves multipart messages and tool calls instead of flattening them.
  */
-export function compressMessages(
-  messages: { role: 'user' | 'assistant'; content: string }[],
-  maxRecentRounds: number = 10
-): { role: 'user' | 'assistant'; content: string }[] {
-  // 计算轮数（一轮 = 一个 user + 一个 assistant）
-  const rounds: Array<{ role: 'user' | 'assistant'; content: string }[]> = []
-  let currentRound: { role: 'user' | 'assistant'; content: string }[] = []
-
-  for (const msg of messages) {
-    currentRound.push(msg)
-    if (msg.role === 'assistant') {
-      rounds.push(currentRound)
-      currentRound = []
-    }
+export function createModelProviderFetch(provider: ModelProvider): typeof globalThis.fetch | undefined {
+  if (!SUPABASE_URL?.trim() || !SUPABASE_ANON_KEY?.trim()) {
+    return import.meta.env.DEV ? createLocalProviderFetch() : undefined
   }
 
-  // 如果有未完成的轮（只有 user 消息），也加入
-  if (currentRound.length > 0) {
-    rounds.push(currentRound)
-  }
-
-  // 如果总轮数 <= maxRecentRounds + 1，不需要压缩
-  if (rounds.length <= maxRecentRounds + 1) {
-    return messages
-  }
-
-  // 保留首轮 + 最近 N 轮
-  const firstRound = rounds[0]
-  const recentRounds = rounds.slice(-maxRecentRounds)
-
-  const compressed = [...firstRound, ...recentRounds.flat()]
-
-  // 在首轮和最近轮之间插入压缩提示（可选，帮助 AI 理解上下文被压缩了）
-  if (rounds.length > maxRecentRounds + 1) {
-    const skippedCount = rounds.length - maxRecentRounds - 1
-    const compressionHint: { role: 'user' | 'assistant'; content: string } = {
-      role: 'assistant',
-      content: `[已省略 ${skippedCount} 轮历史对话以节省上下文]`,
-    }
-    return [
-      ...firstRound,
-      compressionHint,
-      ...recentRounds.flat(),
-    ]
-  }
-
-  return compressed
-}
-
-export async function fetchChatStream(body: ChatRequestBody): Promise<Response> {
-  // 如果配置了 Supabase，走 Edge Function 代理
-  const hasSupabase = SUPABASE_URL?.trim() && SUPABASE_ANON_KEY?.trim()
-  if (hasSupabase) {
-    // 获取用户的 access token
+  return async (input, init) => {
     const { createClient } = await import('@supabase/supabase-js')
     const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
     const { data: { session } } = await supabase.auth.getSession()
+    if (!session?.access_token) throw new Error('未登录或会话已过期')
 
-    if (!session?.access_token) {
-      throw new Error('未登录或会话已过期')
-    }
-
-    const url = `${SUPABASE_URL}/functions/v1/chat`
-    return fetch(url, {
+    const nativeBody = await readFetchJsonBody(input, init)
+    const targetUrl = input instanceof Request ? input.url : String(input)
+    return globalThis.fetch(`${SUPABASE_URL}/functions/v1/chat`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${session.access_token}`,
         apikey: SUPABASE_ANON_KEY,
       },
-      body: JSON.stringify(body),
-    })
-  }
-
-  // 未配置 Supabase 时，直接调用 AI API（开发用，Key 暴露在前端）
-  if (!body.provider) {
-    throw new Error('未配置 Supabase，且没有自定义 Provider')
-  }
-
-  const { apiUrl, apiKey, modelId, format } = body.provider
-  const endpoint = normalizeProviderEndpoint(apiUrl, format)
-  const requestTarget = providerRequestTarget(endpoint)
-
-  if (format === 'openai') {
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), 60000) // 60秒超时
-
-    try {
-      const response = await fetch(requestTarget.url, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-          ...requestTarget.headers,
-        },
-        body: JSON.stringify({
-          model: modelId,
-          messages: [
-            { role: 'system', content: getSystemPrompt(body.skillSystemPrompt, body.skillSkipConfirmation) },
-            ...body.messages,
-          ],
-          stream: true,
-        }),
-        signal: controller.signal,
-      })
-      clearTimeout(timeoutId)
-      return response
-    } catch (error) {
-      clearTimeout(timeoutId)
-      if (error instanceof Error && error.name === 'AbortError') {
-        throw new Error('请求超时，请检查网络连接或 API 配置')
-      }
-      const providerError = formatProviderFetchError(error, endpoint)
-      if (providerError) throw providerError
-      throw error
-    }
-  }
-
-  // Anthropic 格式
-  const nonSystemMsgs = body.messages
-  const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), 60000)
-  try {
-    return await fetch(requestTarget.url, {
-      method: 'POST',
-      headers: {
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'Content-Type': 'application/json',
-        ...requestTarget.headers,
-      },
       body: JSON.stringify({
-        model: modelId,
-        max_tokens: 8192,
-        system: getSystemPrompt(body.skillSystemPrompt, body.skillSkipConfirmation),
-        messages: nonSystemMsgs,
-        stream: true,
+        provider: {
+          apiKey: provider.apiKey,
+          modelId: provider.modelId,
+          format: provider.format,
+        },
+        targetUrl,
+        nativeBody,
       }),
-      signal: controller.signal,
+      signal: init?.signal ?? (input instanceof Request ? input.signal : undefined),
     })
-  } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error('请求超时，请检查网络连接或 API 配置')
-    }
-    const providerError = formatProviderFetchError(error, endpoint)
-    if (providerError) throw providerError
-    throw error
-  } finally {
-    clearTimeout(timeoutId)
   }
+}
+
+function createLocalProviderFetch(): typeof globalThis.fetch {
+  return async (input, init) => {
+    const request = input instanceof Request ? input : undefined
+    const target = request?.url ?? String(input)
+    const headers = new Headers(init?.headers ?? request?.headers)
+    headers.set('X-Solidify-Target', target)
+    return globalThis.fetch('/__solidify/model-proxy', {
+      ...init,
+      method: init?.method ?? request?.method ?? 'POST',
+      headers,
+      body: init?.body ?? (request ? await request.clone().arrayBuffer() : undefined),
+      signal: init?.signal ?? request?.signal,
+    })
+  }
+}
+
+async function readFetchJsonBody(input: RequestInfo | URL, init?: RequestInit): Promise<Record<string, unknown>> {
+  const raw = typeof init?.body === 'string'
+    ? init.body
+    : input instanceof Request
+      ? await input.clone().text()
+      : ''
+  if (!raw) throw new Error('模型代理请求缺少 JSON body')
+  const parsed: unknown = JSON.parse(raw)
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('模型代理请求 body 必须是 JSON 对象')
+  }
+  return parsed as Record<string, unknown>
 }
 
 export function getSystemPrompt(skillAddition?: string, skipConfirmation?: boolean): string {

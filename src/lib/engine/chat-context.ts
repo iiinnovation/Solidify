@@ -12,7 +12,7 @@ import { providerBaseURL } from '@/lib/model/provider-url'
 import { toolRegistry } from '@/lib/tools'
 import { createSnapshotStore } from './snapshot'
 import { isTauri } from '@/lib/tauri'
-import { getSystemPrompt } from '@/lib/chat-api'
+import { createModelProviderFetch, getSystemPrompt } from '@/lib/chat-api'
 import { InMemoryState, WorkspaceMemory } from '@/lib/memory'
 import { configureLedgerWorkspace } from '@/lib/harness/ledger'
 import type { WorkspaceHandle } from '@/lib/workspace'
@@ -47,7 +47,7 @@ export interface ChatQueryContextOptions {
   restoreSnapshot?: boolean
 }
 
-/** Build the browser-side runtime context without affecting the legacy chat path. */
+/** Build the browser-side runtime context for both plain chat and tool-enabled Agent runs. */
 export function createChatQueryContext(options: ChatQueryContextOptions): QueryContext {
   const providerName = options.provider.format
   const platform = isTauri ? 'tauri' : 'web'
@@ -62,7 +62,8 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
   const localWorkspaceEnabled = isEnabled('localWorkspace') && Boolean(workspaceRoot)
   configureLedgerWorkspace(localWorkspaceEnabled ? workspaceRoot ?? null : null)
   const hasAttachments = Boolean(options.attachments?.length)
-  const resolvedTools = isEnabled('toolCalling')
+  const agentToolsEnabled = getFlags().agentLoop && isEnabled('toolCalling')
+  const resolvedTools = agentToolsEnabled
     ? toolRegistry.resolve({
         // A real root is mandatory before exposing desktop filesystem tools.
         platform: platform === 'tauri' && workspaceRoot ? 'tauri' : 'web',
@@ -113,6 +114,7 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
           supportsVision: modelSupportsVision(options.provider.modelId, options.provider.supportsVision),
           timeout: 60000,
           maxRetries: 2,
+          fetch: createModelProviderFetch(options.provider),
         },
       },
     }),
@@ -122,8 +124,8 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
     platform,
     workspace: workspaceRoot ? createWorkspaceHandle(workspaceRoot) : undefined,
   }
-  const withSubAgents = isEnabled('subAgents') ? enableSubAgents(context) : context
-  return isEnabled('toolCalling') ? enablePptdPipeline(withSubAgents) : withSubAgents
+  const withSubAgents = agentToolsEnabled && isEnabled('subAgents') ? enableSubAgents(context) : context
+  return agentToolsEnabled ? enablePptdPipeline(withSubAgents) : withSubAgents
 }
 
 export interface ChatSkillRuntime {

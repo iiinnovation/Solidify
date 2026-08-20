@@ -150,9 +150,14 @@ function isConversationRecord(value: unknown): value is ConversationRecord {
  * copy of every prior run's events.
  */
 function stripTransient(message: Conversation['messages'][number]): Conversation['messages'][number] {
-  if (!('runEvents' in message)) return message
   const { runEvents: _runEvents, ...rest } = message as typeof message & { runEvents?: unknown }
-  return rest as typeof message
+  if (message.agentRun?.status === 'completed') {
+    // The cleaned message/artifact or workspace document is authoritative after
+    // completion. Do not append the raw artifact envelope to every JSONL
+    // snapshot as part of the RunState text.
+    return { ...rest, agentRun: { ...message.agentRun, text: '' } }
+  }
+  return 'runEvents' in message ? rest as typeof message : message
 }
 
 function safeId(value: string): string {

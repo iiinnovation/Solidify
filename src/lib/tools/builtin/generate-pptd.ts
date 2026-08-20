@@ -61,6 +61,7 @@ export function createGeneratePptdTool(getParent: () => QueryContext): Tool<Gene
     concurrencySafe: false,
     destructive: false,
     requiresConfirmation: false,
+    terminalOnFailure: true,
     availability: 'online-only',
     permissions: ['fs:write'],
     timeoutMs: GENERATE_PPTD_TIMEOUT_MS,
