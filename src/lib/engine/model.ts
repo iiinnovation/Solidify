@@ -12,6 +12,7 @@ import type {
   ToolDefinition,
 } from '../model'
 import { buildMessages } from './messages'
+import { hasRenderedArtifactPreview } from '../tools/builtin/capture-preview'
 
 const STORED_HANDLE_PATTERN = /\[Result stored as (?:mem|handle)-[^:\s]+:[^\]]*Use read_handle to retrieve it\.\]/i
 
@@ -32,6 +33,13 @@ export async function* streamModel(
     ? ctx.tools.filter((tool) => {
         if (tool.name === 'read_handle') return hasReadableHandle(ctx.messages)
         if (tool.name === 'search_attachments' || tool.name === 'read_attachment') return (ctx.attachments?.length ?? 0) > 0
+        // Capturing is a follow-up capability, not a way to validate an
+        // artifact that this model turn has not produced yet. Requiring both a
+        // DOM target and vision input prevents guaranteed-failure loops on an
+        // empty preview panel.
+        if (tool.name === 'capture_preview') {
+          return provider.metadata.supportsVision === true && hasRenderedArtifactPreview()
+        }
         return true
       })
     : []

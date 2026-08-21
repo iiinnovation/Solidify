@@ -23,6 +23,7 @@ import type { QueryContext, QueryEvent } from '../types'
 import type { ClaudeMessage } from '../messages'
 import type { CompletionChunk, CompletionRequest, ModelProvider } from '../../model'
 import { readHandleTool } from '../../tools/builtin/read-handle'
+import { capturePreviewTool } from '../../tools/builtin/capture-preview'
 import type { Tool } from '../../tools/types'
 
 function provider(script: CompletionChunk[][]): ModelProvider {
@@ -294,6 +295,64 @@ describe('read_handle model visibility', () => {
 
     await collect(runQuery(makeCtx(recordingProvider, { tools: [readHandleTool as Tool], messages })))
     expect(requests[0].tools?.map((tool) => tool.name)).toEqual(['read_handle'])
+  })
+})
+
+describe('capture_preview model visibility', () => {
+  function recordingVisionProvider(requests: CompletionRequest[]): ModelProvider {
+    return {
+      ...provider([doneTurn]),
+      metadata: {
+        name: 'mock', displayName: 'Mock Vision', supportsVision: true, supportsTools: true,
+        supportsStreaming: true, defaultMaxTokens: 4096, models: ['mock-model'],
+      },
+      async *stream(request) {
+        requests.push(request)
+        yield* doneTurn
+      },
+    }
+  }
+
+  it('hides capture while the artifact panel has no rendered target', async () => {
+    document.body.innerHTML = ''
+    const requests: CompletionRequest[] = []
+
+    await collect(runQuery(makeCtx(recordingVisionProvider(requests), {
+      tools: [capturePreviewTool as Tool],
+    })))
+
+    expect(requests[0].tools).toBeUndefined()
+  })
+
+  it('exposes capture to a vision model only after a target is rendered', async () => {
+    document.body.innerHTML = '<div data-artifact-content data-artifact-id="ready"></div>'
+    const requests: CompletionRequest[] = []
+    try {
+      await collect(runQuery(makeCtx(recordingVisionProvider(requests), {
+        tools: [capturePreviewTool as Tool],
+      })))
+      expect(requests[0].tools?.map((tool) => tool.name)).toEqual(['capture_preview'])
+    } finally {
+      document.body.innerHTML = ''
+    }
+  })
+
+  it('keeps capture hidden from text-only models even when a preview exists', async () => {
+    document.body.innerHTML = '<div data-artifact-content></div>'
+    const requests: CompletionRequest[] = []
+    const textProvider: ModelProvider = {
+      ...provider([doneTurn]),
+      async *stream(request) {
+        requests.push(request)
+        yield* doneTurn
+      },
+    }
+    try {
+      await collect(runQuery(makeCtx(textProvider, { tools: [capturePreviewTool as Tool] })))
+      expect(requests[0].tools).toBeUndefined()
+    } finally {
+      document.body.innerHTML = ''
+    }
   })
 })
 

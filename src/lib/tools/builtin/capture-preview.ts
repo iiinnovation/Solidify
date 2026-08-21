@@ -21,6 +21,12 @@ export function selectPreviewElement(root: HTMLElement | null, pageIndex?: numbe
   return root.querySelector<HTMLElement>(`[data-pptd-page="${pageIndex}"]`)
 }
 
+/** The model may only be offered capture_preview when a real target exists. */
+export function hasRenderedArtifactPreview(scope?: ParentNode | null): boolean {
+  const target = scope ?? (typeof document !== 'undefined' ? document : null)
+  return Boolean(target?.querySelector('[data-artifact-content]'))
+}
+
 const NO_RETRY = '截图结果由界面渲染状态决定，重复调用不会改变它。请不要再调用 capture_preview，直接输出内容。'
 
 export function diagnosePreviewTarget(scope: ParentNode, input: CapturePreviewInput): PreviewTarget {
@@ -63,7 +69,7 @@ export function diagnosePreviewTarget(scope: ParentNode, input: CapturePreviewIn
 
 export const capturePreviewTool: Tool<CapturePreviewInput> = {
   name: 'capture_preview',
-  description: '截取当前 artifact 渲染结果为图片，用于视觉自检。只有 artifact 已在预览面板渲染时可用。',
+  description: '截取当前已渲染的 artifact 为图片，用于后续视觉自检。不能截取本轮尚未输出的 artifact；只有右侧预览面板已经显示目标时才调用。',
   inputSchema: { type: 'object', properties: { artifact_id: { type: 'string' }, page_index: { type: 'integer', minimum: 0 }, format: { type: 'string', enum: ['png', 'jpeg'] } } },
   readOnly: true, concurrencySafe: false, destructive: false, requiresConfirmation: false,
   availability: 'always', permissions: ['screen:capture'], timeoutMs: 30_000,

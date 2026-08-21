@@ -318,11 +318,12 @@ export function useChat(conversationId?: string) {
 
       // 确定对话 ID —— 没有则新建
       let currentConvId = resume?.conversationId ?? convIdRef.current
+      let createdConversation = false
       if (!currentConvId) {
         const title = content.slice(0, 20) + (content.length > 20 ? '…' : '')
         currentConvId = createConversation(title)
+        createdConversation = true
         convIdRef.current = currentConvId
-        navigate(`/chat/${currentConvId}`, { replace: true })
       }
       activeRequestConversationRef.current = currentConvId
       streamConversationRef.current = currentConvId
@@ -360,6 +361,24 @@ export function useChat(conversationId?: string) {
       setIsStreaming(true)
       const abortController = new AbortController()
       abortRef.current = abortController
+
+      // Publish the turn before attachment extraction, knowledge lookup, and
+      // automatic Skill routing. Those preparation tasks may take seconds, but
+      // the user's send action must be visible in the same frame. Persisting
+      // before navigating also lets /chat/:id hydrate the turn immediately if
+      // React remounts the route.
+      if (!resume) {
+        setMessages((previous) => [...previous, userMsg, assistantMsg])
+        addMessageToConversation(currentConvId, userMsg)
+        addMessageToConversation(currentConvId, assistantMsg)
+        if (createdConversation) navigate(`/chat/${currentConvId}`, { replace: true })
+      }
+
+      const removeOptimisticAssistant = () => {
+        if (resume) return
+        setMessages((previous) => previous.filter((message) => message.id !== assistantMsg.id))
+        removeMessageFromConversation(currentConvId, assistantMsg.id)
+      }
 
       const savedAgentContext = resume?.assistantMessage.agentContext
       const preloadWorkspaceRoot = savedAgentContext
@@ -580,15 +599,19 @@ ${result.content}
         skillRuntimePromise,
         skillRoutePromise,
       ])
-      // The user message has not been committed to state yet, so the routed
-      // Skill can still be recorded on it and rendered as the same chip a
-      // manual pick produces.
+      if (!isCurrentRequest()) {
+        removeOptimisticAssistant()
+        return
+      }
+      // Patch the routed Skill and extracted attachment metadata onto the
+      // already-visible optimistic message once preparation completes.
       const effectiveSkillId = skillId ?? routedSkill?.name
       if (routedSkill) {
         userMsg.skill = { id: routedSkill.name, name: routedSkill.displayName ?? routedSkill.name }
         userMsg.requestContext = { ...userMsg.requestContext, skillId: routedSkill.name }
       }
       if (attachmentResult.error) {
+        removeOptimisticAssistant()
         if (isCurrentRequest()) {
           setError(attachmentResult.error)
           isStreamingRef.current = false
@@ -597,6 +620,17 @@ ${result.content}
           activeRequestConversationRef.current = undefined
         }
         return
+      }
+      if (!resume) {
+        const userPatch: Partial<Message> = {
+          skill: userMsg.skill,
+          requestContext: userMsg.requestContext,
+          attachments: userMsg.attachments,
+        }
+        setMessages((previous) => previous.map((message) =>
+          message.id === userMsg.id ? { ...message, ...userPatch } : message,
+        ))
+        patchMessageInConversation(currentConvId, userMsg.id, userPatch)
       }
       const historicalAttachmentIds = messages.flatMap((message) =>
         message.attachments?.map((attachment) => attachment.attachmentId).filter((id): id is string => Boolean(id)) ?? [],
@@ -622,20 +656,17 @@ ${result.content}
         enrichedContent = `${enrichedContent}${knowledgeResult.context}`
       }
 
-      if (!isCurrentRequest()) return
+      if (!isCurrentRequest()) {
+        removeOptimisticAssistant()
+        return
+      }
       if (abortController.signal.aborted) {
+        removeOptimisticAssistant()
         isStreamingRef.current = false
         setIsStreaming(false)
         abortRef.current = null
         activeRequestConversationRef.current = undefined
         return
-      }
-
-      // 更新本地 state + store
-      if (!resume) {
-        setMessages((prev) => [...prev, userMsg, assistantMsg])
-        addMessageToConversation(currentConvId, userMsg)
-        addMessageToConversation(currentConvId, assistantMsg)
       }
 
       // 流式 artifact 跟踪

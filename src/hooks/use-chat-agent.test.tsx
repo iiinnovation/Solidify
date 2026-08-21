@@ -68,6 +68,43 @@ describe('useChat agent loop switch', () => {
     useUIStore.setState({ composerDrafts: {}, pendingInput: null })
   })
 
+  it('publishes a new turn synchronously before asynchronous preparation finishes', async () => {
+    let releaseRun: (() => void) | undefined
+    const runGate = new Promise<void>((resolve) => { releaseRun = resolve })
+    mocks.runQuery.mockImplementation(async function* () {
+      yield { type: 'run.started', runId: 'run-optimistic' }
+      await runGate
+      yield { type: 'message.delta', text: 'ready' }
+      yield { type: 'message.completed', content: 'ready' }
+      yield {
+        type: 'run.completed',
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, turns: 1, toolCalls: 0 },
+      }
+    })
+    const { result, rerender } = renderHook(({ id }: { id?: string }) => useChat(id), {
+      initialProps: { id: undefined as string | undefined },
+      wrapper,
+    })
+    let request: Promise<void> | undefined
+    let createdId = ''
+
+    act(() => {
+      request = result.current.sendMessage('立即显示这条消息')
+      const created = useChatStore.getState().conversations[0]
+      createdId = created.id
+      expect(created.messages.map((message) => message.role)).toEqual(['user', 'assistant'])
+      expect(created.messages[0].content).toBe('立即显示这条消息')
+    })
+    expect(result.current.messages.map((message) => message.role)).toEqual(['user', 'assistant'])
+    rerender({ id: createdId })
+    await waitFor(() => expect(result.current.isStreaming).toBe(true))
+    expect(result.current.messages.map((message) => message.role)).toEqual(['user', 'assistant'])
+
+    releaseRun?.()
+    await act(async () => { await request })
+    expect(result.current.messages.at(-1)?.content).toBe('ready')
+  })
+
   it('consumes runQuery events and saves them on the assistant message', async () => {
     mocks.runQuery.mockImplementation(async function* () {
       yield { type: 'run.started', runId: 'run-test' }
