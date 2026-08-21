@@ -25,6 +25,11 @@ export interface Tool<I = unknown, O = unknown> {
   destructive: boolean       // 是否可能造成不可逆后果
   requiresConfirmation: boolean | ((input: I, ctx: ToolUseContext) => boolean)
 
+  /** ── 循环保护，可选 ── */
+  loopGroup?: string          // 例如 attachment-retrieval
+  loopKey?: string            // 例如 search / read
+  replaySafe?: boolean        // 相同输入可从本次运行缓存回放
+
   /** ── 环境要求 ── */
   availability: ToolAvailability   // 'always' | 'tauri-only' | 'online-only' | 'tauri-or-skill-resource'
   permissions: PermissionScope[]   // 需要的权限范围
@@ -85,7 +90,8 @@ export interface ToolResult<T = unknown> {
   /** 失败时的可解释错误。要能让模型据此换方案，不是给人看的堆栈 */
   error?: {
     kind: 'invalid_input' | 'not_found' | 'permission_denied'
-        | 'timeout' | 'aborted' | 'runtime'
+        | 'timeout' | 'aborted' | 'circuit_breaker'
+        | 'loop_detected' | 'budget_exhausted' | 'runtime'
     message: string
     recoverable: boolean
   }

@@ -25,6 +25,9 @@ function selectWithValidation(resources: readonly AttachmentResource[] | undefin
 export const searchAttachmentsTool: Tool<SearchAttachmentsInput> = {
   name: 'search_attachments',
   description: 'Search user-uploaded attachments for relevant sections without loading whole files. Use before reading large documents.',
+  loopGroup: 'attachment-retrieval',
+  loopKey: 'search',
+  replaySafe: true,
   inputSchema: {
     type: 'object',
     properties: {
@@ -60,6 +63,9 @@ export const searchAttachmentsTool: Tool<SearchAttachmentsInput> = {
 export const readAttachmentTool: Tool<ReadAttachmentInput> = {
   name: 'read_attachment',
   description: 'Read a bounded section or range from a user-uploaded attachment. Use the attachment ID from the attachment manifest; do not use filesystem paths or result handles.',
+  loopGroup: 'attachment-retrieval',
+  loopKey: 'read',
+  replaySafe: true,
   inputSchema: {
     type: 'object',
     properties: {

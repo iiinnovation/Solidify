@@ -28,6 +28,7 @@ export interface GeneratePptdOutput {
   pageReports: Array<{ pageIndex: number; status: 'generated' | 'repaired' | 'fallback'; attempts: number }>
   warnings: string[]
   usage: PptdDeckPipelineResult['usage']
+  telemetry: PptdDeckPipelineResult['telemetry']
 }
 
 export const GENERATE_PPTD_TIMEOUT_MS = 30 * 60_000
@@ -42,7 +43,7 @@ export function createGeneratePptdTool(getParent: () => QueryContext): Tool<Gene
     name: 'generate_pptd',
     description: [
       'Generate one complete PPTD deck from a prepared brief and source materials.',
-      'Use this exactly once after reading all relevant workspace files and references.',
+      'Use this exactly once after preparing the brief; bundled references are loaded internally and must not be read first for ordinary generation.',
       'Use attachmentIds for user-uploaded source material; do not paste whole attachments into materials.',
       'The tool performs design direction, outline generation, per-page planning drafts, bounded parallel page generation, validation, targeted repair, and emits the final slides artifact directly.',
       'It includes an art-direction stage backed by the bundled open-kimi-ppt scenario guides, design systems, and reference pages.',
@@ -136,6 +137,16 @@ export function createGeneratePptdTool(getParent: () => QueryContext): Tool<Gene
           pageReports: result.pageReports.map(({ pageIndex, status, attempts }) => ({ pageIndex, status, attempts })),
           warnings: result.warnings,
           usage: result.usage,
+          telemetry: result.telemetry,
+        }
+        // The stage breakdown is diagnostic, not something the model acts on;
+        // keep it out of the model-visible content and one line wide in the
+        // log. A deck costs minutes of model time — never lose a finished one
+        // to a logging fault.
+        try {
+          console.info('[pptd] pipeline telemetry', formatPptdTelemetry(result.telemetry))
+        } catch (error) {
+          console.warn('[pptd] telemetry unavailable', error)
         }
         return {
           success: true,
@@ -160,6 +171,26 @@ export function createGeneratePptdTool(getParent: () => QueryContext): Tool<Gene
       return `生成 PPTD 演示文稿${input.title ? `：${input.title}` : ''}`
     },
   }
+}
+
+/**
+ * One-line stage breakdown. `modelMs` sums overlapping calls, so comparing it
+ * against `totalMs` shows how much the concurrency cap actually bought.
+ */
+function formatPptdTelemetry(telemetry: PptdDeckPipelineResult['telemetry']): string {
+  const seconds = (ms: number) => `${(ms / 1_000).toFixed(1)}s`
+  const stages = telemetry.stages
+    .map((stage) => `${stage.stage}×${stage.calls} model=${seconds(stage.modelMs)} slowest=${seconds(stage.slowestCallMs)}`)
+    .join(' | ')
+  const phases = telemetry.phases.map((phase) => `${phase.phase}@${seconds(phase.elapsedMs)}`).join(' → ')
+  const { generated, repaired, fallback } = telemetry.pageStatusCounts
+  return [
+    `total=${seconds(telemetry.totalMs)}`,
+    `concurrency=${telemetry.concurrency}`,
+    `pages=${telemetry.pageCount}(生成${generated}/修复${repaired}/兜底${fallback})`,
+    phases,
+    stages,
+  ].join(' · ')
 }
 
 function buildGeneratePptdInputSchema(attachments?: readonly AttachmentResource[]): JSONSchema {
@@ -188,7 +219,10 @@ function buildGeneratePptdInputSchema(attachments?: readonly AttachmentResource[
         type: 'array', maxItems: 20,
         items: { type: 'string', minLength: 1, maxLength: 240 },
       },
-      maxPages: { type: 'integer', minimum: 1, maximum: 24 },
+      maxPages: {
+        type: 'integer', minimum: 1, maximum: 24,
+        description: 'Maximum page count. Use 10-14 for an ordinary document deck; omitted runs default to 12.',
+      },
       artifactPath: { type: 'string', minLength: 1, maxLength: 240 },
     },
   }

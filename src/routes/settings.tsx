@@ -644,16 +644,14 @@ export function SettingsPage() {
                     setSkillV2Enabled(value)
                     setFlagOverride('skillV2', value)
                     if (value) {
-                      setAgentLoopEnabled(true)
-                      setToolCallingEnabled(true)
-                      setHarnessEnabled(true)
-                      setFlagOverride('agentLoop', true)
-                      setFlagOverride('toolCalling', true)
-                      setFlagOverride('harness', true)
                       void migrateStoredCustomSkills().catch((error) => {
                         console.warn('[skills] Legacy Skill migration failed:', error)
                       })
                     }
+                    const effective = getFlags()
+                    setAgentLoopEnabled(effective.agentLoop)
+                    setToolCallingEnabled(effective.toolCalling)
+                    setHarnessEnabled(effective.harness)
                   }}
                   className="h-4 w-4 shrink-0 rounded border-border text-accent focus:ring-accent focus:ring-offset-0"
                 />

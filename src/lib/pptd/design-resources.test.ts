@@ -32,6 +32,22 @@ describe('PPTD design resources', () => {
     expect(() => resolvePptdDesignSource('季度汇报', 'unknown/theme')).toThrow(/未知 PPTD 设计系统/)
   })
 
+  it('routes the full refs font, shape, and poster guidance progressively', () => {
+    const ordinary = resolvePptdDesignSource('季度经营复盘')
+    const architecture = resolvePptdDesignSource('系统架构与数据流')
+    const poster = resolvePptdDesignSource('制作一张品牌信息图海报')
+
+    expect(ordinary.fontGuidance).toContain('# Font system')
+    expect(ordinary.shapeGuidance).toContain('## Basic Shapes')
+    expect(ordinary.shapeIntensive).toBe(false)
+    expect(ordinary.posterGuidance).toBeUndefined()
+    expect(architecture.shapeGuidance).toContain('## Basic Shapes')
+    expect(architecture.shapeIntensive).toBe(true)
+    expect(architecture.designSystemId).toBe('consulting/red-black-growth')
+    expect(poster.shapeGuidance).toContain('## Basic Shapes')
+    expect(poster.posterGuidance).toContain('poster')
+  })
+
   it.each([
     '战略决策分析',
     '商业计划书',

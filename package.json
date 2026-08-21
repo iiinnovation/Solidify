@@ -15,6 +15,8 @@
     "test:m1-live-non-claude": "M1_LIVE_E2E=true M1_LIVE_MODELS=GPT,DeepSeek node --env-file-if-exists=.env.m1-live.local ./node_modules/vitest/vitest.mjs run src/lib/engine/__tests__/m1-live-e2e.test.ts --testTimeout=120000",
     "test:m6-live": "M6_LIVE_E2E=true node --env-file-if-exists=.env.m1-live.local ./node_modules/vitest/vitest.mjs run src/lib/engine/__tests__/m6-live-e2e.test.ts --testTimeout=180000",
     "test:m4-live": "M4_LIVE_E2E=true VITE_FLAG_HARNESS=true VITE_FLAG_SKILL_V2=true VITE_FLAG_TOOL_CALLING=true node --env-file-if-exists=.env.m1-live.local ./node_modules/vitest/vitest.mjs run src/lib/skills/m4-live-e2e.test.ts --testTimeout=120000",
+    "sync:pptd-refs": "node scripts/sync-pptd-refs.mjs",
+    "check:pptd-refs": "node scripts/sync-pptd-refs.mjs --check",
     "test:coverage": "vitest run --coverage",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",

@@ -270,5 +270,6 @@ function exhaustedLabel(reason: Extract<QueryEvent, { type: 'run.exhausted' }>['
   if (reason === 'max_turns') return '已达到最大运行轮数'
   if (reason === 'max_output_tokens') return '已自动精简上下文重试，但模型仍未在本轮输出预算内产生有效结果'
   if (reason === 'max_tokens') return '已达到 token 上限'
+  if (reason === 'tool_loop') return '检测到工具无进展循环，已停止继续检索'
   return '已达到工具调用上限'
 }

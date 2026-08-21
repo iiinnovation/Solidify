@@ -5,7 +5,7 @@
  * 开关关闭时走原有代码路径，行为与改造前完全一致。
  *
  * 约定（见 docs/specs/harness.md §3）：
- * - 新增能力默认 false，直到对应里程碑验收通过
+ * - 在建能力默认 false；验收完成的里程碑可转为默认开启
  * - 业务代码一律通过本模块读取，不直接读 env 或 localStorage
  * - 一个开关在正式发布两个版本后应当移除，不要积累永久开关
  */
@@ -38,7 +38,9 @@ const DEFAULT_FLAGS: Readonly<FeatureFlags> = Object.freeze({
   harness: false,
   localWorkspace: false,
   workbenchV2: false,
-  skillV2: false,
+  // M4 is the canonical Skill runtime. Keeping this off resurrects the
+  // retired inline presentation Skill and bypasses bundled resources.
+  skillV2: true,
   pptdEngine: false,
   subAgents: false,
 })
@@ -96,16 +98,7 @@ let cache: FeatureFlags | null = null
 export function getFlags(): FeatureFlags {
   if (!cache) {
     cache = { ...DEFAULT_FLAGS, ...readEnvOverrides(), ...readStorageOverrides() }
-    if (cache.skillV2) {
-      cache.agentLoop = true
-      cache.toolCalling = true
-      cache.harness = true
-    }
-    if (cache.subAgents) {
-      cache.agentLoop = true
-      cache.toolCalling = true
-      cache.harness = true
-    }
+    applyFeatureDependencies(cache)
   }
   return cache
 }
@@ -147,5 +140,15 @@ export function resetFlagCache(): void {
 
 /** 默认值快照，仅供测试与设置页展示用 */
 export function getDefaultFlags(): FeatureFlags {
-  return { ...DEFAULT_FLAGS }
+  const defaults = { ...DEFAULT_FLAGS }
+  applyFeatureDependencies(defaults)
+  return defaults
+}
+
+function applyFeatureDependencies(flags: FeatureFlags): void {
+  if (flags.skillV2 || flags.subAgents) {
+    flags.agentLoop = true
+    flags.toolCalling = true
+    flags.harness = true
+  }
 }

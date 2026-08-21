@@ -24,9 +24,20 @@ import { modelSupportsVision } from '../model/capabilities'
 const DEFAULT_LIMITS: RunLimits = {
   maxTurns: 25,
   maxTokens: 100_000,
+  maxProviderTokens: 100_000,
   maxOutputTokens: 4096,
   maxToolCalls: 50,
   toolTimeoutMs: 60_000,
+  toolLoopBudgets: {
+    'attachment-retrieval': { maxCalls: 10, softThreshold: 3, hardThreshold: 5 },
+    'attachment-retrieval:search': { maxCalls: 3, softThreshold: 3, hardThreshold: 5 },
+    'attachment-retrieval:read': { maxCalls: 6, softThreshold: 3, hardThreshold: 5 },
+    // A capture reflects render state, not arguments. Two attempts are enough
+    // to cover a legitimate retarget; beyond that the tool is looping on an
+    // environment it cannot influence, so close the group instead of paying
+    // another model turn per attempt.
+    'artifact-capture': { maxCalls: 2, softThreshold: 2, hardThreshold: 2 },
+  },
 }
 
 export interface ChatQueryContextOptions {

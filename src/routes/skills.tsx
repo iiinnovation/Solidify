@@ -9,7 +9,7 @@ import { useSkillRegistry } from '@/hooks/use-skill-registry'
 import { parseSkillDocument } from '@/lib/skills/parse'
 import { removeUserSkillDirectory, writeUserSkillDocument, writeUserSkillPackage } from '@/lib/skills/migration'
 import { createSkillPackage, packageFileText, readSkillPackage } from '@/lib/skills/package'
-import { isSkillEnabled, setSkillEnabled } from '@/lib/skills/settings'
+import { isSkillAutoRouteEnabled, isSkillEnabled, setSkillAutoRouteEnabled, setSkillEnabled } from '@/lib/skills/settings'
 import { isTauri, openFileDialog, readBinaryFile } from '@/lib/tauri'
 import type { LoadedSkill, SkillMetadata } from '@/lib/skills/types'
 
@@ -46,6 +46,7 @@ export function SkillsPage() {
   const [selectedName, setSelectedName] = useState<string | null>(null)
   const [editor, setEditor] = useState<{ name: string | null; value: string } | null>(null)
   const [message, setMessage] = useState<string | null>(null)
+  const [autoRoute, setAutoRoute] = useState(() => isSkillAutoRouteEnabled())
 
   const selectedMetadata = registryState.allSkills.find((skill) => skill.name === selectedName)
   useEffect(() => {
@@ -156,6 +157,11 @@ export function SkillsPage() {
     await registryState.refresh()
   }
 
+  const toggleAutoRoute = () => {
+    setSkillAutoRouteEnabled(!autoRoute)
+    setAutoRoute(!autoRoute)
+  }
+
   return (
     <div className="h-full flex flex-col bg-background">
       <header className="h-12 shrink-0 flex items-center gap-3 px-4 sm:px-6 border-b border-border-light bg-surface">
@@ -187,6 +193,18 @@ export function SkillsPage() {
         </div>
       )}
       {message && <div className="mx-4 mt-3 rounded-md border border-border bg-surface px-4 py-2 text-sm text-text-secondary">{message}</div>}
+
+      <div className="mx-4 mt-3 flex items-center justify-between gap-4 rounded-md border border-border bg-surface px-4 py-3">
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-text-primary">自动选择 Skill</p>
+          <p className="mt-0.5 text-xs text-text-tertiary">
+            没有在输入框用 / 指定技能时，先用一次轻量分类判断该启用哪个 Skill。关闭后只能手动选择。
+          </p>
+        </div>
+        <Button variant={autoRoute ? 'secondary' : 'ghost'} onClick={toggleAutoRoute} aria-pressed={autoRoute}>
+          {autoRoute ? '已开启' : '已关闭'}
+        </Button>
+      </div>
 
       <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-[280px_1fr] gap-0">
         <ScrollArea className="border-r border-border-light">

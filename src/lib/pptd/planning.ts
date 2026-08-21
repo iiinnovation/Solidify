@@ -52,7 +52,7 @@ export async function generatePlanningDraft(
   try {
     return parsePlanningDraft(result.text, page, pageIndex)
   } catch {
-    return fallbackPlanningDraft(page, pageIndex)
+    return fallbackPlanningDraft(page, pageIndex, { hasMedia: images.length > 0 })
   }
 }
 

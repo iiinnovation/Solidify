@@ -8,6 +8,8 @@ import {
   calculateInputSlotBudgets,
   clipCodeFile,
   clipLogFile,
+  deduplicateToolResults,
+  DUPLICATE_TOOL_RESULT,
   detectAttachmentType,
   estimateMessageTokens,
   estimateTokens,
@@ -114,6 +116,20 @@ describe('context trimming never splits a tool_use/tool_result pair', () => {
       expect(m.content.length).toBeGreaterThan(0)
     }
     expect(out.length).toBeGreaterThan(0)
+  })
+
+  it('deduplicates repeated long tool results while preserving every pairing', () => {
+    const repeated = 'same attachment evidence '.repeat(30)
+    const messages: ClaudeMessage[] = [
+      { role: 'assistant', content: [{ type: 'tool_use', id: 'u1', name: 'read_attachment', input: { offset: 0 } }] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'u1', content: repeated }] },
+      { role: 'assistant', content: [{ type: 'tool_use', id: 'u2', name: 'read_attachment', input: { offset: 0 } }] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'u2', content: repeated }] },
+    ]
+    const deduplicated = deduplicateToolResults(messages)
+    expect((deduplicated[1].content as Array<{ type: string; content?: string }>)[0].content).toBe(DUPLICATE_TOOL_RESULT)
+    expect((deduplicated[3].content as Array<{ type: string; content?: string }>)[0].content).toBe(repeated)
+    expect(deduplicated).toHaveLength(messages.length)
   })
 })
 

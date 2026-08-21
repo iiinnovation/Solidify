@@ -74,8 +74,8 @@ recommended-models: [claude-sonnet-4, deepseek-chat]
 ```
 第 0 层  始终在上下文       所有 Skill 的 name + description
                           ↓ 全部加起来约 300–600 token
-第 1 层  Skill 被选中时     该 Skill 的 SKILL.md 正文
-                          ↓ 约 500–1500 token
+第 1 层  Skill 被选中时     该 Skill 的 SKILL.md 正文 + allowed-tools + 资源解析器
+                          ↓ 约 500–1500 token，运行开始前完成
 第 2 层  模型主动读取       reference/ examples/ assets/ 下的文件
                           ↓ 通过 read_file 工具，按需，可能 0 也可能 5000 token
 ```
@@ -87,6 +87,25 @@ recommended-models: [claude-sonnet-4, deepseek-chat]
 - requirement-analysis: 结构化梳理客户需求，输出需求规格文档。当用户提供访谈纪要...
 - pptd-deck: 制作演示文稿。当用户需要 PPT、幻灯片、汇报材料时使用...
 ```
+
+### 第 1 层怎么触发
+
+「被选中」有两条路径，都发生在运行开始之前：
+
+1. **手选**：用户在输入框用 `/` 从技能面板挑一个。
+2. **自动路由**：用户没手选时，`skills/auto-route.ts` 用一次极小的分类调用
+   （温度 0、24 token 上限、8 秒超时）把消息判给某个 Skill 或判为「不启用」。
+   可在 Skill 管理页关闭，默认开启。
+
+**为什么不让模型在循环里自己读 SKILL.md 来激活。** 一个 Skill 不只是提示词：
+它的 `allowed-tools` 白名单和资源解析器是在 `createChatQueryContext` 构建运行
+上下文时挂上去的（见 engine/chat-context.ts、engine/pptd-context.ts）。模型在
+循环中途读到 SKILL.md 正文，也拿不到这个 Skill 依赖的工具——例如 `pptd-deck`
+的 `generate_pptd`。所以选择必须先于上下文构建完成。
+
+同理，`read_file` 对 `.solidify/skills/...` 的访问由当前已选 Skill 的资源解析器
+授权；没有已选 Skill 时这些路径一律拒绝，第 0 层索引里的路径提示只对已激活的
+Skill 有效。
 
 ### description 怎么写
 

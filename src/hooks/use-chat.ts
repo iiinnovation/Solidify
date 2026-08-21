@@ -10,6 +10,9 @@ import { isEnabled } from '@/lib/harness/flags'
 import { runQuery } from '@/lib/engine/query'
 import { applyRunEvent, createRunState } from '@/lib/engine/run-state'
 import { createChatQueryContext, loadChatSkillRuntime } from '@/lib/engine/chat-context'
+import { createSkillRouteModelCaller, routeSkill } from '@/lib/skills/auto-route'
+import { isSkillAutoRouteEnabled } from '@/lib/skills/settings'
+import type { SkillMetadata } from '@/lib/skills/types'
 import type { QueryEvent } from '@/lib/engine/types'
 import { useWorkspaceStore } from '@/stores/workspace-store'
 import { useDocumentStore } from '@/stores/document-store'
@@ -378,6 +381,38 @@ export function useChat(conversationId?: string) {
       // Attachment extraction, knowledge retrieval and Skill discovery do not
       // depend on one another. Start them together so the first model request
       // waits for the slowest preparation step instead of their sum.
+
+      // A Skill contributes tools and resources to the run context, which is
+      // built once before the loop starts. Classifying here is what lets a
+      // Skill activate without the user picking it from the composer palette;
+      // a resumed run already recorded its choice in agentContext.
+      const shouldAutoRoute = !resume
+        && !skillId
+        && !skillSystemPrompt
+        && Boolean(content.trim())
+        && isEnabled('skillV2')
+        && isSkillAutoRouteEnabled()
+      const skillRoutePromise: Promise<SkillMetadata | undefined> = shouldAutoRoute
+        ? (async () => {
+            try {
+              // Registry loads are cached per workspace, so this shares the
+              // scan already started for skillRuntimePromise.
+              const runtime = await loadChatSkillRuntime({ workspaceRoot: preloadWorkspaceRoot })
+              const skills = await runtime.registry.list()
+              const routed = await routeSkill({
+                message: content,
+                skills,
+                callModel: createSkillRouteModelCaller(activeProvider),
+                signal: abortController.signal,
+              })
+              return routed ? skills.find((skill) => skill.name === routed) : undefined
+            } catch (error) {
+              console.warn('[skills] Auto-routing failed; continuing without a Skill:', error)
+              return undefined
+            }
+          })()
+        : Promise.resolve(undefined)
+
       const attachmentPromise = (async () => {
         if (!composerAttachments?.length) return { attachmentResources: [], pptdMedia: undefined, error: undefined }
         try {
@@ -539,11 +574,20 @@ ${result.content}
         return { context: '', sources: [] }
       })()
 
-      const [attachmentResult, knowledgeResult, preloadedSkillRuntime] = await Promise.all([
+      const [attachmentResult, knowledgeResult, preloadedSkillRuntime, routedSkill] = await Promise.all([
         attachmentPromise,
         knowledgePromise,
         skillRuntimePromise,
+        skillRoutePromise,
       ])
+      // The user message has not been committed to state yet, so the routed
+      // Skill can still be recorded on it and rendered as the same chip a
+      // manual pick produces.
+      const effectiveSkillId = skillId ?? routedSkill?.name
+      if (routedSkill) {
+        userMsg.skill = { id: routedSkill.name, name: routedSkill.displayName ?? routedSkill.name }
+        userMsg.requestContext = { ...userMsg.requestContext, skillId: routedSkill.name }
+      }
       if (attachmentResult.error) {
         if (isCurrentRequest()) {
           setError(attachmentResult.error)
@@ -820,11 +864,11 @@ ${result.content}
             workspaceRoot: useWorkspaceStore.getState().workspaceRoot ?? undefined,
             skillSystemPrompt,
             skillSkipConfirmation,
-            skillId,
+            skillId: effectiveSkillId,
           }
           patchAssistantMessage({ agentRun: run, runEvents, agentContext })
 
-          const selectedSkillId = agentContext.skillId ?? skillId
+          const selectedSkillId = agentContext.skillId ?? effectiveSkillId
           const skillRuntime = isEnabled('skillV2')
             && selectedSkillId === preloadSkillId
             && agentContext.workspaceRoot === (preloadWorkspaceRoot ?? undefined)

@@ -49,7 +49,7 @@ describe('Skill progressive disclosure context', () => {
     expect(result.skillTokens.indexTokens).toBeGreaterThan(0)
     expect(result.skillTokens.bodyTokens).toBeGreaterThan(0)
     expect(result.system).toContain('Skill resource root: .solidify/skills/pptd-deck')
-    expect(result.system).toContain('already loads the bundled PPTD reference guides')
+    expect(result.system).toContain('already loads bundled PPTD scenario, design-system, font, shape, poster, and example references progressively')
     expect(result.system).not.toContain('Available Skill resource files')
     expect(result.system).toContain('read_file')
   })

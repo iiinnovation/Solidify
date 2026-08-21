@@ -37,12 +37,25 @@ export interface RunLimits {
   maxTurns: number
   /** Total token budget for this run */
   maxTokens: number
+  /** Optional provider-reported cumulative input+output hard cap. */
+  maxProviderTokens?: number
   /** Maximum output tokens per turn */
   maxOutputTokens: number
   /** Maximum tool calls across all turns (default: 50) */
   maxToolCalls: number
   /** Single tool execution timeout in ms (default: 60_000) */
   toolTimeoutMs: number
+  /** Optional per-loop budgets keyed by tool loopGroup or loopGroup:loopKey. */
+  toolLoopBudgets?: Readonly<Record<string, ToolLoopBudget>>
+}
+
+export interface ToolLoopBudget {
+  /** Maximum real or replayed calls in this loop budget. */
+  maxCalls: number
+  /** Soft warning threshold for no-progress calls. */
+  softThreshold?: number
+  /** Hard threshold after which the loop group is closed. */
+  hardThreshold?: number
 }
 
 export interface Message {
@@ -198,7 +211,7 @@ export type QueryEvent =
   | { type: 'tombstone'; reason: string; detail?: unknown }
   | { type: 'run.completed'; usage: UsageStats }
   | { type: 'run.failed'; error: RunError; usage?: UsageStats }
-  | { type: 'run.exhausted'; reason: 'max_turns' | 'max_tokens' | 'max_output_tokens' | 'max_tool_calls'; usage?: UsageStats }
+  | { type: 'run.exhausted'; reason: 'max_turns' | 'max_tokens' | 'max_output_tokens' | 'max_tool_calls' | 'tool_loop'; usage?: UsageStats }
 
 // ============================================================================
 // Model Gateway

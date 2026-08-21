@@ -1,44 +1,73 @@
 ---
 name: pptd-deck
-version: 1.2.0
-description: 使用本地 PPTD v2 引擎与专业设计系统生成、校验、预览和导出演示文稿
+version: 2.0.0
+description: 使用 Solidify 的本地 PPTD 引擎和从 Solidify-refs 同步的专业设计知识生成、审阅与导出演示文稿；适用于 PPT、PPTX、slide deck、汇报、课件、答辩、方案、海报和信息图任务
 displayName: PPTD 演示文稿
-allowed-tools: [read_file, list_dir, search_files, search_attachments, read_attachment, generate_pptd]
+allowed-tools: [read_file, list_dir, search_files, generate_pptd]
 skip-confirmation: true
 ---
 
 # PPTD 演示文稿
 
-将需求转成可审阅的 PPTD v2 工程：一个 `deck.pptd` YAML manifest、`pages/*.page` 页面文件和 `media/` 素材。始终使用本地 Solidify PPTD parser、renderer、validator 与 exporter，不调用浏览器侧 Kimi 编辑器或远程编辑服务。
+使用 `generate_pptd` 创建一个可预览、可校验、可导出 PPTX 的完整
+PPTD v2 演示文稿。`Solidify-refs/open-kimi-ppt` 是格式、场景、设计系统
+和视觉质量的权威来源；本 Skill 内的 `reference/` 是其随应用发布的副本。
 
-## 交付契约
+## Solidify 执行契约
 
-- 整份 deck 只能交付为一个 `<solidify-artifact type="slides">`，不得把每页拆成独立 artifact，也不得使用 `type="document"` 交付页面 YAML。
-- artifact 必须包含能独立渲染的完整 deck：优先输出 `{ manifest, pages, media }` bundle JSON，也可输出顶层含 `pages[]` 的内联 YAML。
-- artifact 路径使用 `03-交付物/deck.pptd`。`write_file` 生成的 manifest 和分页文件是工作过程，不能代替上述单一 artifact 交付。
+1. 判断任务类型、受众、目的、输入类型、设计方向和页数。只有这些信息
+   会实质改变结果且无法从用户材料推断时才追问。
+2. 对用户上传的 Markdown、PDF、Word 或文本附件，不调用附件搜索或分段
+   读取工具。把附件 manifest 中的 ID 原样传入 `attachmentIds`，由
+   `generate_pptd` 在内部建立完整的来源索引。
+3. 仅在用户明确指定工作区文件时使用 `read_file`、`list_dir` 或
+   `search_files`。把必要内容压缩进 `brief`/`materials`；图片路径放进
+   `mediaPaths`。不要把用户附件文件名当作工作区路径。
+4. 普通生成任务只调用一次 `generate_pptd`。不要手写 `.page` YAML，
+   不要手工拼装 artifact，不要在工具返回后重新包装、拆分或复制 deck。
+5. 普通文档型 deck 显式传入 `maxPages: 12`；可按用户需求在 10–14 页内
+   调整，只有用户明确要求长文稿时才超过 14 页。
+6. 工具负责来源索引、艺术指导、大纲、逐页生成、结构校验、有限修复、
+   安全版式、预览和最终 `slides` artifact。PPTX 由 Solidify 的导出 UI
+   从同一 PPTD 工程生成。
 
-## 工作流
+## 参考资料路由
 
-1. 若已选择工作区，读取用户指定的工作区文件和必要素材，整理成自包含的 brief 与 materials；用户附件通过 `search_attachments` 定位、`read_attachment` 分段读取，禁止把全文复制进初始请求。调用 `generate_pptd` 时始终显式传入 `attachmentIds`（无附件时传空数组），只能使用附件 manifest 中的 ID；materials 只放补充判断和必要摘录，不要按附件文件名调用 `read_file` 或 `read_handle`。不要自行生成页面 YAML。工作区内需要使用的 PNG/JPEG/GIF/WebP/SVG 图片路径通过 `mediaPaths` 传给工具；用户随消息上传的图片由运行时按资源引用提供。
-2. 根据任务判断演示场景。内置场景方法、设计系统和 Kimi 示例页会由 `generate_pptd` 自动加载，不要为这些 bundled 参考重复调用 `read_file`；用户点名设计系统时把相对标识（例如 `consulting/apricot-white-brief`）传给 `designSystemId`。
-3. 调用一次 `generate_pptd`。该工具内置 Art Director、大纲、逐页 Bento 策划稿、逐页生成、装配校验、定向修复和最终单一 `slides` artifact。策划稿使用 12×6 网格表达内容优先级与视觉层级；页面元素应使用策划稿中的 `planningCardId`，代码会把绑定元素确定性地限制在对应页面区域，跨卡片连接线可以不绑定。不要把远程图片 URL 写入 brief 或页面，图片只引用工具提供的本地 `media/...` 路径。
-4. 工具成功后不要复述、拆分或重新包装 deck；其 artifact 会直接进入聊天交付流。
-5. 工具内置的渲染校验与定向修复是本轮视觉复核依据；不得在 artifact 进入聊天交付流前调用截图工具，也不得用逐页 document 替代 deck。
-6. 若复杂页面在有界修复后仍未通过，工具会用大纲中的结论和要点生成结构合法的安全版式，继续交付完整 deck，并在 artifact 顶部与逐页报告中显式标出降级页和原因。网络、鉴权、取消、工作区写入失败等技术故障仍会中止运行。
-7. 已选择桌面工作区时，工具会把可恢复检查点写入 `.solidify/pptd-checkpoints/`；重试相同输入时复用已经完成的设计、大纲和页面。检查点是工作过程，不替代最终单一 `slides` artifact。
+普通生成（包括架构图、流程图、海报和信息图）不调用 `read_file`
+读取 bundled 参考；`generate_pptd` 会按任务自动渐进加载。只有用户
+明确要求检查/编辑现有 PPTD、解释具体规范或调试 Skill 资源时，
+才先读 `reference/index.md`，再读它指向的文件。下列路径都是相对
+运行时提供的 `Skill resource root`；调用 `read_file` 时必须先与该根路径
+拼接，不得把相对路径当作工作区文件。
 
-## 视觉质量底线
+- 场景选择：`reference/slide-categories.md` 和一个匹配的场景文件。
+- 设计系统：`reference/design-system/<family>/<name>/design.md`；一次只用
+  一个系统，不混搭。
+- PPTD 格式或编辑兼容：同时读取完整的 `reference/pptd.md` 和当前实现边界
+  `reference/solidify-pptd-support.md`，不要生成本地引擎尚未支持的字段。
+- 字体、形状、海报：分别使用 `reference/fonts.md`、
+  `reference/shapes.md`、`reference/general-poster.md`。
+- 上游完整能力与 QA 方法：`reference/open-kimi-workflow.md`。其中的外部
+  命令仅作能力参考，当前聊天运行仍以本节 Solidify 契约为准。
 
-- 架构、流程、组件映射和依赖关系使用带标签的节点、连线、边界和方向表达；不要把非数值关系伪装成 chart。
-- chart 只用于至少两条真实数值数据的趋势、比较或分布；不能接受只有坐标轴、空系列或全为 0 的图表。
-- 深色背景上的正文、浅色背景上的正文都必须保持可读对比度；低对比度页面会被工具阻止交付并定向修复。
-- 先保证一个清晰结论和一个完整证据对象，再添加装饰；不要用大面积空白、无标签线条或孤立组件填充页面。
+只使用上述明确列出的资源路径，不要发明或探测其他路径。
 
-## 提交前自检
+## 内容与视觉底线
 
-- 最终回复中只有一个 `type="slides"` artifact，且内容包含所有页。
-- 所有 `elementId` 唯一，bounds 位于 960×540 画布内。
-- 文本使用主题样式或明确的字号/颜色，避免低对比度和文本互相覆盖。
-- 图片只引用工程内 `media/` 文件；没有远程 URL 依赖。
-- 每一页都能在右侧 Artifacts 中切换预览；未通过模型质量检查的页面必须使用结构合法的安全版式，并在 artifact 顶部显式列出。
-- 导出结果逐页的几何坐标与 PPTD 保持一致；任何 icon/chart/gradient 降级都写入报告。
+- 一页只承担一个可复述结论；用证据、解释、来源和行动项支撑结论。
+- 根据内容选择图表、表格、时间线、流程、架构、图片或文字，不把所有
+  页面降级成项目符号、等分卡片或“大标题 + 大空白”。
+- 架构、流程和依赖使用有标签节点与正交连线；只有真实数值序列才使用
+  chart。不得虚构数据、来源、案例或图片。
+- 设计系统决定配色、字体、密度、组件和页面节奏。正文页必须具有足够
+  信息密度，同时保持安全边距、可读对比度和清晰阅读顺序。
+- 用户图片优先；只有与本页结论直接相关时才使用图片，禁止拉伸和无关
+  装饰。没有图片时使用结构化矢量表达，不生成空图片占位。
+- 工具失败页必须进入有限修复或确定性安全版式，不能把“生成失败”占位
+  页当成成品交付。
+
+## 交付
+
+最终聊天只交付工具生成的一个 `type="slides"` artifact。保持所有页面、
+主题和本地媒体自包含；不要输出旧版 `{ "slides": [...] }` 格式，也不要
+用多个 document artifact 代替完整 deck。

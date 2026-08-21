@@ -14,6 +14,7 @@ import { isEnabled } from '../harness/flags'
 import { createHarnessRuntime, hardGuard, recordToolCompleted, recordToolRequested, sessionGrantKey, type HarnessRuntime } from '../harness/builtin-hooks'
 import { readWorkspaceFile } from '../tauri'
 import { snapshotJson } from '../harness/ledger'
+import { ToolLoopGuard } from './tool-loop-guard'
 
 /**
  * How many times a single answer may be resumed after hitting the model's
@@ -64,6 +65,9 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
   const internal = new AbortController()
   const unlink = linkAbort(ctx.signal, internal)
   const runCtx: QueryContext = { ...ctx, signal: internal.signal }
+  const toolLoopGuard = new ToolLoopGuard(runCtx)
+  let closedToolGroups = new Set<string>()
+  let loopRecoveryTurnUsed = false
   const harness = isEnabled('harness') ? createHarnessRuntime(runCtx, { skillRegistry: runCtx.skillRegistry }) : undefined
 
   // Current conversation state (reconstructed per turn or restored from the
@@ -168,8 +172,14 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       compactNextTurn = false
       let response: { text: string; toolCalls: ToolCall[]; usage?: UsageStats; stopReason?: string; reasoningLength: number }
       try {
+        const modelContext: QueryContext = closedToolGroups.size === 0
+          ? runCtx
+          : {
+              ...runCtx,
+              tools: runCtx.tools.filter((tool) => !tool.loopGroup || !closedToolGroups.has(tool.loopGroup)),
+            }
         response = yield* streamModelResponse({
-          ...runCtx,
+          ...modelContext,
           messages: currentMessages,
           harnessContext,
           retrievedContext: isFirstTurn ? retrievedContext : undefined,
@@ -205,6 +215,13 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
         usage.totalTokens += response.usage.totalTokens
         const charge = response.usage.outputTokens + (turn === 1 ? response.usage.inputTokens : 0)
         budgetTokens += charge
+        const providerLimit = runCtx.limits.maxProviderTokens
+        if (providerLimit !== undefined && usage.totalTokens > providerLimit) {
+          harness?.ledger.append('run.exhausted', { reason: 'max_tokens', usage, providerLimit })
+          yield { type: 'run.exhausted', reason: 'max_tokens', usage: { ...usage } }
+          logger.log('run.exhausted', { reason: 'provider_token_budget', usage, providerLimit })
+          return
+        }
         if (runCtx.taskTree && !runCtx.taskTree.budget.consume(runCtx.runId, charge)) {
           harness?.ledger.append('run.exhausted', {
             reason: 'max_tokens',
@@ -321,6 +338,13 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
         logger,
         harness,
         consecutiveToolFailures,
+        toolLoopGuard,
+      )
+
+      closedToolGroups = new Set(
+        runCtx.tools
+          .flatMap((tool) => tool.loopGroup ? [tool.loopGroup] : [])
+          .filter((group) => toolLoopGuard.isClosed(group)),
       )
 
       // Three real executions are enough evidence that repeating the same
@@ -333,6 +357,21 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
         yield { type: 'run.failed', error, usage: { ...usage } }
         logger.error('run.failed', error)
         return
+      }
+
+      const blockedLoopResult = results.find((result) => result.error?.kind === 'budget_exhausted')
+      if (blockedLoopResult) {
+        if (loopRecoveryTurnUsed) {
+          const error: RunError = { kind: 'internal', message: blockedLoopResult.error?.message ?? '工具无进展循环已停止' }
+          appendTerminalFact(harness, logger, 'run.exhausted', { reason: 'tool_loop', error, usage })
+          yield { type: 'run.exhausted', reason: 'tool_loop', usage: { ...usage } }
+          logger.warn('run.exhausted', { reason: 'tool_loop', message: error.message })
+          return
+        }
+        // Give the model exactly one final turn with the retrieval group
+        // removed. A stubborn model gets a deterministic terminal outcome on
+        // the next blocked request instead of burning the remaining turns.
+        loopRecoveryTurnUsed = true
       }
 
       // Some deterministic generators own their final artifact contract. Their
@@ -778,6 +817,7 @@ async function* executeTools(
   logger: SimpleRunLogger,
   harness?: HarnessRuntime,
   consecutiveToolFailures?: ReadonlyMap<string, number>,
+  loopGuard?: ToolLoopGuard,
 ): AsyncGenerator<QueryEvent, Array<ToolResult & { callId: string }>> {
   logger.log('tools.executing', { count: calls.length })
 
@@ -786,7 +826,7 @@ async function* executeTools(
 
   // Steps ①②③ per call; failures feed back immediately so the model
   // can self-correct, with tombstones for the recoverable cases (M1-11)
-  const runnable: Array<{ call: ToolCall; tool: Tool }> = []
+  const runnable: Array<{ call: ToolCall; tool: Tool; loopWarning?: string }> = []
   for (const call of calls) {
     const priorFailures = consecutiveToolFailures?.get(call.name) ?? 0
     if (priorFailures >= 3) {
@@ -806,7 +846,39 @@ async function* executeTools(
     }
     const prep = prepareCall(call, ctx.tools, ctx.platform)
     if (prep.ok) {
-      runnable.push({ call, tool: prep.tool })
+      const loopDecision = loopGuard?.inspect(call, prep.tool) ?? { kind: 'allow' as const }
+      if (loopDecision.kind === 'replay') {
+        loopGuard?.observe(call, prep.tool, loopDecision.result)
+        const result: ToolResult & { callId: string } = {
+          ...loopDecision.result,
+          callId: call.id,
+          metadata: { ...loopDecision.result.metadata, durationMs: 0 },
+        }
+        results.push(result)
+        if (harness) recordToolCompleted(harness, result.callId, result)
+        yield { type: 'tool.completed', callId: call.id, result }
+        logger.log('tool.replayed', { callId: call.id, name: call.name })
+        continue
+      }
+      if (loopDecision.kind === 'close') {
+        const result: ToolResult & { callId: string } = {
+          callId: call.id,
+          success: false,
+          content: loopDecision.message,
+          error: { kind: 'budget_exhausted', message: loopDecision.message, recoverable: true },
+          metadata: { durationMs: 0 },
+        }
+        results.push(result)
+        if (harness) recordToolCompleted(harness, result.callId, result)
+        yield { type: 'tool.completed', callId: call.id, result }
+        logger.warn('tool.loop_closed', { callId: call.id, name: call.name, message: loopDecision.message })
+        continue
+      }
+      runnable.push({
+        call,
+        tool: prep.tool,
+        ...(loopDecision.kind === 'warn' ? { loopWarning: loopDecision.message } : {}),
+      })
       continue
     }
 
@@ -867,8 +939,14 @@ async function* executeTools(
       })),
     )
     for (let i = 0; i < runnable.length; i++) {
-      const { call } = runnable[i]
-      const result = { ...(await promises[i]), callId: call.id }
+      const { call, tool, loopWarning } = runnable[i]
+      const executed = await promises[i]
+      loopGuard?.observe(call, tool, executed)
+      const result = {
+        ...executed,
+        ...(loopWarning ? { content: `${executed.content}\n\n[循环检测提示] ${loopWarning}` } : {}),
+        callId: call.id,
+      }
       results.push(result)
       yield { type: 'tool.completed', callId: call.id, result }
       logger.log('tool.completed', {
@@ -883,7 +961,7 @@ async function* executeTools(
 
   // Serial path, model-returned order
   for (let i = 0; i < runnable.length; i++) {
-    const { call, tool } = runnable[i]
+    const { call, tool, loopWarning } = runnable[i]
 
     // Cancellation may happen while the previous tool or approval is active.
     // Stop before invoking any hook or policy for the next tool.
@@ -1008,6 +1086,8 @@ async function* executeTools(
       }
     }
     const result = { ...executed, callId: call.id }
+    loopGuard?.observe(call, tool, executed)
+    if (loopWarning) result.content = `${result.content}\n\n[循环检测提示] ${loopWarning}`
     results.push(result)
     if (harness) recordToolCompleted(harness, call.id, result)
     yield { type: 'tool.completed', callId: call.id, result }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { bentoGridToBounds } from './bento-layout'
+import { bentoGridToBounds, fallbackPlanningDraft } from './bento-layout'
 import { parsePlanningDraft, planningPromptBounds } from './planning'
 import type { PptdDesignSpec } from './design-resources'
 
@@ -64,5 +64,38 @@ describe('PPTD planning draft', () => {
     }), page, 0)
     expect(draft.cards).toHaveLength(1)
     expect(draft.cards[0].id).toBe('hero')
+  })
+
+  it('uses page-specific deterministic layouts instead of one text-card grid', () => {
+    const diagram = fallbackPlanningDraft({
+      pageType: 'diagram', intent: '审计 AI 系统架构', keyPoints: ['数据源', '模型服务', '审计应用'],
+      visualTask: '三层系统架构和数据流',
+    }, 0)
+    const chart = fallbackPlanningDraft({
+      pageType: 'chart', intent: '风险命中率持续提升', keyPoints: ['Q1 62%', 'Q2 74%'], dataHint: '季度趋势',
+    }, 1)
+    const cover = fallbackPlanningDraft({ pageType: 'cover', intent: '技术方案', keyPoints: ['审计 AI'] }, 0)
+    const firstContent = fallbackPlanningDraft(page, 0)
+    const secondContent = fallbackPlanningDraft(page, 1)
+
+    expect(diagram.layoutType).toBe('flow')
+    expect(diagram.cards.some((card) => card.type === 'diagram' && card.grid.rowSpan === 5)).toBe(true)
+    expect(chart.cards.some((card) => card.type === 'chart')).toBe(true)
+    expect(cover.layoutType).toBe('hero')
+    expect(firstContent.cards.map((card) => card.grid)).not.toEqual(secondContent.cards.map((card) => card.grid))
+    expect(diagram.cards.map((card) => card.grid)).not.toEqual(chart.cards.map((card) => card.grid))
+  })
+
+  it('does not require image or chart cards without usable media or numeric evidence', () => {
+    const imagePage = {
+      pageType: 'content', intent: '产品界面', keyPoints: ['界面说明'], assetBrief: '使用产品截图',
+    }
+    const chartPage = {
+      pageType: 'chart', intent: '趋势持续改善', keyPoints: ['趋势向好', '原因可解释'],
+    }
+
+    expect(fallbackPlanningDraft(imagePage, 0).cards.some((card) => card.type === 'image')).toBe(false)
+    expect(fallbackPlanningDraft(imagePage, 0, { hasMedia: true }).cards.some((card) => card.type === 'image')).toBe(true)
+    expect(fallbackPlanningDraft(chartPage, 0).cards.some((card) => card.type === 'chart')).toBe(false)
   })
 })

@@ -61,8 +61,14 @@ export interface QueryContext {
 export interface RunLimits {
   maxTurns: number          // 默认 25
   maxTokens: number         // 单次运行 token 上限，超出中止
+  maxProviderTokens?: number // Provider 实际累计 input+output 硬上限
   maxToolCalls: number      // 默认 50
   toolTimeoutMs: number     // 单工具超时，默认 60_000
+  toolLoopBudgets?: Readonly<Record<string, {
+    maxCalls: number
+    softThreshold?: number
+    hardThreshold?: number
+  }>>                     // 可选的结果感知循环/检索预算
 }
 
 /** 事件流 */
@@ -80,7 +86,7 @@ export type QueryEvent =
   | { type: 'tombstone';           reason: string; detail?: unknown }
   | { type: 'run.completed';       usage: UsageStats }
   | { type: 'run.failed';          error: RunError }
-  | { type: 'run.exhausted';       reason: 'max_turns' | 'max_tokens' | 'max_output_tokens' | 'max_tool_calls' }
+  | { type: 'run.exhausted';       reason: 'max_turns' | 'max_tokens' | 'max_output_tokens' | 'max_tool_calls' | 'tool_loop' }
 ```
 
 事件遵循 [ADR-0008](../04-decisions.md#adr-0008)：UI 与账本共享领域命名和 `runId` / `callId` / `requestId`，但不是同一个序列化投影。`message.delta`、`model.progress`、`tool.progress`、`permission.required` 属于可丢弃的实时控制事件；账本只保存无损 JSON 的稳定事实。`model.progress` 只携带阶段和计数，禁止携带原始思维链。禁止把 Promise resolver、`AbortSignal` 或其他运行时对象放入账本。
@@ -191,6 +197,31 @@ export interface ModelCapabilities {
 5. 工具结果                                         单项句柄化 + 全局累计上限
 6. 记忆检索片段                                     独立插槽预算，仅首轮注入
 ```
+
+### 6.1 结果感知的工具循环保护
+
+仅依赖 `maxTurns` 会让“相同工具、不同参数、相同结果”的检索循环烧完整个预算。可循环工具通过 `Tool` 元数据声明 `loopGroup`、`loopKey` 和可选的 `replaySafe`，引擎为每个组维护：
+
+- 规范化参数签名，识别连续相同调用；
+- 结果摘要签名，识别无新证据的重复读取和 A→B→A→B 往返；
+- 组级与子键级调用预算；
+- 软提示一次、随后关闭检索组，并在下一轮隐藏该组工具；
+- 模型仍无视关闭信号时，产出 `run.exhausted{tool_loop}`，不继续消耗剩余轮次。
+
+附件检索默认采用 `search` 最多 3 次、`read` 最多 6 次、组内最多 10 次。达到预算后只保留已有证据，进入生成阶段。
+
+### 6.2 工具结果的本地去重
+
+在累计 `tool_result` 插槽和通用历史裁剪之前，先做零 LLM 成本的重复结果折叠：相同的长结果只保留最新正文，旧的 `tool_result` 替换为短标记；工具配对本身不删除。这样重复附件读取不会在每一轮上下文中复制完整正文，也不会引入额外的总结模型往返。
+
+### 6.3 设计参考与取舍
+
+- [Cline loop detection](https://github.com/cline/cline/blob/main/sdk/packages/core/src/runtime/safety/loop-detection.ts)：借鉴稳定参数签名和 soft/hard 两级阈值；本项目额外比较结果摘要，避免只识别完全相同的参数。
+- [ZeroClaw result-aware loop detection](https://github.com/zeroclaw-labs/zeroclaw/issues/2152)：借鉴“相同输入与相同结果”“A→B→A→B”“连续失败”三类无进展信号；同输入但结果变化的分页读取不应误判。
+- [Hermes context compressor](https://github.com/NousResearch/hermes-agent/blob/main/agent/context_compressor.py)：借鉴零模型成本的旧工具结果去重、折叠和 pair sanitation；不把辅助 LLM 总结放入关键路径，避免增加 TTFT 或因总结模型窗口不足丢失上下文。
+- [SkimSearchAgent](https://github.com/ielab/skim-search-agent)：借鉴有预算的 Search→Inspect→Fetch→Answer 阶段划分；达到检索预算后由引擎隐藏检索工具，而不是依赖模型自行停止。
+
+这些机制互补而不互相替代：硬预算限制最坏成本，结果感知检测负责提前发现无进展，本地折叠控制每轮输入，阶段切换保证最终仍有一次生成机会。
 
 **大结果句柄化**（关键机制）：
 

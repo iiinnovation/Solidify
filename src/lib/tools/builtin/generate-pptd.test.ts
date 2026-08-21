@@ -50,6 +50,15 @@ function toolContext(context: QueryContext): ToolUseContext {
   }
 }
 
+const PIPELINE_TELEMETRY = {
+  totalMs: 1_000,
+  phases: [{ phase: 'design', elapsedMs: 100 }],
+  stages: [{ stage: 'design' as const, calls: 1, modelMs: 100, slowestCallMs: 100, inputTokens: 1, outputTokens: 1 }],
+  concurrency: 2,
+  pageCount: 1,
+  pageStatusCounts: { generated: 1, repaired: 0, fallback: 0 },
+}
+
 describe('generate_pptd workspace media', () => {
   beforeEach(() => {
     mocks.readWorkspaceBytes.mockReset()
@@ -62,6 +71,7 @@ describe('generate_pptd workspace media', () => {
       artifact: { title: 'Deck', type: 'slides', path: '03-交付物/deck.pptd', content: '{}', envelope: '<artifact />' },
       project: { pages: [{}] }, pageReports: [], warnings: [],
       usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, calls: 1 },
+      telemetry: PIPELINE_TELEMETRY,
     })
   })
 
@@ -207,6 +217,7 @@ describe('generate_pptd workspace media', () => {
         artifact: { title: 'Deck', type: 'slides', path: '03-交付物/deck.pptd', content: '{}', envelope: '<artifact />' },
         project: { pages: [{}] }, pageReports: [], warnings: [],
         usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, calls: 1 },
+        telemetry: PIPELINE_TELEMETRY,
       })
     const tool = createGeneratePptdTool(() => context)
     const execute = () => tool.execute({ brief: 'deck' }, toolContext(context), new AbortController().signal)

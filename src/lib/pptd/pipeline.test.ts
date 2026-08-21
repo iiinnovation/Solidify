@@ -138,6 +138,79 @@ describe('PPTD layered generation pipeline', () => {
     expect(pageEvidence).toContain('稀有尾部证据')
   })
 
+  it('keeps local attachment sections omitted by the bounded source refinement', async () => {
+    const result = await generatePptdDeck({
+      brief: '生成完整方案', maxPages: 1,
+      attachmentSources: [{
+        id: 'att-complete', name: 'complete.md',
+        text: '# 现状\n现状证据\n# 架构\n架构证据\n# 实施\n实施证据\n# 验收\n验收证据',
+      }],
+    }, {
+      planningMode: 'deterministic',
+      callModel: async (call) => {
+        if (call.stage === 'source') return { text: JSON.stringify({
+          summary: '只精炼了第一节',
+          sections: [{ id: 'att-complete:section-01', summary: '精炼现状', evidence: ['现状证据'] }],
+        }) }
+        if (call.stage === 'design') return { text: DESIGN }
+        if (call.stage === 'outline') return { text: JSON.stringify({
+          title: '完整方案', audience: '评审组', goal: '评审', themeId: 'business-light',
+          pages: [{ pageType: 'content', intent: '完整方案', keyPoints: ['现状', '架构', '实施', '验收'] }],
+        }) }
+        return { text: validPage('完整方案') }
+      },
+    })
+
+    expect(result.sourceIndex.sections).toHaveLength(4)
+    expect(result.sourceIndex.sections[0].summary).toBe('精炼现状')
+    expect(result.sourceIndex.sections.map((section) => section.title)).toEqual(['现状', '架构', '实施', '验收'])
+  })
+
+  it('attributes model latency and page outcomes to each stage', async () => {
+    const result = await generatePptdDeck({ brief: '验证埋点', maxPages: 2 }, {
+      concurrency: 2,
+      callModel: async (call) => {
+        if (call.stage === 'design') return { text: DESIGN }
+        if (call.stage === 'outline') return { text: OUTLINE }
+        return { text: validPage('核心结论'), usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } }
+      },
+    })
+
+    const stageOf = (stage: string) => result.telemetry.stages.find((entry) => entry.stage === stage)
+    expect(stageOf('design')?.calls).toBe(1)
+    expect(stageOf('outline')?.calls).toBe(1)
+    expect(stageOf('page')?.calls).toBe(2)
+    // Usage is attributed per stage, not merely summed into the run total.
+    expect(stageOf('page')?.outputTokens).toBe(10)
+    expect(result.telemetry.concurrency).toBe(2)
+    expect(result.telemetry.pageCount).toBe(2)
+    expect(result.telemetry.pageStatusCounts.generated).toBe(2)
+    expect(result.telemetry.pageStatusCounts.fallback).toBe(0)
+    // Phases are ordered checkpoints measured against the pipeline's own start.
+    expect(result.telemetry.phases.map((phase) => phase.phase))
+      .toEqual(['design', 'outline', 'pages', 'repair', 'review'])
+    const elapsed = result.telemetry.phases.map((phase) => phase.elapsedMs)
+    expect([...elapsed].sort((left, right) => left - right)).toEqual(elapsed)
+    expect(result.telemetry.totalMs).toBeGreaterThanOrEqual(elapsed[elapsed.length - 1])
+  })
+
+  it('counts pages that fell back to the safe layout', async () => {
+    const result = await generatePptdDeck({ brief: '验证兜底计数', maxPages: 1 }, {
+      maxRepairRounds: 0,
+      callModel: async (call) => {
+        if (call.stage === 'design') return { text: DESIGN }
+        if (call.stage === 'outline') return { text: JSON.stringify({
+          title: '兜底', audience: '管理层', goal: '确认', themeId: 'business-light',
+          pages: [{ pageType: 'content', intent: '结论', keyPoints: ['证据'] }],
+        }) }
+        return { text: INVALID_PAGE }
+      },
+    })
+
+    expect(result.telemetry.pageStatusCounts.fallback).toBe(1)
+    expect(result.telemetry.pageStatusCounts.generated).toBe(0)
+  })
+
   it('adds a planning draft before page YAML generation', async () => {
     const calls: PptdModelCall[] = []
     const planning = JSON.stringify({
@@ -164,6 +237,59 @@ describe('PPTD layered generation pipeline', () => {
     expect(calls.find((call) => call.stage === 'page')?.prompt).toContain('<planning_draft>')
     expect(calls.find((call) => call.stage === 'page')?.prompt).toContain('suggestedBounds')
     expect(result.planningDrafts[0].cards).toHaveLength(2)
+  })
+
+  it('starts a page as soon as its own planning draft is ready', async () => {
+    const completed: string[] = []
+    const planning = JSON.stringify({
+      pageType: 'content', layoutType: 'bento',
+      cards: [{ id: 'main', grid: { col: 0, row: 0, colSpan: 12, rowSpan: 3 }, type: 'text', priority: 'primary', content: { text: '核心结论' } }],
+    })
+
+    await generatePptdDeck({ brief: '验证逐页流水线', maxPages: 2 }, {
+      callModel: async (call) => {
+        if (call.stage === 'design') return { text: DESIGN }
+        if (call.stage === 'outline') return { text: JSON.stringify({
+          title: '逐页流水线', audience: '管理层', goal: '验证首屏', themeId: 'business-light',
+          pages: [
+            { pageType: 'content', intent: '第一页', keyPoints: ['第一结论'] },
+            { pageType: 'content', intent: '第二页', keyPoints: ['第二结论'] },
+          ],
+        }) }
+        if (call.stage === 'planning') {
+          if (call.pageIndex === 1) await new Promise((resolve) => setTimeout(resolve, 30))
+          completed.push(`planning-${call.pageIndex}`)
+          return { text: planning }
+        }
+        if (call.stage === 'page') {
+          completed.push(`page-${call.pageIndex}`)
+          return { text: validPage(`第 ${(call.pageIndex ?? 0) + 1} 页`) }
+        }
+        return { text: validPage('修复页') }
+      },
+    })
+
+    expect(completed.indexOf('page-0')).toBeGreaterThanOrEqual(0)
+    expect(completed.indexOf('page-0')).toBeLessThan(completed.indexOf('planning-1'))
+  })
+
+  it('can use a deterministic planning draft to avoid one model round per page', async () => {
+    const calls: PptdModelCall[] = []
+    const result = await generatePptdDeck({ brief: '快速生成', maxPages: 1 }, {
+      planningMode: 'deterministic',
+      callModel: async (call) => {
+        calls.push(call)
+        if (call.stage === 'design') return { text: DESIGN }
+        if (call.stage === 'outline') return { text: JSON.stringify({
+          title: '快速生成', audience: '团队', goal: '验证速度', themeId: 'business-light',
+          pages: [{ pageType: 'content', intent: '核心结论', keyPoints: ['证据'] }],
+        }) }
+        return { text: validPage('核心结论') }
+      },
+    })
+
+    expect(calls.map((call) => call.stage)).toEqual(['design', 'outline', 'page'])
+    expect(result.planningDrafts[0].cards[0].id).toBe('main-conclusion')
   })
 
   it('enforces deterministic Bento regions for elements bound to planning cards', async () => {
@@ -342,6 +468,35 @@ elements:
       .toContain('当前模型不支持 vision，已跳过 PPTD 截图审阅，仅执行结构校验')
   })
 
+  it('samples at most six representative pages for long-deck visual review', async () => {
+    const calls: PptdModelCall[] = []
+    const pages = Array.from({ length: 8 }, (_, pageIndex) => ({
+      pageType: pageIndex === 3 ? 'diagram' : pageIndex === 5 ? 'chart' : 'content',
+      intent: `第 ${pageIndex + 1} 页结论`,
+      keyPoints: [`证据 ${pageIndex + 1}`, `${pageIndex + 10}%`],
+      layout: pageIndex === 3 ? '流程图' : '结论与证据',
+      visualTask: pageIndex === 5 ? '数据图表' : '建立层级',
+    }))
+    await generatePptdDeck({ brief: '生成八页代表性视觉复核方案', maxPages: 8 }, {
+      planningMode: 'deterministic',
+      visualReview: { visionAvailable: true, maxRounds: 1 },
+      callModel: async (call) => {
+        calls.push(call)
+        if (call.stage === 'design') return { text: DESIGN }
+        if (call.stage === 'outline') return { text: JSON.stringify({
+          title: '长文档视觉复核', audience: '管理层', goal: '检查代表页', themeId: 'business-light', pages,
+        }) }
+        if (call.stage === 'review') return { text: JSON.stringify({ approved: true, pages: [] }) }
+        return { text: validPage(`第 ${(call.pageIndex ?? 0) + 1} 页`) }
+      },
+    })
+
+    const review = calls.find((call) => call.stage === 'review')
+    expect(review?.images).toHaveLength(6)
+    expect(review?.prompt).toContain('6/8 张代表页截图')
+    expect(review?.prompt).toMatch(/pageIndex 为 0, .*7/)
+  })
+
   it('carries trusted media into visual calls, page prompts, previews, and the final bundle', async () => {
     const calls: PptdModelCall[] = []
     const previews: string[] = []
@@ -412,10 +567,24 @@ elements:
     expect(progressEvents.filter((event) => event.stage === 'page' && event.preview).map((event) => event.current))
       .toEqual([1, 2])
 
+    const designPrompt = calls.find((call) => call.stage === 'design')?.prompt ?? ''
+    expect(designPrompt).toContain('<font_guidance>')
+    expect(designPrompt).toContain('# Font system')
+    expect(designPrompt).not.toContain('<shape_guidance>')
+    expect(designPrompt.length).toBeLessThan(36_000)
+
     const pageCalls = calls.filter((call) => call.stage === 'page')
     expect(pageCalls).toHaveLength(2)
     expect(pageCalls[0].prompt).toContain('YAML 紧凑风格')
     expect(pageCalls[0].prompt).toContain('<layout_reference_page>')
+    expect(pageCalls[0].prompt).toContain('<design_reference>')
+    expect(pageCalls[0].prompt).toContain('【Signature Components】')
+    expect(pageCalls[0].prompt).toContain('【Density Baseline】')
+    expect(pageCalls[0].prompt.length).toBeLessThan(16_000)
+    const firstPageBoundary = pageCalls[0].prompt.indexOf('生成第 ')
+    const secondPageBoundary = pageCalls[1].prompt.indexOf('生成第 ')
+    expect(firstPageBoundary).toBeGreaterThan(3_000)
+    expect(pageCalls[0].prompt.slice(0, firstPageBoundary)).toBe(pageCalls[1].prompt.slice(0, secondPageBoundary))
     expect(pageCalls[0].prompt).toContain('style: "$title/$subtitle/$body/$caption"')
     expect(pageCalls[1].prompt).toContain('≥6 元素且≥1 非文本元素')
     expect(pageCalls[0].prompt).not.toContain('"scenario":"management-report"')
@@ -425,10 +594,83 @@ elements:
     expect(pageCalls[1].prompt).not.toContain('本季度结论')
     expect(calls.filter((call) => call.stage === 'repair').map((call) => call.pageIndex)).toEqual([1])
     expect(calls.find((call) => call.stage === 'repair')?.prompt).toContain('<current_page_snapshot>')
+    expect(calls.find((call) => call.stage === 'repair')?.prompt).toContain('<design_reference>')
     expect(calls.find((call) => call.stage === 'repair')?.prompt).not.toContain('<current_page>')
     expect(calls.find((call) => call.stage === 'repair')?.prompt).toContain('全部 elementId')
-    expect(pageCalls.every((call) => call.maxTokens === 4_800)).toBe(true)
-    expect(calls.find((call) => call.stage === 'repair')?.maxTokens).toBe(5_200)
+    expect(pageCalls.every((call) => call.maxTokens === 3_600)).toBe(true)
+    expect(calls.find((call) => call.stage === 'repair')?.maxTokens).toBe(4_200)
+  })
+
+  it('routes technical scenario and shape refs into architecture outline and page prompts', async () => {
+    const calls: PptdModelCall[] = []
+    await generatePptdDeck({ brief: '生成审计 AI 技术架构与数据流', maxPages: 1 }, {
+      planningMode: 'deterministic',
+      callModel: async (call) => {
+        calls.push(call)
+        if (call.stage === 'design') return { text: DESIGN.replace('work/warm-jade-annual-report', 'consulting/red-black-growth').replace('management-report', 'tech-engineering') }
+        if (call.stage === 'outline') return { text: JSON.stringify({
+          title: '审计 AI 架构', audience: '技术评审', goal: '说明系统关系', themeId: 'business-light',
+          pages: [{ pageType: 'diagram', intent: '审计 AI 分层架构', layout: '三层架构', visualTask: '系统节点、信任边界与数据流', keyPoints: ['数据源', '模型服务', '审计应用'] }],
+        }) }
+        return { text: validDiagramPage('审计 AI 分层架构') }
+      },
+    })
+
+    const designPrompt = calls.find((call) => call.stage === 'design')?.prompt ?? ''
+    const outlinePrompt = calls.find((call) => call.stage === 'outline')?.prompt ?? ''
+    const pagePrompt = calls.find((call) => call.stage === 'page')?.prompt ?? ''
+    expect(designPrompt).toContain('<shape_guidance>')
+    expect(designPrompt).toContain('场景指南决定内容结构')
+    expect(designPrompt.length).toBeLessThan(40_000)
+    expect(outlinePrompt).toContain('<scenario_method>')
+    expect(outlinePrompt).toContain('Architecture Diagrams and Flowcharts')
+    expect(pagePrompt).toContain('<page_method_reference>')
+    expect(pagePrompt).toContain('<shape_vocabulary>')
+    expect(pagePrompt).toContain('Supported shapeName values: rect, ellipse, roundRect, triangle, arrow')
+    expect(pagePrompt).toContain('Do not emit rightArrow, diamond, parallelogram, flowChartProcess')
+    expect(pagePrompt).not.toContain('## Flowchart Shapes')
+    expect(pagePrompt.length).toBeLessThan(20_000)
+  })
+
+  it('routes poster guidance only to an infographic page request', async () => {
+    const calls: PptdModelCall[] = []
+    await generatePptdDeck({ brief: '生成一页品牌信息图海报', maxPages: 1 }, {
+      planningMode: 'deterministic',
+      callModel: async (call) => {
+        calls.push(call)
+        if (call.stage === 'design') return { text: DESIGN }
+        if (call.stage === 'outline') return { text: JSON.stringify({
+          title: '品牌信息图', audience: '客户', goal: '快速理解品牌价值', themeId: 'business-light',
+          pages: [{ pageType: 'content', intent: '一页说清品牌价值', layout: '单页视觉', visualTask: '信息图海报', keyPoints: ['定位', '优势', '行动'] }],
+        }) }
+        return { text: validPage('品牌价值') }
+      },
+    })
+
+    const pagePrompt = calls.find((call) => call.stage === 'page')?.prompt ?? ''
+    expect(calls.find((call) => call.stage === 'design')?.prompt).toContain('<poster_guidance>')
+    expect(pagePrompt).toContain('<poster_method>')
+    expect(pagePrompt).toContain('Content Relationships and Graphic Selection')
+    expect(pagePrompt.length).toBeLessThan(20_000)
+  })
+
+  it('routes the supported shape subset when a generic brief produces a diagram page', async () => {
+    const calls: PptdModelCall[] = []
+    await generatePptdDeck({ brief: '生成季度管理汇报', maxPages: 1 }, {
+      planningMode: 'deterministic',
+      callModel: async (call) => {
+        calls.push(call)
+        if (call.stage === 'design') return { text: DESIGN }
+        if (call.stage === 'outline') return { text: JSON.stringify({
+          title: '季度汇报', audience: '管理层', goal: '评审流程', themeId: 'business-light',
+          pages: [{ pageType: 'diagram', intent: '经营问题闭环', visualTask: '问题到责任人的流程', keyPoints: ['发现', '归因', '整改', '验收'] }],
+        }) }
+        return { text: validDiagramPage('经营问题闭环') }
+      },
+    })
+
+    expect(calls.find((call) => call.stage === 'design')?.prompt).not.toContain('<shape_guidance>')
+    expect(calls.find((call) => call.stage === 'page')?.prompt).toContain('Supported shapeName values: rect, ellipse, roundRect, triangle, arrow')
   })
 
   it('contains truncated outline JSON errors instead of leaking the native parser message', async () => {
@@ -753,6 +995,23 @@ elements:
     expect(result.outline.pages).toHaveLength(2)
     expect(result.outline.pages[0].keyPoints).toHaveLength(6)
     expect(result.warnings.some((warning) => warning.includes('截断为 2 页'))).toBe(true)
+  })
+
+  it('defaults an unspecified document deck to twelve pages while allowing an explicit longer deck', async () => {
+    const pages = Array.from({ length: 13 }, (_, index) => ({
+      pageType: 'content', intent: `结论 ${index + 1}`, keyPoints: [`证据 ${index + 1}`],
+    }))
+    const callModel = async (call: PptdModelCall) => {
+      if (call.stage === 'design') return { text: DESIGN }
+      if (call.stage === 'outline') return { text: JSON.stringify({ title: '长文档', audience: '管理层', goal: '评审', themeId: 'business-light', pages }) }
+      return { text: validPage(`第 ${(call.pageIndex ?? 0) + 1} 页`) }
+    }
+
+    const defaultDeck = await generatePptdDeck({ brief: '默认页数' }, { planningMode: 'deterministic', callModel })
+    const explicitDeck = await generatePptdDeck({ brief: '明确长文稿', maxPages: 13 }, { planningMode: 'deterministic', callModel })
+
+    expect(defaultDeck.project.pages).toHaveLength(12)
+    expect(explicitDeck.project.pages).toHaveLength(13)
   })
 
   it('reports completed page count monotonically instead of the number of parallel workers started', async () => {

@@ -586,12 +586,17 @@ export async function applyBudget(
     return { ...msg, content: processedContent }
   }))
 
-  // Step 2: Bound tool-result history as a cumulative slot. Results are kept
+  // Step 2: Cheap Hermes-style local cleanup. Identical historical payloads
+  // are replaced before slot accounting, so the same attachment read cannot
+  // consume the budget once per retry.
+  const deduplicatedMessages = deduplicateToolResults(processedMessages)
+
+  // Step 3: Bound tool-result history as a cumulative slot. Results are kept
   // newest-first; older payloads retain a small model-visible tombstone so the
   // tool_use/tool_result protocol pairing remains valid.
-  const slottedMessages = capToolResultContext(processedMessages, slots.toolResults)
+  const slottedMessages = capToolResultContext(deduplicatedMessages, slots.toolResults)
 
-  // Step 3: Trim if over budget
+  // Step 4: Trim if over budget
   const currentTokens = slottedMessages.reduce(
     (sum, msg) => sum + estimateMessageTokens(msg.content),
     0,
@@ -605,13 +610,13 @@ export async function applyBudget(
     )
   }
 
-  // Step 4: M1-11 - Detect and remove orphan tool_results left by the trim
+  // Step 5: M1-11 - Detect and remove orphan tool_results left by the trim
   const { cleanedMessages, orphanCount } = removeOrphanToolResults(trimmed)
   if (orphanCount > 0) {
     console.warn(`[context-budget] Removed ${orphanCount} orphan tool_result(s)`)
   }
 
-  // Step 5: Drop messages the sweep emptied — both APIs reject empty content
+  // Step 6: Drop messages the sweep emptied — both APIs reject empty content
   const nonEmpty = cleanedMessages.filter(
     msg => typeof msg.content === 'string' ? msg.content.length > 0 : msg.content.length > 0,
   )
@@ -620,6 +625,41 @@ export async function applyBudget(
 }
 
 const OMITTED_TOOL_RESULT = '[Earlier result omitted; re-read if needed.]'
+export const DUPLICATE_TOOL_RESULT = '[Duplicate tool output omitted; the latest identical result is retained.]'
+
+/**
+ * Replace repeated long tool payloads with a short marker before generic
+ * token-budget trimming. The message/block shape is unchanged, preserving
+ * provider pairing invariants. Only payloads over 200 characters are touched;
+ * short errors and status values are cheap and often semantically distinct.
+ */
+export function deduplicateToolResults(messages: ClaudeMessage[]): ClaudeMessage[] {
+  const output = messages.map((message) => ({
+    ...message,
+    content: typeof message.content === 'string' ? message.content : [...message.content],
+  }))
+  const firstByContent = new Map<string, { messageIndex: number; partIndex: number }>()
+  for (let messageIndex = 0; messageIndex < output.length; messageIndex++) {
+    const content = output[messageIndex].content
+    if (typeof content === 'string') continue
+    for (let partIndex = 0; partIndex < content.length; partIndex++) {
+      const part = content[partIndex]
+      if (part.type !== 'tool_result' || part.content.length <= 200) continue
+      const previous = firstByContent.get(part.content)
+      if (previous) {
+        const previousMessage = output[previous.messageIndex]
+        if (typeof previousMessage.content !== 'string') {
+          const previousPart = previousMessage.content[previous.partIndex]
+          if (previousPart.type === 'tool_result') {
+            previousMessage.content[previous.partIndex] = { ...previousPart, content: DUPLICATE_TOOL_RESULT }
+          }
+        }
+      }
+      firstByContent.set(part.content, { messageIndex, partIndex })
+    }
+  }
+  return output
+}
 
 /**
  * Keep recent tool evidence within a single cumulative token allowance.

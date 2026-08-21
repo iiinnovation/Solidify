@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ModelProvider } from '@/stores/model-store'
 
-const featureFlags = vi.hoisted(() => ({ agentLoop: true, toolCalling: true, subAgents: false }))
+const featureFlags = vi.hoisted(() => ({ agentLoop: true, toolCalling: true, subAgents: false, skillV2: false }))
 
 vi.mock('@/lib/tauri', () => ({
   isTauri: true,
@@ -20,7 +20,7 @@ vi.mock('@/lib/harness/flags', async (importOriginal) => {
       toolCalling: featureFlags.toolCalling,
       harness: false,
       localWorkspace: false,
-      skillV2: false,
+      skillV2: featureFlags.skillV2,
       pptdEngine: false,
       subAgents: featureFlags.subAgents,
     }),
@@ -56,6 +56,7 @@ describe('chat Agent workspace context', () => {
     featureFlags.agentLoop = true
     featureFlags.toolCalling = true
     featureFlags.subAgents = false
+    featureFlags.skillV2 = false
   })
 
   it('keeps plain chat tool-free when subordinate tool flags are enabled independently', () => {
@@ -190,5 +191,55 @@ describe('chat Agent workspace context', () => {
     expect(context.model.contextWindow).toBe(24_000)
     expect(context.limits.maxOutputTokens).toBe(3_000)
     expect(context.model.maxTokens).toBe(3_000)
+  })
+
+  /**
+   * A Skill contributes tools, not just prompt text. This pair is the reason
+   * routing has to resolve before the context is built: a model that reads
+   * SKILL.md mid-run could never obtain the tool the Skill depends on.
+   */
+  describe('Skill-gated tooling', () => {
+    // Production ships skillV2 on; the legacy inline-prompt fallback would
+    // otherwise synthesize a chat-skill and hide what routing actually changes.
+    beforeEach(() => { featureFlags.skillV2 = true })
+
+    const pptdSkill = {
+      metadata: {
+        name: 'pptd-deck', version: '2.0.0', description: 'deck', allowedTools: ['generate_pptd'],
+      },
+      content: 'Generate a deck.',
+      path: 'builtin://pptd-deck/SKILL.md',
+      virtualRoot: '.solidify/skills/pptd-deck',
+    }
+
+    it('attaches generate_pptd once a Skill is resolved for the run', () => {
+      const context = createChatQueryContext({
+        runId: 'run-routed',
+        conversationId: 'conversation-routed',
+        messages: [{ role: 'user', content: '做一份季度汇报' }],
+        provider,
+        signal: new AbortController().signal,
+        loadedSkill: pptdSkill,
+      })
+
+      expect(context.tools.map((tool) => tool.name)).toContain('generate_pptd')
+      expect(context.skill?.metadata.name).toBe('pptd-deck')
+    })
+
+    it('leaves generate_pptd unavailable when no Skill was selected or routed', () => {
+      const context = createChatQueryContext({
+        runId: 'run-unrouted',
+        conversationId: 'conversation-unrouted',
+        messages: [{ role: 'user', content: '做一份季度汇报' }],
+        provider,
+        signal: new AbortController().signal,
+      })
+
+      expect(context.tools.map((tool) => tool.name)).not.toContain('generate_pptd')
+      expect(context.skill).toBeUndefined()
+      // Without a resolved Skill there is no resource resolver either, so the
+      // layer-0 index's "read the SKILL.md" instruction has nothing to read.
+      expect(context.skillResources).toBeUndefined()
+    })
   })
 })

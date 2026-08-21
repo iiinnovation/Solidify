@@ -43,6 +43,7 @@ export class SkillLoader {
   async load(): Promise<SkillLoadResult> {
     const errors: SkillLoadResult['errors'] = []
     const byName = new Map<string, LoadedSkill>()
+    const builtinVersions = new Map(this.builtins.map((skill) => [skill.metadata.name, skill.metadata.version]))
 
     // Low priority sources are loaded first; higher priority sources replace them.
     for (const skill of this.builtins) byName.set(skill.metadata.name, withVirtualRoot(skill))
@@ -54,6 +55,7 @@ export class SkillLoader {
           const content = await this.fileSystem.readFile(skillPath)
           const skill = withVirtualRoot(parseSkillDocument(content, skillPath, root.source))
           assertMatchingDirectoryName(skill, directory)
+          if (isStaleReservedSkill(skill, builtinVersions)) continue
           byName.set(skill.metadata.name, skill)
         } catch (error) {
           errors.push(toSkillLoadError(error, skillPath))
@@ -130,6 +132,49 @@ export class SkillLoader {
       return []
     }
   }
+}
+
+const VERSION_LOCKED_BUILTIN_SKILLS = new Set(['pptd-deck'])
+
+/** Only a strictly newer installed PPTD may replace the canonical builtin. */
+function isStaleReservedSkill(skill: LoadedSkill, builtinVersions: ReadonlyMap<string, string>): boolean {
+  if (!VERSION_LOCKED_BUILTIN_SKILLS.has(skill.metadata.name)) return false
+  const builtinVersion = builtinVersions.get(skill.metadata.name)
+  return Boolean(builtinVersion && compareSemver(skill.metadata.version, builtinVersion) <= 0)
+}
+
+function compareSemver(left: string, right: string): number {
+  const parse = (value: string) => {
+    const withoutBuild = value.split('+', 1)[0]
+    const [core, ...prereleaseParts] = withoutBuild.split('-')
+    const prerelease = prereleaseParts.length > 0 ? prereleaseParts.join('-') : undefined
+    return { core: core.split('.').map((item) => Number.parseInt(item, 10)), prerelease }
+  }
+  const leftVersion = parse(left)
+  const rightVersion = parse(right)
+  for (let index = 0; index < 3; index++) {
+    const difference = (leftVersion.core[index] ?? 0) - (rightVersion.core[index] ?? 0)
+    if (difference !== 0) return difference
+  }
+  if (!leftVersion.prerelease && !rightVersion.prerelease) return 0
+  if (!leftVersion.prerelease) return 1
+  if (!rightVersion.prerelease) return -1
+  const leftParts = leftVersion.prerelease.split('.')
+  const rightParts = rightVersion.prerelease.split('.')
+  for (let index = 0; index < Math.max(leftParts.length, rightParts.length); index++) {
+    const leftPart = leftParts[index]
+    const rightPart = rightParts[index]
+    if (leftPart === undefined) return -1
+    if (rightPart === undefined) return 1
+    if (leftPart === rightPart) continue
+    const leftNumber = /^\d+$/.test(leftPart) ? Number(leftPart) : undefined
+    const rightNumber = /^\d+$/.test(rightPart) ? Number(rightPart) : undefined
+    if (leftNumber !== undefined && rightNumber !== undefined) return leftNumber - rightNumber
+    if (leftNumber !== undefined) return -1
+    if (rightNumber !== undefined) return 1
+    return leftPart.localeCompare(rightPart)
+  }
+  return 0
 }
 
 export function isSkillWatcherPath(path: string): boolean {

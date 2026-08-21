@@ -63,13 +63,27 @@ describe('SkillLoader', () => {
     expect(result.skills.some((skill) => skill.metadata.name === 'presentation')).toBe(false)
     for (const skill of result.skills.filter((item) => item.source === 'builtin')) {
       if (skill.metadata.name === 'pptd-deck') {
-        expect(skill.metadata.version).toBe('1.2.0')
+        expect(skill.metadata.version).toBe('2.0.0')
         expect(skill.metadata.allowedTools).toContain('generate_pptd')
+        expect(skill.metadata.allowedTools).not.toContain('search_attachments')
+        expect(skill.metadata.allowedTools).not.toContain('read_attachment')
         expect(skill.metadata.allowedTools).not.toContain('capture_preview')
         expect(skill.content).toContain('PPTD v2')
-        expect(skill.content).toContain('整份 deck 只能交付为一个 `<solidify-artifact type="slides">`')
-        expect(skill.content).toContain('不得使用 `type="document"` 交付页面 YAML')
+        expect(skill.content).toContain('普通生成任务只调用一次 `generate_pptd`')
+        expect(skill.content).toContain('最终聊天只交付工具生成的一个 `type="slides"` artifact')
         expect(skill.resourceFiles?.['reference/pptd.md']).toContain('960, 540')
+        expect(skill.resourceFiles?.['reference/pptd.md']?.length).toBeGreaterThan(80_000)
+        expect(skill.resourceFiles?.['reference/index.md']).toContain('authoritative knowledge base')
+        expect(skill.resourceFiles?.['reference/solidify-pptd-support.md']).toContain('subset currently generated')
+        expect(skill.resourceFiles?.['reference/fonts.md']).toContain('# Font system')
+        expect(skill.resourceFiles?.['reference/shapes.md']).toContain('## Basic Shapes')
+        expect(skill.resourceFiles?.['reference/general-poster.md']).toContain('poster')
+        expect(skill.resourceFiles?.['reference/open-kimi-workflow.md']).toContain('Solidify adaptation note')
+        expect(skill.resourceFiles?.['reference/open-kimi-workflow.md']).not.toContain('reference/design_system/')
+        expect(skill.resourceFiles?.['reference/open-kimi-workflow.md']).not.toContain('reference/slides_categories')
+        expect(skill.resourceFiles?.['reference/slide-categories.md']).not.toContain('reference/slides_categories')
+        expect(skill.resourceFiles?.['reference/design-guide.md']).toBeUndefined()
+        expect(Object.keys(skill.resourceFiles ?? {}).some((path) => path.includes('reference_guides'))).toBe(false)
         expect(skill.resourceFiles?.['reference/slide-categories/management-report.md']).toContain('Management Reporting')
         expect(skill.resourceFiles?.['reference/design-system/consulting/apricot-white-brief/design.md']).toContain('Apricot White Brief')
         expect(skill.resourceFiles?.['examples/kimi/product-overview.page']).toContain('elementType: text')
@@ -122,6 +136,50 @@ describe('SkillLoader', () => {
     expect(result.errors).toEqual([])
     expect(result.skills.map((skill) => skill.metadata.name)).toEqual(['project-only', 'same'])
     expect(result.skills.find((skill) => skill.metadata.name === 'same')?.metadata.description).toBe('project description')
+  })
+
+  it('ignores non-newer installed pptd-deck copies while allowing a newer override', async () => {
+    const builtin = {
+      metadata: { name: 'pptd-deck', version: '2.0.0', description: 'canonical', source: 'builtin' as const },
+      content: 'canonical refs-driven skill', path: 'builtin://pptd-deck/SKILL.md',
+    }
+    const oldLoader = new SkillLoader({
+      userSkillsRoot: '/user',
+      fileSystem: memoryFileSystem(
+        { '/user/pptd-deck/SKILL.md': document('pptd-deck').replace('1.2.3', '1.9.9') },
+        { '/user': ['pptd-deck'] },
+      ),
+      builtins: [builtin],
+    })
+    const newerLoader = new SkillLoader({
+      userSkillsRoot: '/user',
+      fileSystem: memoryFileSystem(
+        { '/user/pptd-deck/SKILL.md': document('pptd-deck').replace('1.2.3', '2.1.0') },
+        { '/user': ['pptd-deck'] },
+      ),
+      builtins: [builtin],
+    })
+    const prereleaseLoader = new SkillLoader({
+      userSkillsRoot: '/user',
+      fileSystem: memoryFileSystem(
+        { '/user/pptd-deck/SKILL.md': document('pptd-deck').replace('1.2.3', '2.0.0-alpha.1') },
+        { '/user': ['pptd-deck'] },
+      ),
+      builtins: [builtin],
+    })
+    const equalLoader = new SkillLoader({
+      userSkillsRoot: '/user',
+      fileSystem: memoryFileSystem(
+        { '/user/pptd-deck/SKILL.md': document('pptd-deck').replace('1.2.3', '2.0.0') },
+        { '/user': ['pptd-deck'] },
+      ),
+      builtins: [builtin],
+    })
+
+    expect((await oldLoader.load()).skills[0].content).toBe('canonical refs-driven skill')
+    expect((await prereleaseLoader.load()).skills[0].content).toBe('canonical refs-driven skill')
+    expect((await equalLoader.load()).skills[0].content).toBe('canonical refs-driven skill')
+    expect((await newerLoader.load()).skills[0].metadata.version).toBe('2.1.0')
   })
 
   it('returns invalid skill errors without silently hiding them', async () => {

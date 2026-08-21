@@ -3,7 +3,7 @@
  * Real execution through the loop, parallel path, mixed tombstone batch
  */
 
-import { describe, it, expect } from 'vitest'
+import { afterEach, beforeEach, describe, it, expect } from 'vitest'
 import { runQuery } from '../query'
 import type { QueryContext, QueryEvent } from '../types'
 import { ProviderRegistry } from '../../model'
@@ -11,6 +11,7 @@ import type { ModelProvider } from '../../model'
 import type { CompletionChunk, CompletionRequest } from '../../model/types'
 import type { Tool, ToolResult } from '../../tools/types'
 import type { MemoryState } from '../../memory/types'
+import { clearFlagOverrides, setFlagOverride } from '../../harness/flags'
 
 function makeMockProvider(script: CompletionChunk[][], requests?: CompletionRequest[]): ModelProvider {
   let callIndex = 0
@@ -94,6 +95,13 @@ const finalTurn: CompletionChunk[] = [
 ]
 
 describe('runQuery tool execution (M1-14/15)', () => {
+  beforeEach(() => {
+    setFlagOverride('skillV2', false)
+    setFlagOverride('harness', false)
+  })
+
+  afterEach(() => clearFlagOverrides())
+
   it('emits a generator-owned artifact directly without a second model turn', async () => {
     let providerCalls = 0
     const provider: ModelProvider = {
@@ -213,6 +221,86 @@ describe('runQuery tool execution (M1-14/15)', () => {
       type: 'run.failed',
       error: { message: expect.stringContaining('连续失败 3 次') },
     })
+  })
+
+  it('closes a no-progress attachment loop and lets the model finish without attachment tools', async () => {
+    const repeatedRead = (index: number): CompletionChunk[] => [
+      { type: 'tool_call_start', id: `attachment-${index}`, name: 'read_attachment' },
+      { type: 'tool_call_end', id: `attachment-${index}`, input: { attachmentId: 'att-a', offset: 0, limit: 100 } },
+      { type: 'message_end', stopReason: 'tool_use' },
+    ]
+    const requests: CompletionRequest[] = []
+    const provider = makeMockProvider([
+      repeatedRead(1), repeatedRead(2), repeatedRead(3), repeatedRead(4), repeatedRead(5), finalTurn,
+    ], requests)
+    let executions = 0
+    const attachmentReader: Tool = {
+      name: 'read_attachment', description: 'read attachment', inputSchema: { type: 'object' },
+      readOnly: true, concurrencySafe: true, destructive: false, requiresConfirmation: false,
+      availability: 'always', permissions: [], loopGroup: 'attachment-retrieval', loopKey: 'read', replaySafe: true,
+      async execute(): Promise<ToolResult> {
+        executions++
+        return { success: true, content: 'same attachment section '.repeat(20) }
+      },
+      renderCall: () => 'read attachment',
+    }
+
+    const events: QueryEvent[] = []
+    const context = makeCtx(provider, [attachmentReader])
+    for await (const event of runQuery({ ...context, limits: { ...context.limits, maxTurns: 6 } })) events.push(event)
+
+    expect(executions).toBe(2)
+    expect(events.filter((event) => event.type === 'tool.requested')).toHaveLength(5)
+    expect(events.some((event) => event.type === 'tool.completed' && event.result.error?.kind === 'budget_exhausted')).toBe(true)
+    expect(events.at(-1)?.type).toBe('run.completed')
+    const finalRequest = requests.at(-1)
+    expect(finalRequest?.tools ?? []).toEqual([])
+  })
+
+  it('terminates a model that ignores the closed retrieval phase', async () => {
+    const repeatedRead = (index: number): CompletionChunk[] => [
+      { type: 'tool_call_start', id: `stubborn-${index}`, name: 'read_attachment' },
+      { type: 'tool_call_end', id: `stubborn-${index}`, input: { attachmentId: 'att-a', offset: 0 } },
+      { type: 'message_end', stopReason: 'tool_use' },
+    ]
+    const provider = makeMockProvider(Array.from({ length: 8 }, (_, index) => repeatedRead(index)))
+    const attachmentReader: Tool = {
+      name: 'read_attachment', description: 'read attachment', inputSchema: { type: 'object' },
+      readOnly: true, concurrencySafe: true, destructive: false, requiresConfirmation: false,
+      availability: 'always', permissions: [], loopGroup: 'attachment-retrieval', loopKey: 'read', replaySafe: true,
+      async execute(): Promise<ToolResult> { return { success: true, content: 'same attachment section '.repeat(20) } },
+      renderCall: () => 'read attachment',
+    }
+    const context = makeCtx(provider, [attachmentReader])
+    const events: QueryEvent[] = []
+    for await (const event of runQuery({ ...context, limits: { ...context.limits, maxTurns: 8 } })) events.push(event)
+
+    expect(events.at(-1)).toMatchObject({ type: 'run.exhausted', reason: 'tool_loop' })
+  })
+
+  it('enforces the provider-reported token hard cap separately from progress budget', async () => {
+    const callTurn = (index: number): CompletionChunk[] => [
+      { type: 'tool_call_start', id: `budget-${index}`, name: 'read_budgeted' },
+      { type: 'tool_call_end', id: `budget-${index}`, input: {} },
+      { type: 'message_end', stopReason: 'tool_use', usage: { inputTokens: 60, outputTokens: 1, totalTokens: 61 } },
+    ]
+    const provider = makeMockProvider([callTurn(1), callTurn(2), finalTurn])
+    const tool: Tool = {
+      name: 'read_budgeted', description: 'read', inputSchema: { type: 'object' },
+      readOnly: true, concurrencySafe: false, destructive: false, requiresConfirmation: false,
+      availability: 'always', permissions: [],
+      async execute(): Promise<ToolResult> { return { success: true, content: 'ok' } },
+      renderCall: () => 'read',
+    }
+    const context = makeCtx(provider, [tool])
+    const events: QueryEvent[] = []
+    for await (const event of runQuery({
+      ...context,
+      limits: { ...context.limits, maxTokens: 100_000, maxProviderTokens: 100 },
+    })) events.push(event)
+
+    expect(events.at(-1)).toMatchObject({ type: 'run.exhausted', reason: 'max_tokens' })
+    expect(events.find((event) => event.type === 'run.exhausted')).toMatchObject({ usage: { totalTokens: 122 } })
   })
 
   it('lets the model correct invalid generate_pptd arguments before the pipeline starts', async () => {

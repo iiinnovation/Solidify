@@ -20,11 +20,17 @@ describe('feature flags', () => {
     resetFlagCache()
   })
 
-  it('所有开关默认关闭', () => {
-    const flags = getFlags()
-    for (const key of FEATURE_FLAG_KEYS) {
-      expect(flags[key]).toBe(false)
-    }
+  it('默认使用目录式 Skill 及其 Agent 依赖', () => {
+    expect(getFlags()).toEqual({
+      agentLoop: true,
+      toolCalling: true,
+      harness: true,
+      localWorkspace: false,
+      workbenchV2: false,
+      skillV2: true,
+      pptdEngine: false,
+      subAgents: false,
+    })
   })
 
   it('覆盖了全部里程碑的开关', () => {
@@ -41,6 +47,7 @@ describe('feature flags', () => {
   })
 
   it('本地覆盖可以打开单个开关', () => {
+    setFlagOverride('skillV2', false)
     setFlagOverride('agentLoop', true)
 
     expect(isEnabled('agentLoop')).toBe(true)
@@ -76,6 +83,7 @@ describe('feature flags', () => {
   })
 
   it('传 null 清除覆盖，回落到默认值', () => {
+    setFlagOverride('skillV2', false)
     setFlagOverride('agentLoop', true)
     expect(isEnabled('agentLoop')).toBe(true)
 
@@ -115,7 +123,7 @@ describe('feature flags', () => {
     resetFlagCache()
 
     const flags = getFlags()
-    expect(flags.agentLoop).toBe(false) // 非布尔值被忽略
+    expect(flags.agentLoop).toBe(true) // 非布尔值被忽略，但默认 Skill V2 需要 Agent
     expect(flags.harness).toBe(true)
     expect('未知开关' in flags).toBe(false)
   })

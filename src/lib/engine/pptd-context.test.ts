@@ -54,26 +54,23 @@ describe('PPTD pipeline context', () => {
     expect(enablePptdPipeline(original)).toBe(original)
   })
 
-  it('upgrades the legacy presentation Skill to the validated PPTD pipeline', () => {
-    const enabled = enablePptdPipeline(context('presentation', ['read_file', 'write_file', 'capture_preview']))
-
-    expect(enabled.tools.map((tool) => tool.name)).toEqual(['generate_pptd'])
-    expect(enabled.skill?.metadata.allowedTools).toContain('generate_pptd')
-    expect(enabled.skill?.metadata.allowedTools).not.toContain('capture_preview')
-    expect(enabled.skill?.content).toContain('Solidify PPTD compatibility override')
-    expect(enabled.skill?.content).toContain('call generate_pptd exactly once')
-  })
-
   it('hides workspace read tools when attachments are used without a selected workspace', () => {
     const original: QueryContext = {
-      ...context('pptd-deck', ['read_file', 'list_dir', 'search_files', 'capture_preview', 'generate_pptd']),
-      tools: ['read_file', 'list_dir', 'search_files', 'capture_preview'].map(toolNamed),
+      ...context('pptd-deck', [
+        'read_file', 'list_dir', 'search_files', 'search_attachments', 'read_attachment',
+        'capture_preview', 'generate_pptd',
+      ]),
+      tools: [
+        'read_file', 'list_dir', 'search_files', 'search_attachments', 'read_attachment', 'capture_preview',
+      ].map(toolNamed),
     }
 
     const enabled = enablePptdPipeline(original)
 
     expect(enabled.tools.map((tool) => tool.name)).toEqual(['generate_pptd'])
     expect(enabled.skill?.metadata.allowedTools).not.toContain('capture_preview')
+    expect(enabled.skill?.metadata.allowedTools).not.toContain('search_attachments')
+    expect(enabled.skill?.metadata.allowedTools).not.toContain('read_attachment')
   })
 
   it('keeps read_file for bundled Skill resources without exposing workspace search tools', () => {

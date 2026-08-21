@@ -18,6 +18,10 @@ export interface PptdDesignSource {
   generalGuidance: string
   scenarioGuidance: string
   designGuidance: string
+  fontGuidance: string
+  shapeGuidance: string
+  shapeIntensive: boolean
+  posterGuidance?: string
   examplePage?: string
 }
 
@@ -58,11 +62,23 @@ const designModules = import.meta.glob('../skills/builtin/pptd-deck/reference/de
 const exampleModules = import.meta.glob('../skills/builtin/pptd-deck/examples/kimi/*.page', {
   eager: true, query: '?raw', import: 'default',
 }) as Record<string, string>
+const fontModules = import.meta.glob('../skills/builtin/pptd-deck/reference/fonts.md', {
+  eager: true, query: '?raw', import: 'default',
+}) as Record<string, string>
+const shapeModules = import.meta.glob('../skills/builtin/pptd-deck/reference/shapes.md', {
+  eager: true, query: '?raw', import: 'default',
+}) as Record<string, string>
+const posterModules = import.meta.glob('../skills/builtin/pptd-deck/reference/general-poster.md', {
+  eager: true, query: '?raw', import: 'default',
+}) as Record<string, string>
 
 const GENERAL_GUIDANCE = Object.values(generalModules)[0] ?? ''
 const SCENARIO_GUIDANCE = keyedModules(scenarioModules, /slide-categories\/([^/]+)\.md$/)
 const DESIGN_GUIDANCE = keyedModules(designModules, /design-system\/(.+)\/design\.md$/)
 const EXAMPLE_PAGES = keyedModules(exampleModules, /examples\/kimi\/([^/]+)\.page$/)
+const FONT_GUIDANCE = Object.values(fontModules)[0] ?? ''
+const SHAPE_GUIDANCE = Object.values(shapeModules)[0] ?? ''
+const POSTER_GUIDANCE = Object.values(posterModules)[0] ?? ''
 
 export const PPTD_DESIGN_SYSTEM_IDS = Object.freeze(Object.keys(DESIGN_GUIDANCE).sort())
 
@@ -72,12 +88,17 @@ const DEFAULT_DESIGNS: Record<PptdScenario, string> = {
   'management-report': 'work/warm-jade-annual-report',
   'academic-research': 'academic/teal-green-academic-defense',
   'education-training': 'academic/blue-line-courseware',
-  'tech-engineering': 'work/sky-blue-wayfinding',
+  // Tech guidance explicitly rejects the default blue/white AI palette.
+  // Red Black Growth keeps the system diagram-friendly while avoiding that
+  // cross-reference conflict.
+  'tech-engineering': 'consulting/red-black-growth',
   'brand-creative': 'promotion/silver-gray-luxury-magazine',
 }
 
 export function resolvePptdDesignSource(text: string, requestedDesignSystemId?: string): PptdDesignSource {
   const scenario = inferPptdScenario(text)
+  const shapeIntensive = /diagram|flow|process|architecture|dependency|pipeline|workflow|架构|流程|依赖|链路|组件映射|系统关系|数据流|信息图|infographic/i.test(text)
+  const poster = /poster|海报|信息图|infographic|单页视觉/i.test(text)
   const requested = requestedDesignSystemId?.trim()
   if (requested && !DESIGN_GUIDANCE[requested]) {
     throw new Error(`未知 PPTD 设计系统：${requested}`)
@@ -89,6 +110,10 @@ export function resolvePptdDesignSource(text: string, requestedDesignSystemId?: 
     generalGuidance: GENERAL_GUIDANCE,
     scenarioGuidance: SCENARIO_GUIDANCE[scenario] ?? '',
     designGuidance: DESIGN_GUIDANCE[designSystemId] ?? '',
+    fontGuidance: FONT_GUIDANCE,
+    shapeGuidance: SHAPE_GUIDANCE,
+    shapeIntensive,
+    ...(poster ? { posterGuidance: POSTER_GUIDANCE } : {}),
     examplePage: exampleForScenario(scenario),
   }
 }

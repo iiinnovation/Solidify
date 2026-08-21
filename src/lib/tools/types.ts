@@ -65,6 +65,13 @@ export interface Tool<I = unknown, O = unknown> {
    */
   terminalOnFailure?: boolean
 
+  /** Optional loop-safety classification for read/retrieval tools. */
+  loopGroup?: string
+  /** Optional finer-grained budget key within loopGroup. */
+  loopKey?: string
+  /** Safe to replay from the per-run result cache without executing again. */
+  replaySafe?: boolean
+
   // ── Environment requirements ──
   /** Runtime availability constraint */
   availability: ToolAvailability
@@ -120,6 +127,8 @@ export type ToolErrorKind =
   | 'timeout'
   | 'aborted'
   | 'circuit_breaker'
+  | 'loop_detected'
+  | 'budget_exhausted'
   | 'runtime'
 
 export interface ToolError {

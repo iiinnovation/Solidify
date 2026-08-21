@@ -25,10 +25,10 @@ Based on the user's input, analyze the presentation's audience and reader tasks,
 
 | Scenario type | Typical queries | Reader task | Style document |
 |---|---|---|---|
-| Analysis & decision | Consulting, finance, industry research, strategy, market opportunities, business analysis, investment analysis | Compare options, form judgments, support decisions | `reference/slides_categories/analysis-decision.md` |
-| Business proposal | Marketing plans, sales proposals, fundraising pitches, partnership/investment promotion, product proposals, business plans | Understand the value, believe in the plan, take action | `reference/slides_categories/business-plan.md` |
-| Management reporting | Work reports, project retrospectives, quarterly summaries, OKR, management briefings | Grasp the current state, surface problems, confirm actions | `reference/slides_categories/management-report.md` |
-| Academic research | Graduate research projects, thesis defenses, research projects, proposal reports, mid-term reports, final/concluding reports | Evaluate the problem, method, evidence, and contribution | `reference/slides_categories/academic-research.md` |
-| Education & training / knowledge popularization | K-12 courseware, teaching demonstrations, vocational training, patient education, professional popular science | Understand, remember, apply, or act correctly | `reference/slides_categories/education-training.md` |
-| Tech & engineering | Engineering plans, architecture reviews, R&D reports, AI / data / ops / security | See the structure, dependencies, metrics, and trade-offs clearly | `reference/slides_categories/tech-engineering.md` |
-| Brand / creative showcase | Brand stories, design proposals, portfolios, cultural events | Build perception, leave a memory, form identification | `reference/slides_categories/brand-creative.md` |
+| Analysis & decision | Consulting, finance, industry research, strategy, market opportunities, business analysis, investment analysis | Compare options, form judgments, support decisions | `reference/slide-categories/analysis-decision.md` |
+| Business proposal | Marketing plans, sales proposals, fundraising pitches, partnership/investment promotion, product proposals, business plans | Understand the value, believe in the plan, take action | `reference/slide-categories/business-plan.md` |
+| Management reporting | Work reports, project retrospectives, quarterly summaries, OKR, management briefings | Grasp the current state, surface problems, confirm actions | `reference/slide-categories/management-report.md` |
+| Academic research | Graduate research projects, thesis defenses, research projects, proposal reports, mid-term reports, final/concluding reports | Evaluate the problem, method, evidence, and contribution | `reference/slide-categories/academic-research.md` |
+| Education & training / knowledge popularization | K-12 courseware, teaching demonstrations, vocational training, patient education, professional popular science | Understand, remember, apply, or act correctly | `reference/slide-categories/education-training.md` |
+| Tech & engineering | Engineering plans, architecture reviews, R&D reports, AI / data / ops / security | See the structure, dependencies, metrics, and trade-offs clearly | `reference/slide-categories/tech-engineering.md` |
+| Brand / creative showcase | Brand stories, design proposals, portfolios, cultural events | Build perception, leave a memory, form identification | `reference/slide-categories/brand-creative.md` |

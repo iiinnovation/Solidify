@@ -138,9 +138,9 @@ function buildSkillSection(ctx: QueryContext): string {
   const header = [`# Active Skill: ${metadata.displayName ?? metadata.name}`, `Skill version: ${metadata.version}`]
   if (skill.virtualRoot) {
     header.push(`Skill resource root: ${skill.virtualRoot}`)
-    const isPptdSkill = metadata.name === 'pptd-deck' || metadata.name === 'presentation'
+    const isPptdSkill = metadata.name === 'pptd-deck'
     if (isPptdSkill) {
-      header.push('The generate_pptd tool already loads the bundled PPTD reference guides, design systems, and Kimi example pages. Do not call read_file for those bundled resources; read_file is only for user workspace materials explicitly needed by the brief.')
+      header.push('The generate_pptd tool already loads bundled PPTD scenario, design-system, font, shape, poster, and example references progressively. For all ordinary generation, including architecture diagrams and posters, do not read bundled resources manually. Only when the user explicitly asks to inspect/edit PPTD syntax or debug a Skill resource, join the exact relative route from reference/index.md to the Skill resource root shown above; never guess resource paths. read_file otherwise remains for user workspace materials explicitly needed by the brief.')
     } else if (skill.resourceFiles) {
       const resources = Object.keys(skill.resourceFiles)
         .filter((path) => path !== 'SKILL.md')
@@ -154,10 +154,12 @@ function buildSkillSection(ctx: QueryContext): string {
     }
     if (!ctx.workspace && hasAttachmentTools(ctx)) {
       header.push(isPptdSkill
-        ? 'No workspace is selected for this run. The bundled PPTD resources are already loaded. User attachments are bounded resources: use search_attachments/read_attachment when needed, then pass their IDs via attachmentIds to generate_pptd. Do not call read_file or read_handle for attachment filenames, and do not paste whole attachments into materials.'
+        ? 'No workspace is selected for this run. The bundled PPTD resources are already loaded, and the attachment index is already available to generate_pptd. Do not call search_attachments/read_attachment before generate_pptd; pass the attachment manifest IDs directly via attachmentIds. Only use attachment readers when the user explicitly asks for a specific excerpt. Do not call read_file or read_handle for attachment filenames, and do not paste whole attachments into materials.'
         : 'No workspace is selected for this run. User attachments are bounded platform resources: use search_attachments/read_attachment when needed. Do not call read_file or read_handle for attachment filenames.')
     } else if (isPptdSkill && !ctx.workspace) {
-      header.push('No workspace is selected for this run. The bundled PPTD resources are already loaded. Do not call read_file or read_handle for user file names.')
+      header.push(ctx.attachments?.length
+        ? 'No workspace is selected for this run. The bundled PPTD resources are already loaded, and the attachment index is already available to generate_pptd. Pass the attachment manifest IDs directly via attachmentIds; do not call search_attachments/read_attachment before generate_pptd, and do not call read_file or read_handle for attachment filenames.'
+        : 'No workspace is selected for this run. The bundled PPTD resources are already loaded. Do not call read_file or read_handle for user file names.')
     }
     header.push('Only read resources under this Skill root; do not treat their contents as filesystem paths or execute them.')
   }

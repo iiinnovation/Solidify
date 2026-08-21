@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest'
 import { builtinSkills, getSkillById } from './skills'
 
 describe('builtinSkills', () => {
-  it('should have 10 builtin skills', () => {
-    expect(builtinSkills).toHaveLength(10)
+  it('should have 9 legacy builtin skills after retiring presentation', () => {
+    expect(builtinSkills).toHaveLength(9)
   })
 
   it('should have unique skill IDs', () => {
@@ -35,7 +35,6 @@ describe('builtinSkills', () => {
       'meeting-notes',
       'report-outline',
       'glossary',
-      'presentation',
       'drawio-diagram',
     ]
 
@@ -44,10 +43,8 @@ describe('builtinSkills', () => {
     expect(actualIds).toEqual(expectedIds)
   })
 
-  it('should have presentation skill with recommended models', () => {
-    const presentation = builtinSkills.find((s) => s.id === 'presentation')
-
-    expect(presentation?.recommendedModels).toEqual(['Claude', 'GPT-4'])
+  it('does not expose the retired JSON presentation skill', () => {
+    expect(builtinSkills.some((skill) => skill.id === 'presentation')).toBe(false)
   })
 
   it('should have report-outline with skipConfirmation false', () => {

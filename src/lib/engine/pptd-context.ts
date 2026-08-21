@@ -2,27 +2,28 @@ import { createGeneratePptdTool } from '../tools/builtin/generate-pptd'
 import type { Tool } from '../tools/types'
 import type { QueryContext } from './types'
 
-const LEGACY_PRESENTATION_OVERRIDE = `
-
-## Solidify PPTD compatibility override
-
-The legacy slides JSON format is retired. Do not read legacy-format.md, handwrite a slides JSON artifact, or call write_file for the final deck. Collect the user's brief and materials, then call generate_pptd exactly once. The tool owns page generation, validation, bounded repair, and the final slides artifact.`
-
 const WORKSPACE_READ_TOOLS = new Set(['read_file', 'list_dir', 'search_files'])
 const INITIAL_PPTD_BLOCKED_TOOLS = new Set(['capture_preview'])
+// PPTD receives selected attachment text through generate_pptd's attachmentIds
+// contract. Exposing the generic attachment readers here causes the model to
+// spend several turns searching/reading the same document before it can start
+// the deck pipeline, which is both slower and more expensive. Keep these tools
+// out of the PPTD turn; a standalone chat can still inspect excerpts on demand.
+const PPTD_ATTACHMENT_TOOLS = new Set(['search_attachments', 'read_attachment'])
 
-/** Attach the PPTD pipeline for the canonical Skill and its legacy alias. */
+/** Attach the PPTD pipeline for the canonical Skill. */
 export function enablePptdPipeline(base: QueryContext): QueryContext {
   const skillName = base.skill?.metadata.name
-  const legacyPresentation = skillName === 'presentation'
-  if (skillName !== 'pptd-deck' && !legacyPresentation) return base
+  if (skillName !== 'pptd-deck') return base
 
   // The chat artifact is materialized only after generate_pptd returns and the
   // run completes. capture_preview therefore cannot succeed in this model turn.
   // Enforce that lifecycle structurally, including for stale workspace Skills.
-  const allowedTools = base.skill?.metadata.allowedTools?.filter((name) => !INITIAL_PPTD_BLOCKED_TOOLS.has(name))
+  const allowedTools = base.skill?.metadata.allowedTools?.filter((name) =>
+    !INITIAL_PPTD_BLOCKED_TOOLS.has(name) && !PPTD_ATTACHMENT_TOOLS.has(name),
+  )
   const tools = base.tools.filter((candidate) => {
-    if (INITIAL_PPTD_BLOCKED_TOOLS.has(candidate.name)) return false
+    if (INITIAL_PPTD_BLOCKED_TOOLS.has(candidate.name) || PPTD_ATTACHMENT_TOOLS.has(candidate.name)) return false
     // A bundled Skill can expose read_file without a selected workspace. Keep
     // that narrow virtual-resource capability, but continue hiding tools that
     // would access the user's filesystem outside an explicit workspace.
@@ -42,9 +43,7 @@ export function enablePptdPipeline(base: QueryContext): QueryContext {
           },
         } : {}),
       }
-  // Old workspace presentation v2.1 Skills predate generate_pptd and cannot
-  // declare it. Treat that reserved Skill name as a migration alias.
-  if (!legacyPresentation && !sanitized.skill?.metadata.allowedTools?.includes('generate_pptd')) return sanitized
+  if (!sanitized.skill?.metadata.allowedTools?.includes('generate_pptd')) return sanitized
   if (sanitized.settings?.disabledTools.includes('generate_pptd')) return sanitized
   if (typeof navigator !== 'undefined' && !navigator.onLine) return sanitized
   if (sanitized.tools.some((tool) => tool.name === 'generate_pptd')) return sanitized
@@ -56,20 +55,8 @@ export function enablePptdPipeline(base: QueryContext): QueryContext {
   }) as Tool
   const context: QueryContext = {
     ...sanitized,
-    ...(legacyPresentation && sanitized.skill ? {
-      skill: {
-        ...sanitized.skill,
-        metadata: {
-          ...sanitized.skill.metadata,
-          allowedTools: [...new Set([...(sanitized.skill.metadata.allowedTools ?? []), 'generate_pptd'])],
-        },
-        content: sanitized.skill.content.includes('Solidify PPTD compatibility override')
-          ? sanitized.skill.content
-          : `${sanitized.skill.content}${LEGACY_PRESENTATION_OVERRIDE}`,
-      },
-    } : {}),
-  // Attachments are exposed through bounded resource tools; they are not
-  // filesystem files and must never be confused with read_handle results.
+    // The generated tool closes over the run's selected attachment resources;
+    // attachmentIds refer to that bounded manifest, never to filesystem paths.
     tools: [...sanitized.tools, tool],
   }
   holder.current = context
