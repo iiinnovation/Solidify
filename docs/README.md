@@ -56,6 +56,11 @@ M6 后的候选方向与触发条件见 [05-post-m6-evaluation.md](05-post-m6-ev
 
 ⚠️ 这些是**模式参考**，不是可直接复制的实现。落地时用自己的类型和命名，不要照搬其中的专有结构。
 
+## 专项改进建议
+
+- [Skill / Agent 请求链路改进建议](skill-agent-pipeline-improvement-proposal.md) — Skill 路由、上下文、附件、工具、Prompt Cache、旧代码退役与分阶段验收方案
+- [ADR-0014 Skill/Agent 请求链路改进](adr/0014-skill-agent-pipeline.md) — 当前运行时激活、上下文编译、缓存和迁移边界
+
 ---
 
 ## 文档约定

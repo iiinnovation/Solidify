@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from 'vitest'
-import { builtinSkills } from '@/lib/skills'
 import { isSkillWatcherPath, SkillLoader, type SkillFileSystem } from './loader'
 import { SkillParseError, parseSkillDocument } from './parse'
 import { SkillRegistry } from './registry'
@@ -89,10 +88,11 @@ describe('SkillLoader', () => {
         expect(skill.resourceFiles?.['examples/kimi/product-overview.page']).toContain('elementType: text')
       } else {
         expect(skill.metadata.version, skill.metadata.name).toBe('2.1.0')
-        expect(skill.content, skill.metadata.name).toContain('reference/legacy-guidance.md')
+        expect(skill.content, skill.metadata.name).not.toContain('reference/legacy-guidance.md')
         expect(skill.content, skill.metadata.name).toContain('## 提交前自检')
-        expect(skill.resourceFiles?.['reference/legacy-guidance.md'], skill.metadata.name)
-          .toBe(builtinSkills.find((item) => item.id === skill.metadata.name)?.systemPrompt)
+        // Legacy inline prompts are no longer synthesized as runtime resources.
+        // The directory Skill and its explicit references are the sole source.
+        expect(skill.resourceFiles?.['reference/legacy-guidance.md']).toBeUndefined()
       }
     }
     const requirement = result.skills.find((skill) => skill.metadata.name === 'requirement-analysis')
@@ -104,8 +104,7 @@ describe('SkillLoader', () => {
     expect(drawio?.content).toContain('独立的有填充色方块')
     expect(drawio?.content).toContain('<solidify-artifact type="drawio"')
     expect(drawio?.content).toContain('不要把 XML 直接输出到对话正文')
-    expect(drawio?.resourceFiles?.['reference/legacy-guidance.md']).toContain('<solidify-artifact type="drawio"')
-    expect(drawio?.resourceFiles?.['reference/legacy-guidance.md']).not.toContain('直接输出完整的 Draw.io XML 格式')
+    expect(drawio?.resourceFiles?.['reference/legacy-guidance.md']).toBeUndefined()
     expect(drawio?.resourceFiles?.['reference/layout-guidance.md']).toContain('输出前几何检查')
     expect(drawio?.resourceFiles?.['reference/layout-guidance.md']).toContain('禁止把多个组件合并进一个')
     expect(drawio?.resourceFiles?.['reference/layout-guidance.md']).toContain('不能填写画布绝对坐标')

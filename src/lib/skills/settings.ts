@@ -1,3 +1,5 @@
+import { isLegacySkillRuntimeRetired } from './migration'
+
 const STORAGE_KEY = 'solidify-disabled-skills'
 const AUTO_ROUTE_KEY = 'solidify-skill-auto-route'
 
@@ -25,17 +27,19 @@ export function setSkillEnabled(name: string, enabled: boolean): void {
 
 /**
  * Whether a send with no Skill picked in the composer may classify the message
- * and activate a Skill automatically. On by default: the layer-0 Skill index is
- * useless without something that can act on it. Opting out restores manual-only
- * selection for users who would rather not pay the extra classification call.
+ * and activate a Skill automatically. It is opt-in during the migration window:
+ * the main Agent can answer without paying a hidden classification call, while
+ * existing deployments may explicitly enable the rollback path.
  */
 export function isSkillAutoRouteEnabled(): boolean {
-  if (typeof localStorage === 'undefined') return true
-  return localStorage.getItem(AUTO_ROUTE_KEY) !== 'false'
+  if (typeof localStorage === 'undefined') return false
+  if (isLegacySkillRuntimeRetired()) return false
+  return localStorage.getItem(AUTO_ROUTE_KEY) === 'true'
 }
 
 export function setSkillAutoRouteEnabled(enabled: boolean): void {
   if (typeof localStorage === 'undefined') return
-  if (enabled) localStorage.removeItem(AUTO_ROUTE_KEY)
-  else localStorage.setItem(AUTO_ROUTE_KEY, 'false')
+  if (isLegacySkillRuntimeRetired()) return
+  if (enabled) localStorage.setItem(AUTO_ROUTE_KEY, 'true')
+  else localStorage.removeItem(AUTO_ROUTE_KEY)
 }

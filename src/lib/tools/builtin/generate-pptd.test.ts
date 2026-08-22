@@ -170,12 +170,31 @@ describe('generate_pptd workspace media', () => {
       onCheckpoint(checkpoint: { path: string; content: string }): Promise<void>
       loadCheckpoint(path: string): Promise<string | undefined>
     }
-    await expect(options.loadCheckpoint('.solidify/pptd-checkpoints/key/deck.pptd')).resolves.toBe('checkpoint')
-    await options.onCheckpoint({ path: '.solidify/pptd-checkpoints/key/pages/01.page', content: 'elements: []' })
-    expect(mocks.readWorkspaceFile).toHaveBeenCalledWith('.solidify/pptd-checkpoints/key/deck.pptd', '/workspace')
+    await expect(options.loadCheckpoint('02-过程/pptd-checkpoints/key/deck.pptd')).resolves.toBe('checkpoint')
+    await options.onCheckpoint({ path: '02-过程/pptd-checkpoints/key/pages/01.page', content: 'elements: []' })
+    expect(mocks.readWorkspaceFile).toHaveBeenCalledWith('02-过程/pptd-checkpoints/key/deck.pptd', '/workspace')
     expect(mocks.writeWorkspaceFile).toHaveBeenCalledWith(
-      '.solidify/pptd-checkpoints/key/pages/01.page', 'elements: []', '/workspace',
+      '02-过程/pptd-checkpoints/key/pages/01.page', 'elements: []', '/workspace',
     )
+  })
+
+  it('keeps premium repair rounds within the pipeline limit', async () => {
+    const context = parent()
+
+    await createGeneratePptdTool(() => context).execute(
+      { brief: 'deck', mode: 'premium' }, toolContext(context), new AbortController().signal,
+    )
+
+    const options = mocks.runPptdDeckPipeline.mock.calls[0][2] as {
+      maxRepairRounds: number
+      planningMode: string
+      sourceRefinementMode: string
+      visualReview?: { maxRounds?: number }
+    }
+    expect(options.maxRepairRounds).toBe(2)
+    expect(options.planningMode).toBe('model')
+    expect(options.sourceRefinementMode).toBe('model')
+    expect(options.visualReview?.maxRounds).toBe(2)
   })
 
   it('rejects unsupported workspace media before model generation', async () => {
@@ -224,6 +243,23 @@ describe('generate_pptd workspace media', () => {
 
     await expect(execute()).rejects.toThrow('PPTD design 输出达到 token 上限')
     await expect(execute()).resolves.toMatchObject({ success: true })
+    expect(mocks.runPptdDeckPipeline).toHaveBeenCalledTimes(2)
+  })
+
+  it('retries a transient gateway failure once so checkpoints can resume the deck', async () => {
+    const context = parent()
+    mocks.runPptdDeckPipeline
+      .mockRejectedValueOnce(new Error('PPTD 模型调用失败：504 Gateway time-out'))
+      .mockResolvedValueOnce({
+        artifact: { title: 'Deck', type: 'slides', path: '03-交付物/deck.pptd', content: '{}', envelope: '<artifact />' },
+        project: { pages: [{}] }, pageReports: [], warnings: [],
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, calls: 1 },
+        telemetry: PIPELINE_TELEMETRY,
+      })
+
+    await expect(createGeneratePptdTool(() => context).execute(
+      { brief: 'deck' }, toolContext(context), new AbortController().signal,
+    )).resolves.toMatchObject({ success: true })
     expect(mocks.runPptdDeckPipeline).toHaveBeenCalledTimes(2)
   })
 })

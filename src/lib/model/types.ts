@@ -31,6 +31,16 @@ export interface ToolDefinition {
   inputSchema: JSONSchema
 }
 
+/** Provider-facing prompt cache controls for a stable request prefix. */
+export interface PromptCacheRequest {
+  /** Stable caller-owned key used by OpenAI-compatible providers. */
+  key: string
+  /** Mark the system prefix as cacheable where the provider supports it. */
+  system?: boolean
+  /** Mark the tool schema prefix as cacheable where the provider supports it. */
+  tools?: boolean
+}
+
 /**
  * Unified completion request
  */
@@ -54,6 +64,8 @@ export interface CompletionRequest {
   stallTimeoutMs?: number
   /** Optional per-request SDK retry count, overriding the provider default. */
   maxRetries?: number
+  /** Optional native prompt-cache controls; omitted for short router calls. */
+  promptCache?: PromptCacheRequest
 }
 
 /**
@@ -63,6 +75,8 @@ export interface TokenUsage {
   inputTokens: number
   outputTokens: number
   totalTokens?: number
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
 }
 
 /**
@@ -133,6 +147,8 @@ export interface ProviderMetadata {
   supportsVision: boolean
   supportsTools: boolean
   supportsStreaming: boolean
+  /** Native stable-prefix prompt cache controls are safe for this adapter. */
+  supportsPromptCache?: boolean
   defaultMaxTokens: number
   models: string[]
 }

@@ -13,7 +13,7 @@ import type { Settings, PermissionMap, Platform } from '../harness/types'
 import type { ConfirmationPrompt } from '../harness/policy'
 import type { ApprovalOutcome } from '../harness/approval'
 import type { TaskTreeBudget } from './sub-agent/types'
-import type { AttachmentResource } from '../attachments/types'
+import type { AttachmentContextMode, AttachmentResource } from '../attachments/types'
 
 // ============================================================================
 // Query Context
@@ -90,6 +90,8 @@ export interface QueryContext {
   readonly pptdMedia?: Readonly<Record<string, string | Uint8Array>>
   /** User attachments available to read-only attachment tools and PPTD. */
   readonly attachments?: readonly AttachmentResource[]
+  /** Whether attachment text is already present in the request or retrieved by tools. */
+  readonly attachmentMode?: AttachmentContextMode
   readonly memory: MemoryState
   readonly model: ModelConfig
   readonly limits: RunLimits
@@ -178,6 +180,8 @@ export interface UsageStats {
   totalTokens: number
   turns: number
   toolCalls: number
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
 }
 
 export interface RunError {
@@ -194,6 +198,12 @@ export type PermissionDecision = 'allow' | 'deny' | 'allow_once' | 'allow_sessio
  */
 export type QueryEvent =
   | { type: 'run.started'; runId: string }
+  | {
+      type: 'run.phase'
+      phase: 'preparing_attachments' | 'selecting_skill' | 'reading_sources' | 'generating' | 'validating' | 'repairing'
+      detail?: string
+    }
+  | { type: 'skill.activated'; name: string; version: string }
   | {
       type: 'model.progress'
       phase: 'preparing' | 'reasoning' | 'generating' | 'tool_call'

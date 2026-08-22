@@ -28,9 +28,13 @@ export interface RunState {
   usage?: UsageStats
   metrics?: ExecutionMetrics
   firstTokenAt?: number
+  /** Sum of completed per-turn decode windows, excluding inter-turn gaps. */
+  modelGenerationMs?: number
+  /** First chunk of the currently active model turn. */
+  activeModelFirstTokenAt?: number
   /** Safe aggregate model activity; never contains raw deliberation text. */
   activity?: {
-    phase: Extract<QueryEvent, { type: 'model.progress' }>['phase']
+    phase: string
     label: string
     observedChars?: number
   }
@@ -62,10 +66,13 @@ function computeMetrics(state: RunState, usage?: UsageStats): ExecutionMetrics {
   const durationMs = Math.max(0, completedAt - state.startedAt)
   const ttftMs = state.firstTokenAt ? Math.max(0, state.firstTokenAt - state.startedAt) : undefined
   const outputTokens = usage?.outputTokens ?? (state.text ? Math.ceil(state.text.length * 0.75) : 0)
-  const totalGenMs = Math.max(
-    0,
-    (state.firstTokenAt ? (completedAt - state.firstTokenAt) : durationMs) - toolExecutionMs(state),
-  )
+  const hasPerTurnWindow = state.modelGenerationMs !== undefined || state.activeModelFirstTokenAt !== undefined
+  const activeGenerationMs = state.activeModelFirstTokenAt
+    ? Math.max(0, completedAt - state.activeModelFirstTokenAt)
+    : 0
+  const totalGenMs = hasPerTurnWindow
+    ? Math.max(0, (state.modelGenerationMs ?? 0) + activeGenerationMs - toolExecutionMs(state))
+    : Math.max(0, (state.firstTokenAt ? completedAt - state.firstTokenAt : durationMs) - toolExecutionMs(state))
   const genDurationSec = totalGenMs / 1000
   const tokensPerSecond = genDurationSec > 0 && outputTokens > 0
     ? Number((outputTokens / genDurationSec).toFixed(1))
@@ -117,40 +124,75 @@ function toolExecutionMs(state: RunState): number {
 
 export function applyRunEvent(state: RunState, event: QueryEvent): RunState {
   switch (event.type) {
-    case 'model.progress':
+    case 'run.phase':
       return {
         ...state,
         activity: {
           phase: event.phase,
-          label: modelProgressLabel(event.phase),
-          ...(event.observedChars === undefined ? {} : { observedChars: event.observedChars }),
+          label: event.detail?.trim() || runPhaseLabel(event.phase),
         },
-        ...(event.phase !== 'preparing' && !state.firstTokenAt ? { firstTokenAt: Date.now() } : {}),
+      }
+    case 'model.progress':
+      {
+        const now = Date.now()
+        const completedGeneration = event.phase === 'preparing' && state.activeModelFirstTokenAt
+          ? Math.max(0, now - state.activeModelFirstTokenAt)
+          : 0
+        const startsFirstChunk = event.phase !== 'preparing' && !state.activeModelFirstTokenAt
+        return {
+          ...state,
+          activity: {
+            phase: event.phase,
+            label: modelProgressLabel(event.phase),
+            ...(event.observedChars === undefined ? {} : { observedChars: event.observedChars }),
+          },
+          ...(startsFirstChunk ? { activeModelFirstTokenAt: now } : {}),
+          ...(completedGeneration > 0
+            ? { modelGenerationMs: (state.modelGenerationMs ?? 0) + completedGeneration, activeModelFirstTokenAt: undefined }
+            : {}),
+          ...(!state.firstTokenAt && event.phase !== 'preparing' ? { firstTokenAt: now } : {}),
+        }
       }
     case 'message.delta':
-      return {
+      {
+        const now = Date.now()
+        return {
         ...state,
         text: state.text + event.text,
-        ...(event.text && !state.firstTokenAt ? { firstTokenAt: Date.now() } : {}),
+        ...(event.text && !state.firstTokenAt ? { firstTokenAt: now } : {}),
+        ...(event.text && !state.activeModelFirstTokenAt ? { activeModelFirstTokenAt: now } : {}),
+        }
       }
     case 'message.completed':
-      return {
+      {
+        const now = Date.now()
+        return {
         ...state,
         ...(state.text ? {} : { text: event.content }),
-        ...(event.content && !state.firstTokenAt ? { firstTokenAt: Date.now() } : {}),
+        ...(event.content && !state.firstTokenAt ? { firstTokenAt: now } : {}),
+        ...(event.content && !state.activeModelFirstTokenAt ? { activeModelFirstTokenAt: now } : {}),
+        }
       }
     case 'tool.requested':
-      return {
+      {
+        const now = Date.now()
+        const activity = toolActivity(event.call.name)
+        return {
         ...state,
-        ...(!state.firstTokenAt ? { firstTokenAt: Date.now() } : {}),
-        tools: [...state.tools, { call: event.call, status: 'requested', startedAt: Date.now() }],
+        ...(activity ? { activity } : {}),
+        ...(!state.firstTokenAt ? { firstTokenAt: now } : {}),
+        ...(!state.activeModelFirstTokenAt ? { activeModelFirstTokenAt: now } : {}),
+        tools: [...state.tools, { call: event.call, status: 'requested', startedAt: now }],
+        }
       }
     case 'tool.progress':
       {
         const detail = asSubAgentDetail(event.progress.detail)
         const withAgent = detail ? updateSubAgent(state, detail.agent, detail.budget) : state
+        const activity = progressActivity(event.progress.phase, event.progress.message)
         return {
           ...withAgent,
+          ...(activity ? { activity } : {}),
           tools: withAgent.tools.map((item) => item.call.id === event.callId
             ? {
                 ...item,
@@ -172,14 +214,25 @@ export function applyRunEvent(state: RunState, event: QueryEvent): RunState {
             : item),
         }
       }
-    case 'run.completed':
+    case 'skill.activated':
       return {
         ...state,
-        activity: undefined,
-        status: 'completed',
-        usage: event.usage,
-        metrics: computeMetrics(state, event.usage),
-        completedAt: Date.now(),
+        activity: { phase: 'preparing', label: `正在使用 ${event.name} Skill…` },
+      }
+    case 'run.completed':
+      {
+        const completedAt = Date.now()
+        const finalizedState: RunState = {
+          ...state,
+          activity: undefined,
+          status: 'completed',
+          usage: event.usage,
+          ...(state.activeModelFirstTokenAt
+            ? { modelGenerationMs: (state.modelGenerationMs ?? 0) + Math.max(0, completedAt - state.activeModelFirstTokenAt), activeModelFirstTokenAt: undefined }
+            : {}),
+          completedAt,
+        }
+        return { ...finalizedState, metrics: computeMetrics(finalizedState, event.usage) }
       }
     case 'run.failed':
       return {
@@ -211,6 +264,32 @@ function modelProgressLabel(phase: Extract<QueryEvent, { type: 'model.progress' 
   if (phase === 'reasoning') return '正在分析任务…'
   if (phase === 'generating') return '正在生成结果…'
   return '正在准备工具调用…'
+}
+
+function runPhaseLabel(phase: Extract<QueryEvent, { type: 'run.phase' }>['phase']): string {
+  if (phase === 'preparing_attachments') return '正在准备附件…'
+  if (phase === 'selecting_skill') return '正在选择 Skill…'
+  if (phase === 'reading_sources') return '正在读取来源…'
+  if (phase === 'validating') return '正在验证交付物…'
+  if (phase === 'repairing') return '正在修复交付物…'
+  return '正在生成交付物…'
+}
+
+function toolActivity(name: string): RunState['activity'] | undefined {
+  if (name === 'search_attachments' || name === 'read_attachment' || name === 'prepare_attachment_evidence') {
+    return { phase: 'reading_sources', label: '正在读取来源…' }
+  }
+  if (name === 'generate_pptd') return { phase: 'generating', label: '正在生成交付物…' }
+  return undefined
+}
+
+function progressActivity(phase: string, message?: string): RunState['activity'] | undefined {
+  if (!phase.startsWith('pptd_')) return undefined
+  const stage = phase.slice('pptd_'.length)
+  if (stage === 'repair') return { phase: 'repairing', label: message || '正在修复交付物…' }
+  if (stage === 'assemble' || stage === 'review') return { phase: 'validating', label: message || '正在验证交付物…' }
+  if (stage === 'source') return { phase: 'reading_sources', label: message || '正在读取来源…' }
+  return { phase: 'generating', label: message || '正在生成交付物…' }
 }
 
 

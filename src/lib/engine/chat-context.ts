@@ -18,7 +18,7 @@ import { configureLedgerWorkspace } from '@/lib/harness/ledger'
 import type { WorkspaceHandle } from '@/lib/workspace'
 import { enableSubAgents } from './sub-agent/context'
 import { enablePptdPipeline } from './pptd-context'
-import type { AttachmentResource } from '../attachments/types'
+import type { AttachmentContextMode, AttachmentResource } from '../attachments/types'
 import { modelSupportsVision } from '../model/capabilities'
 
 const DEFAULT_LIMITS: RunLimits = {
@@ -54,6 +54,7 @@ export interface ChatQueryContextOptions {
   skillRegistry?: SkillRegistryApi
   pptdMedia?: Readonly<Record<string, string | Uint8Array>>
   attachments?: readonly AttachmentResource[]
+  attachmentMode?: AttachmentContextMode
   workspaceRoot?: string | null
   restoreSnapshot?: boolean
 }
@@ -80,6 +81,7 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
         platform: platform === 'tauri' && workspaceRoot ? 'tauri' : 'web',
         skillAllowedTools: skill?.metadata.allowedTools,
         skillActive: skillV2Enabled && Boolean(skill),
+        minimalUnselected: skillV2Enabled && !skill,
         skillResourceAccess: Boolean(options.skillResources),
         hasAttachments,
         userDisabledTools: settings.disabledTools,
@@ -87,7 +89,9 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
       })
     : []
   const tools = resolvedTools.filter((tool) =>
-    (tool.name !== 'search_attachments' && tool.name !== 'read_attachment') || hasAttachments,
+    (!['search_attachments', 'read_attachment', 'prepare_attachment_evidence'].includes(tool.name)) || (hasAttachments && options.attachmentMode !== 'inline'),
+  ).filter((tool) =>
+    tool.name !== 'activate_skill' || (skillV2Enabled && Boolean(options.skillRegistry) && !skill),
   )
 
   const maxOutputTokens = options.provider.maxOutputTokens ?? inferMaxOutputTokens(options.provider.modelId)
@@ -104,6 +108,7 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
     skillRegistry: options.skillRegistry,
     pptdMedia: options.pptdMedia,
     attachments: options.attachments,
+    attachmentMode: options.attachmentMode,
     memory: localWorkspaceEnabled && workspaceRoot ? new WorkspaceMemory(workspaceRoot) : new InMemoryState(),
     model: {
       provider: providerName,

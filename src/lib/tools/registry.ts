@@ -47,6 +47,13 @@ export class ToolRegistry implements IToolRegistry {
       const skillExempt = runtimeRequired
         || (ctx.hasAttachments === true && ATTACHMENT_TOOLS.has(tool.name))
 
+      // A plain canonical run should not pay for PPTD, capture, write or other
+      // specialized schemas before the model has chosen a Skill. The
+      // activate_skill tool can rebuild the set after discovery in the same
+      // Agent loop. Legacy callers omit this flag and retain their historical
+      // unrestricted behavior during the compatibility window.
+      if (ctx.minimalUnselected && !skillExempt && !UNSELECTED_TOOLS.has(tool.name)) continue
+
       // Layer 1: Environment filter
       if (tool.availability === 'tauri-only' && ctx.platform === 'web') {
         continue
@@ -103,11 +110,12 @@ export class ToolRegistry implements IToolRegistry {
 
 /** Tools available to a Skill that omits `allowed-tools`; never a write/network set. */
 const DEFAULT_SKILL_TOOLS: ReadonlySet<string> = new Set([
-  'read_file', 'list_dir', 'search_files', 'search_attachments', 'read_attachment',
+  'read_file', 'list_dir', 'search_files', 'search_attachments', 'read_attachment', 'prepare_attachment_evidence', 'activate_skill',
 ])
 
 /** Readers for per-run user attachments; scoped by the run, not by the Skill. */
-const ATTACHMENT_TOOLS: ReadonlySet<string> = new Set(['search_attachments', 'read_attachment'])
+const ATTACHMENT_TOOLS: ReadonlySet<string> = new Set(['search_attachments', 'read_attachment', 'prepare_attachment_evidence'])
+const UNSELECTED_TOOLS: ReadonlySet<string> = new Set(['activate_skill', 'read_handle', 'read_file', 'list_dir', 'search_files'])
 
 /**
  * Global tool registry instance
@@ -123,8 +131,9 @@ import { writeFileTool } from './builtin/write-file'
 import { searchFilesTool } from './builtin/search-files'
 import { capturePreviewTool } from './builtin/capture-preview'
 import { readHandleTool } from './builtin/read-handle'
-import { searchAttachmentsTool, readAttachmentTool } from './builtin/attachments'
+import { searchAttachmentsTool, readAttachmentTool, prepareAttachmentEvidenceTool } from './builtin/attachments'
+import { activateSkillTool } from './builtin/activate-skill'
 
-for (const tool of [listDirTool, readFileTool, writeFileTool, searchFilesTool, capturePreviewTool, readHandleTool, searchAttachmentsTool, readAttachmentTool]) {
+for (const tool of [listDirTool, readFileTool, writeFileTool, searchFilesTool, capturePreviewTool, readHandleTool, searchAttachmentsTool, readAttachmentTool, prepareAttachmentEvidenceTool, activateSkillTool]) {
   toolRegistry.register(tool as Tool)
 }

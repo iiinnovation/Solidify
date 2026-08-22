@@ -8,15 +8,21 @@ export type SkillRegistryListener = (result: { skills: LoadedSkill[]; errors: Sk
 const DEFAULT_INDEX_TOKEN_BUDGET = 599
 
 /** Build the compact layer-0 prompt. Descriptions are clipped, never omitted silently. */
-export function formatSkillIndex(metadata: readonly SkillMetadata[], maxTokens = DEFAULT_INDEX_TOKEN_BUDGET): string {
-  const header = '可用的 Skill（需要详情时，用 read_file 读取对应的 SKILL.md）：'
+export function formatSkillIndex(
+  metadata: readonly SkillMetadata[],
+  maxTokens = DEFAULT_INDEX_TOKEN_BUDGET,
+  options: { includePaths?: boolean } = {},
+): string {
+  const includePaths = options.includePaths ?? true
+  const header = includePaths
+    ? '可用的 Skill（需要详情时，用 read_file 读取对应的 SKILL.md）：'
+    : '可用的 Skill（需要时由 Agent 激活对应能力）：'
   const lines: string[] = [header]
   for (const item of metadata) {
     if (!isSkillEnabled(item.name)) continue
     const label = item.displayName && item.displayName !== item.name ? `${item.displayName} / ${item.name}` : item.name
-    const path = `${virtualRootFor(item.name)}/SKILL.md`
     const prefix = `- ${label}: `
-    const suffix = `（详情：${path}）`
+    const suffix = includePaths ? `（详情：${virtualRootFor(item.name)}/SKILL.md）` : ''
     const remaining = Math.max(0, maxTokens - estimatePromptTokens(lines.join('\n') + '\n' + prefix + suffix))
     const description = clipToPromptTokens(item.description, remaining)
     const line = `${prefix}${description}${suffix}`
@@ -61,6 +67,11 @@ export class SkillRegistry implements SkillRegistryApi {
   async resolve(name: string): Promise<LoadedSkill | null> {
     if (!this.loaded) await this.reload()
     return this.skills.get(name) ?? null
+  }
+
+  async resources(name: string) {
+    const skill = await this.resolve(name)
+    return skill ? this.loader.createResourceResolver(skill) : undefined
   }
 
   getErrors(): SkillLoadError[] {

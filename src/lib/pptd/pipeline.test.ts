@@ -3,7 +3,7 @@ import { ProviderRegistry, type CompletionRequest, type ModelProvider } from '..
 import { SharedTaskTreeBudget } from '../engine/sub-agent/budget'
 import type { QueryContext } from '../engine/types'
 import { parsePptdArtifactContent, parsePptdArtifactContentDetailed } from './artifact'
-import { createPptdModelCaller, generatePptdDeck, runPptdDeckPipeline, type PptdModelCall } from './pipeline'
+import { createPptdModelCaller, generatePptdDeck, runPptdDeckPipeline, safeArtifactPath, type PptdModelCall } from './pipeline'
 import { bentoGridToBounds } from './bento-layout'
 
 const OUTLINE = JSON.stringify({
@@ -85,6 +85,13 @@ elements:
 `
 
 describe('PPTD layered generation pipeline', () => {
+  it('normalizes absolute or traversal artifact paths into the deliverables directory', () => {
+    expect(safeArtifactPath('/Users/apple/Desktop/审计AI综合场景建设技术方案.pptd'))
+      .toBe('03-交付物/审计AI综合场景建设技术方案.pptd')
+    expect(safeArtifactPath('../../outside.pptd')).toBe('03-交付物/outside.pptd')
+    expect(safeArtifactPath()).toBe('03-交付物/deck.pptd')
+  })
+
   it('builds a bounded source index before design and keeps raw attachment tails out of later prompts', async () => {
     const calls: PptdModelCall[] = []
     const sentinel = 'RAW_ATTACHMENT_TAIL_MUST_NOT_LEAK'

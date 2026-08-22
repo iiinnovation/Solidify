@@ -45,12 +45,21 @@ export const readHandleTool: Tool<ReadHandleInput> = {
       )
     }
 
+    const offset = input.offset ?? 0
+    const previous = findPreviousRead(ctx.messages, handle, offset)
+    if (previous) {
+      return failure(
+        'loop_detected',
+        `已读取句柄 ${handle} 的 offset=${offset}，不要重复读取同一页。请继续使用 offset=${previous.nextOffset} 读取下一段；如果没有下一段，请直接根据已有内容生成结果。`,
+        true,
+      )
+    }
+
     const content = await ctx.memory.retrieve(handle)
     if (content === null) {
       return failure('not_found', `句柄不存在或已过期：${handle}`, true)
     }
 
-    const offset = input.offset ?? 0
     const limit = input.limit ?? DEFAULT_LIMIT
     const { chunk, count, total } = sliceChunk(content, offset, limit)
     const nextOffset = offset + count < total ? offset + count : undefined
@@ -63,6 +72,55 @@ export const readHandleTool: Tool<ReadHandleInput> = {
     })
   },
   renderCall: (input) => `读取句柄 ${input.handle}（从 ${input.offset ?? 0} 开始）`,
+}
+
+/**
+ * Detect a repeated page before touching memory again. Tool result metadata is
+ * intentionally UI-only, so recover the next offset from the prior tool
+ * result's character count and give the model an actionable correction.
+ */
+function findPreviousRead(
+  messages: readonly unknown[] | undefined,
+  handle: string,
+  offset: number,
+): { nextOffset: number } | undefined {
+  if (!messages) return undefined
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index]
+    if (!message || typeof message !== 'object') continue
+    const parts = (message as { content?: unknown }).content
+    if (!Array.isArray(parts)) continue
+    for (const part of parts) {
+      if (!part || typeof part !== 'object') continue
+      const item = part as { type?: unknown; name?: unknown; id?: unknown; input?: unknown }
+      if (item.type !== 'tool_use' || item.name !== 'read_handle' || typeof item.id !== 'string') continue
+      const input = item.input
+      if (!input || typeof input !== 'object') continue
+      const args = input as { handle?: unknown; offset?: unknown }
+      const previousOffset = typeof args.offset === 'number' ? args.offset : 0
+      if (args.handle !== handle || previousOffset !== offset) continue
+
+      for (let next = index + 1; next < messages.length; next++) {
+        const resultMessage = messages[next]
+        if (!resultMessage || typeof resultMessage !== 'object') continue
+        const resultParts = (resultMessage as { content?: unknown }).content
+        if (!Array.isArray(resultParts)) continue
+        const result = resultParts.find((candidate) => {
+          if (!candidate || typeof candidate !== 'object') return false
+          const value = candidate as { type?: unknown; tool_use_id?: unknown; is_error?: unknown }
+          return value.type === 'tool_result' && value.tool_use_id === item.id && value.is_error !== true
+        }) as { content?: unknown } | undefined
+        if (typeof result?.content === 'string') {
+          // The query loop appends a model-facing pagination hint to the
+          // persisted tool result. It is not part of the handle payload and
+          // must not inflate the recovered offset.
+          const page = result.content.replace(/\n\n\[分页提示\][\s\S]*$/, '')
+          return { nextOffset: offset + [...page].length }
+        }
+      }
+    }
+  }
+  return undefined
 }
 
 /** Recover the common model mistake of putting the tool name in `handle`. */

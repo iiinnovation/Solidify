@@ -8,7 +8,7 @@ import type { Template, TemplateVariable } from '@/lib/api/types'
 import { Button } from '@/components/ui/button'
 import { TemplateVariableEditor } from './template-variable-editor'
 import { inferVariables } from '@/lib/template-engine'
-import { builtinSkills } from '@/lib/skills'
+import { useSkillRegistry } from '@/hooks/use-skill-registry'
 
 interface TemplateEditorDialogProps {
   template?: Template | null
@@ -36,6 +36,7 @@ export function TemplateEditorDialog({
   const [variables, setVariables] = useState<TemplateVariable[]>([])
   const [skillId, setSkillId] = useState<string>('')
   const [isPublic, setIsPublic] = useState(false)
+  const { skills } = useSkillRegistry()
 
   // template 或 open 变化时填充/清空表单
   // 渲染期调整而非 effect：effect 里同步 setState 会让用户先看到一帧旧数据
@@ -133,9 +134,9 @@ export function TemplateEditorDialog({
                 className="w-full px-3 py-2 border rounded-lg mt-1"
               >
                 <option value="">通用模板</option>
-                {builtinSkills.map((skill) => (
-                  <option key={skill.id} value={skill.id}>
-                    {skill.name}
+                {skills.map((skill) => (
+                  <option key={skill.name} value={skill.name}>
+                    {skill.displayName ?? skill.name}
                   </option>
                 ))}
               </select>

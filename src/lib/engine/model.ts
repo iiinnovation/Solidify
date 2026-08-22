@@ -9,19 +9,20 @@ import type {
   CompletionChunk,
   UnifiedMessage,
   UnifiedContent,
-  ToolDefinition,
 } from '../model'
-import { buildMessages } from './messages'
 import { hasRenderedArtifactPreview } from '../tools/builtin/capture-preview'
+import { compileContext, type CompiledContextStats } from './context-compiler'
 
 const STORED_HANDLE_PATTERN = /\[Result stored as (?:mem|handle)-[^:\s]+:[^\]]*Use read_handle to retrieve it\.\]/i
+
+export type RequestContextStats = CompiledContextStats
 
 /**
  * Stream model completion using the provider from context
  */
 export async function* streamModel(
   ctx: QueryContext,
-  onPrepared?: (request: Omit<CompletionRequest, 'signal'>) => void | Promise<void>,
+  onPrepared?: (request: Omit<CompletionRequest, 'signal'>, stats?: RequestContextStats) => void | Promise<void>,
 ): AsyncGenerator<CompletionChunk> {
   // Get provider from registry
   const provider = ctx.providerRegistry.get(ctx.model.provider)
@@ -32,7 +33,7 @@ export async function* streamModel(
   const visibleTools = provider.metadata.supportsTools
     ? ctx.tools.filter((tool) => {
         if (tool.name === 'read_handle') return hasReadableHandle(ctx.messages)
-        if (tool.name === 'search_attachments' || tool.name === 'read_attachment') return (ctx.attachments?.length ?? 0) > 0
+        if (tool.name === 'search_attachments' || tool.name === 'read_attachment' || tool.name === 'prepare_attachment_evidence') return (ctx.attachments?.length ?? 0) > 0
         // Capturing is a follow-up capability, not a way to validate an
         // artifact that this model turn has not produced yet. Requiring both a
         // DOM target and vision input prevents guaranteed-failure loops on an
@@ -44,9 +45,10 @@ export async function* streamModel(
       })
     : []
 
-  // Build messages with context assembly
+  // Compile messages, tools, stable-prefix identity and budget stats together.
   const modelCtx = visibleTools.length === ctx.tools.length ? ctx : { ...ctx, tools: visibleTools }
-  const { system, messages } = await buildMessages(modelCtx)
+  const compiled = await compileContext(modelCtx)
+  const { system, messages, tools, stats: contextStats } = compiled
 
   // Convert messages to unified format
   const unifiedMessages: UnifiedMessage[] = messages.map((msg) => ({
@@ -78,13 +80,6 @@ export async function* streamModel(
           }) as UnifiedContent[]),
   }))
 
-  // Convert tools to unified format
-  const tools: ToolDefinition[] = visibleTools.map((tool) => ({
-    name: tool.name,
-    description: tool.description,
-    inputSchema: tool.inputSchema,
-  }))
-
   // Build completion request
   const request: CompletionRequest = {
     model: ctx.model.model,
@@ -94,6 +89,15 @@ export async function* streamModel(
     temperature: ctx.model.temperature,
     maxTokens: ctx.limits.maxOutputTokens,
     stream: true,
+    ...(provider.metadata.supportsPromptCache
+      ? {
+          promptCache: {
+            key: contextStats.fixedPrefixFingerprint,
+            system: true,
+            tools: tools.length > 0,
+          },
+        }
+      : {}),
     // M1-12: Abort in-flight HTTP request when the run is cancelled
     signal: ctx.signal,
   }
@@ -107,7 +111,8 @@ export async function* streamModel(
     maxTokens: request.maxTokens,
     topP: request.topP,
     stream: request.stream,
-  })
+    promptCache: request.promptCache,
+  }, contextStats)
 
   // Stream from provider
   yield* provider.stream(request)

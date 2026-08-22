@@ -50,14 +50,16 @@ const defaultConcurrency = (input.maxPages ?? DEFAULT_MAX_PAGES) <= SMALL_DECK_M
 
 ---
 
-## 推荐的优化方案
+## 推荐的优化方案（实现说明，非收益承诺）
+
+> 旧版本中的伪代码只描述供应商能力，不代表当前请求格式。实际实现位于
+> `src/lib/model/types.ts`、`src/lib/model/anthropic.ts` 和 `src/lib/model/openai.ts`；
+> 具体命中率和延迟必须用真实 provider 基准验证。
 
 ### 优先级 1：实现 Anthropic Prompt Caching
 
-**预期收益**：
-- 首字延迟减少 50-70%（从 2-5 秒降到 0.5-1.5 秒）
-- 输入 token 成本降低 90%（缓存命中时只计费新内容）
-- 总体时间减少 20-30%
+**历史估计（未作为门禁）**：
+- 首字延迟、输入成本和总体时间的改善幅度均需由真实 provider 结果确认，不得直接引用本节旧估计。
 
 **实现步骤**：
 

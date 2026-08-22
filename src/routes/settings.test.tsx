@@ -5,6 +5,7 @@ import { SettingsPage } from './settings'
 import { getFlags, resetFlagCache, setFlagOverride } from '@/lib/harness/flags'
 import { useModelStore } from '@/stores/model-store'
 import { useSkillStore } from '@/stores/skill-store'
+import { SKILL_MIGRATION_MARKER, SKILL_MIGRATION_TELEMETRY_KEY, SKILL_RUNTIME_RETIRED_MARKER } from '@/lib/skills/migration'
 
 describe('SettingsPage M1 feature controls', () => {
   beforeEach(() => {
@@ -75,5 +76,21 @@ describe('SettingsPage M1 feature controls', () => {
 
     expect(getFlags()).toMatchObject({ skillV2: false, agentLoop: false, toolCalling: false, harness: false })
     expect(agentLoop.checked || toolCalling.checked || harness.checked).toBe(false)
+  }, 10_000)
+
+  it('only offers compatibility-window closure after two clean observations', () => {
+    localStorage.clear()
+    resetFlagCache()
+    setFlagOverride('skillV2', true)
+    localStorage.setItem(SKILL_MIGRATION_MARKER, 'true')
+    localStorage.setItem(SKILL_MIGRATION_TELEMETRY_KEY, JSON.stringify({
+      version: 1, attempts: 1, observations: 2, migrated: 1, skipped: 0, errors: 0, deferred: 0,
+      lastStatus: 'completed', lastAt: '2026-08-22T00:00:00.000Z',
+    }))
+
+    render(<MemoryRouter><SettingsPage /></MemoryRouter>)
+    const close = screen.getByRole('button', { name: '关闭旧运行时兼容窗口' })
+    fireEvent.click(close)
+    expect(localStorage.getItem(SKILL_RUNTIME_RETIRED_MARKER)).toBe('true')
   }, 10_000)
 })

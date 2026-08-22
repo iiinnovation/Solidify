@@ -15,6 +15,8 @@ import { createHarnessRuntime, hardGuard, recordToolCompleted, recordToolRequest
 import { readWorkspaceFile } from '../tauri'
 import { snapshotJson } from '../harness/ledger'
 import { ToolLoopGuard } from './tool-loop-guard'
+import { toolRegistry } from '../tools'
+import { enablePptdPipeline } from './pptd-context'
 
 /**
  * How many times a single answer may be resumed after hitting the model's
@@ -58,6 +60,8 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
     totalTokens: 0,
     turns: 0,
     toolCalls: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
   }
 
   // M1-12: Internal controller so an early generator exit (gen.return())
@@ -65,6 +69,9 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
   const internal = new AbortController()
   const unlink = linkAbort(ctx.signal, internal)
   const runCtx: QueryContext = { ...ctx, signal: internal.signal }
+  let activeSkill = runCtx.skill
+  let activeSkillResources = runCtx.skillResources
+  let activeTools = [...runCtx.tools]
   const toolLoopGuard = new ToolLoopGuard(runCtx)
   let closedToolGroups = new Set<string>()
   let loopRecoveryTurnUsed = false
@@ -167,16 +174,23 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       }
 
       // Stream model response (M1-05, M1-06, M1-07)
+      yield { type: 'run.phase', phase: preparationRunPhase(runCtx, activeSkill, turn) }
       yield { type: 'model.progress', phase: 'preparing' }
       const usingCompactInput = compactNextTurn
       compactNextTurn = false
       let response: { text: string; toolCalls: ToolCall[]; usage?: UsageStats; stopReason?: string; reasoningLength: number }
+      let firstChunkAt: string | undefined
       try {
         const modelContext: QueryContext = closedToolGroups.size === 0
-          ? runCtx
+          ? { ...runCtx, skill: activeSkill, skillResources: activeSkillResources, tools: activeTools }
           : {
               ...runCtx,
-              tools: runCtx.tools.filter((tool) => !tool.loopGroup || !closedToolGroups.has(tool.loopGroup)),
+              skill: activeSkill,
+              skillResources: activeSkillResources,
+              tools: activeTools.filter((tool) => {
+                if (tool.name === 'read_handle' && closedToolGroups.has('attachment-retrieval')) return false
+                return !tool.loopGroup || !closedToolGroups.has(tool.loopGroup)
+              }),
             }
         response = yield* streamModelResponse({
           ...modelContext,
@@ -185,7 +199,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
           retrievedContext: isFirstTurn ? retrievedContext : undefined,
           inputMode: usingCompactInput ? 'compact_recovery' : 'standard',
         }, logger, {
-          onModelPrepared: harness ? (request) => {
+          onModelPrepared: harness ? (request, contextStats) => {
             const preparedAt = Date.now()
             harness.ledger.append('model.called', {
               turn,
@@ -193,8 +207,12 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
               localGapMs: previousModelCompletedAt === undefined
                 ? null
                 : Math.max(0, preparedAt - previousModelCompletedAt),
+              contextStats: contextStats ?? null,
             })
           } : undefined,
+          onFirstChunk: (timestamp) => {
+            firstChunkAt = timestamp
+          },
           onToolRequested: harness ? (call) => recordToolRequested(harness, call) : undefined,
         })
       } catch (error) {
@@ -204,7 +222,15 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       // Retrieved workspace memory is useful for grounding the initial request;
       // subsequent turns should rely on the conversation and tool results.
       isFirstTurn = false
-      harness?.ledger.append('model.completed', { turn, text: response.text, toolCalls: response.toolCalls, usage: response.usage, stopReason: response.stopReason, reasoningLength: response.reasoningLength })
+      harness?.ledger.append('model.completed', {
+        turn,
+        text: response.text,
+        toolCalls: response.toolCalls,
+        usage: response.usage,
+        stopReason: response.stopReason,
+        reasoningLength: response.reasoningLength,
+        firstChunkAt: firstChunkAt ?? null,
+      })
       previousModelCompletedAt = Date.now()
       await harness?.hooks.observe('after_model_call', { type: 'after_model_call', runId: ctx.runId, response, onHookError: (id, error) => logger.warn('hook.failed', { id, error: String(error) }) })
 
@@ -213,6 +239,8 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
         usage.inputTokens += response.usage.inputTokens
         usage.outputTokens += response.usage.outputTokens
         usage.totalTokens += response.usage.totalTokens
+        usage.cacheReadTokens = (usage.cacheReadTokens ?? 0) + (response.usage.cacheReadTokens ?? 0)
+        usage.cacheWriteTokens = (usage.cacheWriteTokens ?? 0) + (response.usage.cacheWriteTokens ?? 0)
         const charge = response.usage.outputTokens + (turn === 1 ? response.usage.inputTokens : 0)
         budgetTokens += charge
         const providerLimit = runCtx.limits.maxProviderTokens
@@ -333,7 +361,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       // placeholder) need the latest tool-result messages, not only the
       // immutable context from the start of the run.
       const results = yield* executeTools(
-        { ...runCtx, messages: currentMessages },
+        { ...runCtx, skill: activeSkill, skillResources: activeSkillResources, tools: activeTools, messages: currentMessages },
         response.toolCalls,
         logger,
         harness,
@@ -342,10 +370,19 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       )
 
       closedToolGroups = new Set(
-        runCtx.tools
+        activeTools
           .flatMap((tool) => tool.loopGroup ? [tool.loopGroup] : [])
           .filter((group) => toolLoopGuard.isClosed(group)),
       )
+
+      // Draw.io generation is a targeted extraction task, not an open-ended
+      // document-reading session. Once a search/read result has produced
+      // concrete attachment evidence, close the retrieval phase and force the
+      // model to generate from that evidence instead of exploring every
+      // remaining reader and Skill reference.
+      if (activeSkill?.metadata.name === 'drawio-diagram' && hasTargetedAttachmentEvidence(results)) {
+        closedToolGroups.add('attachment-retrieval')
+      }
 
       // Three real executions are enough evidence that repeating the same
       // strategy is unsafe. A fourth request is reported once and terminates
@@ -357,6 +394,39 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
         yield { type: 'run.failed', error, usage: { ...usage } }
         logger.error('run.failed', error)
         return
+      }
+
+      const activation = results.find((result) => {
+        if (!result.success || !result.data || typeof result.data !== 'object' || Array.isArray(result.data)) return false
+        return typeof (result.data as { skillName?: unknown }).skillName === 'string'
+          && response.toolCalls.some((call) => call.id === result.callId && call.name === 'activate_skill')
+      })
+      if (activation && runCtx.skillRegistry) {
+        const skillName = (activation.data as { skillName: string }).skillName
+        const loaded = await runCtx.skillRegistry.resolve(skillName)
+        if (loaded) {
+          activeSkill = loaded
+          activeSkillResources = await runCtx.skillRegistry.resources?.(loaded.metadata.name)
+          const resolved = toolRegistry.resolve({
+            platform: runCtx.platform ?? 'web',
+            skillAllowedTools: loaded.metadata.allowedTools,
+            skillActive: true,
+            skillResourceAccess: Boolean(activeSkillResources),
+            hasAttachments: Boolean(runCtx.attachments?.length),
+            userDisabledTools: runCtx.settings?.disabledTools ?? [],
+            isOnline: typeof navigator === 'undefined' || navigator.onLine,
+          }).filter((tool) => tool.name !== 'activate_skill'
+            && (tool.name !== 'search_attachments' && tool.name !== 'read_attachment' && tool.name !== 'prepare_attachment_evidence' || Boolean(runCtx.attachments?.length)))
+          // Preserve runtime-only tools installed by the caller (for example
+          // dispatch_agent or a test harness tool) while replacing globally
+          // registered tools with the newly policy-filtered set.
+          const resolvedNames = new Set(resolved.map((tool) => tool.name))
+          const runtimeTools = activeTools.filter((tool) => !toolRegistry.get(tool.name) && !resolvedNames.has(tool.name))
+          const activatedContext = enablePptdPipeline({ ...runCtx, skill: loaded, skillResources: activeSkillResources, tools: [...resolved, ...runtimeTools] })
+          activeTools = [...activatedContext.tools]
+          harness?.ledger.append('skill.activated', { name: loaded.metadata.name, version: loaded.metadata.version })
+          yield { type: 'skill.activated', name: loaded.metadata.name, version: loaded.metadata.version }
+        }
       }
 
       const blockedLoopResult = results.find((result) => result.error?.kind === 'budget_exhausted')
@@ -398,7 +468,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       const terminalFailure = results.find((result) => {
         if (result.success || result.error?.kind === 'invalid_input') return false
         const call = response.toolCalls.find((candidate) => candidate.id === result.callId)
-        return call && runCtx.tools.find((tool) => tool.name === call.name)?.terminalOnFailure === true
+        return call && activeTools.find((tool) => tool.name === call.name)?.terminalOnFailure === true
       })
       if (terminalFailure) {
         const message = terminalFailure.error?.message || terminalFailure.content || '工具执行失败'
@@ -441,9 +511,13 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       }
 
       // Append tool results as next message
+      const suppressDrawioEvidenceHandle = activeSkill?.metadata.name === 'drawio-diagram'
+        && hasTargetedAttachmentEvidence(results)
       const toolResultContent: MessageContent[] = results.flatMap((result) => {
         const call = response.toolCalls.find((c) => c.id === result.callId)
-        let content = result.content
+        let content = suppressDrawioEvidenceHandle && call?.name === 'prepare_attachment_evidence' && result.handle
+          ? '附件证据包已准备完成；本轮定向搜索结果已提供，直接依据这些证据生成 Draw.io 图表。'
+          : modelVisibleToolResult(call?.name, result)
         if (!result.success && call) {
           const failCount = consecutiveToolFailures.get(call.name) ?? 0
           if (failCount >= 3) {
@@ -655,6 +729,7 @@ async function* streamModelResponse(
   logger: SimpleRunLogger,
   callbacks: {
     onModelPrepared?: Parameters<typeof streamModel>[1]
+    onFirstChunk?: (timestamp: string) => void
     onToolRequested?: (call: ToolCall) => void | Promise<void>
   } = {},
 ): AsyncGenerator<QueryEvent, {
@@ -672,10 +747,15 @@ async function* streamModelResponse(
   let reasoningLength = 0
   let progressPhase: Extract<QueryEvent, { type: 'model.progress' }>['phase'] | undefined
   let lastReasoningProgressAt = 0
+  let firstChunkAt: string | undefined
 
   try {
     // Call model gateway (M1-05) - streamModel uses ctx internally
     for await (const chunk of streamModel(ctx, callbacks.onModelPrepared)) {
+      if (chunk.type !== 'ping' && !firstChunkAt) {
+        firstChunkAt = new Date().toISOString()
+        callbacks.onFirstChunk?.(firstChunkAt)
+      }
       // Check abort signal
       if (ctx.signal.aborted) {
         throw new Error('Aborted')
@@ -738,6 +818,7 @@ async function* streamModelResponse(
             }) as unknown as ToolCall
             toolCalls.push(toolCall)
             await callbacks.onToolRequested?.(toolCall)
+            yield { type: 'run.phase', ...toolRunPhase(toolCall.name) }
             yield { type: 'tool.requested', call: toolCall }
             logger.log('tool_call.complete', {
               callId: toolCall.id,
@@ -755,7 +836,9 @@ async function* streamModelResponse(
               outputTokens: chunk.usage.outputTokens,
               totalTokens: chunk.usage.totalTokens || (chunk.usage.inputTokens + chunk.usage.outputTokens),
               turns: 0,
-              toolCalls: 0
+              toolCalls: 0,
+              cacheReadTokens: chunk.usage.cacheReadTokens,
+              cacheWriteTokens: chunk.usage.cacheWriteTokens,
             }
             logger.log('usage', usage)
           }
@@ -915,6 +998,7 @@ async function* executeTools(
   // Start all, then yield completions in model-returned order.
   if (!harness && canRunInParallel(runnable.map(r => r.call), ctx.tools)) {
     for (const { call } of runnable) {
+      yield { type: 'run.phase', ...toolRunPhase(call.name) }
       yield {
         type: 'tool.progress',
         callId: call.id,
@@ -1062,6 +1146,7 @@ async function* executeTools(
       break
     }
 
+    yield { type: 'run.phase', ...toolRunPhase(call.name) }
     yield {
       type: 'tool.progress',
       callId: call.id,
@@ -1106,6 +1191,43 @@ async function* executeTools(
   return results
 }
 
+/**
+ * Tool `data` is primarily for the UI/ledger and is not sent to the model.
+ * Retrieval tools therefore need a compact, model-visible pagination hint or
+ * the model can only guess the next offset and repeatedly request page zero.
+ */
+function modelVisibleToolResult(toolName: string | undefined, result: ToolResult): string {
+  if (!result.success || !result.data || typeof result.data !== 'object' || Array.isArray(result.data)) {
+    return result.content
+  }
+  if (toolName !== 'read_handle' && toolName !== 'read_attachment') return result.content
+
+  const data = result.data as Record<string, unknown>
+  const nextOffset = typeof data.nextOffset === 'number' ? data.nextOffset : undefined
+  const offset = typeof data.offset === 'number' ? data.offset : 0
+  const total = typeof data.total === 'number' ? data.total : undefined
+  if (nextOffset !== undefined) {
+    return `${result.content}\n\n[分页提示] 当前已读取 offset=${offset}；请继续调用 ${toolName} 并使用 offset=${nextOffset}。${total === undefined ? '' : `总长度为 ${total}。`}`
+  }
+  if (total !== undefined) {
+    return `${result.content}\n\n[分页提示] 当前内容已读取到末尾（总长度 ${total}，当前 offset=${offset}）。请不要重复读取这一页。`
+  }
+  return result.content
+}
+
+function hasTargetedAttachmentEvidence(results: readonly ToolResult[]): boolean {
+  return results.some((result) => {
+    if (!result.success || typeof result.content !== 'string') return false
+    if (result.content.includes('没有找到与查询匹配的附件内容')) return false
+    const data = result.data
+    return data !== undefined
+      && data !== null
+      && typeof data === 'object'
+      && !Array.isArray(data)
+      && ('hits' in data || 'attachmentId' in data)
+  })
+}
+
 /** Relay progress emitted during a pending tool promise without buffering it until completion. */
 async function* relayExecutionProgress(
   callId: string,
@@ -1141,13 +1263,54 @@ async function* relayExecutionProgress(
       await new Promise<void>((resolve) => { wake = resolve })
     }
     while (queue.length > 0) {
-      yield { type: 'tool.progress', callId, progress: queue.shift()! }
+      const progress = queue.shift()!
+      const phase = toolProgressRunPhase(progress)
+      if (phase) yield { type: 'run.phase', ...phase }
+      yield { type: 'tool.progress', callId, progress }
     }
   }
   await promise
   if (failure) throw failure
   if (!result) throw new Error('Tool execution completed without a result')
   return result
+}
+
+function preparationRunPhase(
+  ctx: QueryContext,
+  activeSkill: QueryContext['skill'],
+  turn: number,
+): Extract<QueryEvent, { type: 'run.phase' }>['phase'] {
+  if (turn === 1 && ctx.attachments?.length && ctx.attachmentMode !== 'inline') return 'reading_sources'
+  if (turn === 1 && !activeSkill && ctx.skillRegistry) return 'selecting_skill'
+  return 'generating'
+}
+
+function toolRunPhase(name: string): Pick<Extract<QueryEvent, { type: 'run.phase' }>, 'phase'> {
+  if (name === 'activate_skill') return { phase: 'selecting_skill' }
+  if (name === 'search_attachments' || name === 'read_attachment' || name === 'prepare_attachment_evidence') {
+    return { phase: 'reading_sources' }
+  }
+  if (name === 'capture_preview' || name.includes('validate') || name.includes('review')) return { phase: 'validating' }
+  if (name === 'generate_pptd') return { phase: 'generating' }
+  return { phase: 'reading_sources' }
+}
+
+function toolProgressRunPhase(progress: ToolProgress): Pick<Extract<QueryEvent, { type: 'run.phase' }>, 'phase' | 'detail'> | undefined {
+  const detail = progress.detail && typeof progress.detail === 'object' && !Array.isArray(progress.detail)
+    ? progress.detail as { stage?: unknown }
+    : undefined
+  const stage = typeof detail?.stage === 'string'
+    ? detail.stage
+    : progress.phase.replace(/^pptd_/, '')
+  if (stage === 'repair') return { phase: 'repairing', ...(progress.message ? { detail: progress.message } : {}) }
+  if (stage === 'assemble' || stage === 'review' || stage === 'validate' || stage === 'validation') {
+    return { phase: 'validating', ...(progress.message ? { detail: progress.message } : {}) }
+  }
+  if (stage === 'source') return { phase: 'reading_sources', ...(progress.message ? { detail: progress.message } : {}) }
+  if (stage === 'design' || stage === 'outline' || stage === 'planning' || stage === 'page') {
+    return { phase: 'generating', ...(progress.message ? { detail: progress.message } : {}) }
+  }
+  return undefined
 }
 
 function isMessageEnvelope(value: unknown): value is { messages: Message[] } {

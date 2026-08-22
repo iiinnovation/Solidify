@@ -110,4 +110,16 @@ describe('ToolRegistry runtime tools', () => {
     expect(withoutResolver).toEqual([])
     expect(withResolver.map((tool) => tool.name)).toEqual(['read_file'])
   })
+
+  it('keeps the unselected canonical run on discovery/read tools', () => {
+    const registry = new ToolRegistry()
+    for (const tool of [readFileTool, listDirTool, writeFileTool, readHandleTool]) registry.register(tool as Tool)
+    const tools = registry.resolve({
+      platform: 'tauri',
+      minimalUnselected: true,
+      userDisabledTools: [],
+      isOnline: true,
+    })
+    expect(tools.map((tool) => tool.name)).toEqual(['read_file', 'list_dir', 'read_handle'])
+  })
 })

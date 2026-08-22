@@ -8,6 +8,7 @@ import {
   getDefaultFlags,
   FEATURE_FLAG_KEYS,
 } from './flags'
+import { SKILL_RUNTIME_RETIRED_MARKER } from '@/lib/skills/migration'
 
 describe('feature flags', () => {
   beforeEach(() => {
@@ -44,6 +45,12 @@ describe('feature flags', () => {
       'pptdEngine',
       'subAgents',
     ])
+  })
+
+  it('retired migration windows cannot resurrect skillV2=false overrides', () => {
+    localStorage.setItem(SKILL_RUNTIME_RETIRED_MARKER, 'true')
+    setFlagOverride('skillV2', false)
+    expect(getFlags().skillV2).toBe(true)
   })
 
   it('本地覆盖可以打开单个开关', () => {

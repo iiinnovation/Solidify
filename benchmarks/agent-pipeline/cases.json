@@ -1,0 +1,45 @@
+{
+  "version": "m4r-03.1",
+  "description": "Agent pipeline baseline cases. Execute with each configured provider and preserve raw ledger IDs separately.",
+  "skills": [
+    "requirement-analysis",
+    "solution-design",
+    "drawio-diagram",
+    "demo-code",
+    "gap-analysis",
+    "glossary",
+    "meeting-notes",
+    "report-outline",
+    "test-plan",
+    "pptd-deck"
+  ],
+  "cases": [
+    { "id": "chat-plain-01", "kind": "plain", "prompt": "解释什么是幂等性，给一个生活中的例子。", "expectedSkill": null, "negativeSkillMention": null },
+    { "id": "req-selected-small-01", "kind": "selected-skill", "skill": "requirement-analysis", "prompt": "请基于附件完整阅读并整理需求规格。", "attachment": "small-markdown", "expectedSkill": "requirement-analysis" },
+    { "id": "req-auto-large-01", "kind": "auto-discovery", "prompt": "请从这份材料中识别客户需求、约束和待确认事项。", "attachment": "large-markdown", "expectedSkill": "requirement-analysis" },
+    { "id": "drawio-01", "kind": "selected-skill", "skill": "drawio-diagram", "prompt": "根据材料绘制系统架构图。", "attachment": "small-markdown", "expectedSkill": "drawio-diagram" },
+    { "id": "ppt-fast-01", "kind": "selected-skill", "skill": "pptd-deck", "prompt": "制作一个 4 页产品概览演示文稿，不需要复杂附件。", "expectedSkill": "pptd-deck" },
+    { "id": "ppt-standard-01", "kind": "selected-skill", "skill": "pptd-deck", "prompt": "制作 12 页技术方案演示文稿，并引用附件中的架构信息。", "attachment": "large-markdown", "expectedSkill": "pptd-deck" },
+    { "id": "memory-artifact-01", "kind": "no-workspace", "prompt": "生成一份会议纪要，不要写入文件。", "attachment": "small-markdown", "expectedSkill": "meeting-notes" },
+    { "id": "broken-skill-01", "kind": "broken-resource", "skill": "requirement-analysis", "prompt": "使用缺失的公司模板整理需求。", "expectedSkill": "requirement-analysis" },
+    { "id": "solution-01", "kind": "selected-skill", "skill": "solution-design", "prompt": "基于需求输出技术方案和实施计划。", "expectedSkill": "solution-design" },
+    { "id": "demo-01", "kind": "selected-skill", "skill": "demo-code", "prompt": "制作一个可操作的单文件前端 Demo。", "expectedSkill": "demo-code" },
+    { "id": "gap-01", "kind": "selected-skill", "skill": "gap-analysis", "prompt": "对比客户要求与当前能力并输出差距矩阵。", "expectedSkill": "gap-analysis" },
+    { "id": "glossary-01", "kind": "selected-skill", "skill": "glossary", "prompt": "解释 API、幂等性和限流三个术语。", "expectedSkill": "glossary" },
+    { "id": "outline-01", "kind": "selected-skill", "skill": "report-outline", "prompt": "生成一次季度业务汇报大纲。", "expectedSkill": "report-outline" },
+    { "id": "test-plan-01", "kind": "selected-skill", "skill": "test-plan", "prompt": "为登录功能生成 UAT 测试方案。", "expectedSkill": "test-plan" },
+    { "id": "negative-ppt-topic-01", "kind": "negative-route", "prompt": "请解释 PPT 设计中如何安排叙事节奏，不要制作演示文稿。", "expectedSkill": null, "negativeSkillMention": "pptd-deck" },
+    { "id": "negative-requirement-topic-01", "kind": "negative-route", "prompt": "讨论需求分析方法论的优缺点，不要生成需求文档。", "expectedSkill": null, "negativeSkillMention": "requirement-analysis" },
+    { "id": "attachment-image-01", "kind": "attachment-media", "prompt": "请描述图片中的关键结构并给出结论。", "attachment": "image", "expectedSkill": null },
+    { "id": "attachment-pdf-01", "kind": "attachment-media", "prompt": "请完整阅读 PDF 并提取关键事实。", "attachment": "pdf", "expectedSkill": null },
+    { "id": "attachment-office-01", "kind": "attachment-media", "prompt": "请从 Office 文档中提取风险和待办。", "attachment": "office", "expectedSkill": "meeting-notes" }
+  ],
+  "qualityRubric": {
+    "coverage": "0-4: 是否覆盖用户明确要求和全部输入证据",
+    "factuality": "0-4: 是否区分事实、假设和未知，不补造内容",
+    "acceptance": "0-4: 是否给出可验证的验收标准或完成定义",
+    "format": "0-4: 是否符合所选 Skill 的交付格式",
+    "usability": "0-4: 结果是否可直接执行或交付",
+    "gate": "优化后盲评总分不得比基线下降超过 5%"
+  }
+}

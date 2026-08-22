@@ -244,7 +244,7 @@ function extractCells(xml: string): {
 
       const cell: CellInfo = {
         id,
-        value: el.getAttribute('value') || '',
+        value: cellValue(el),
         isVertex: el.getAttribute('vertex') === '1',
         isEdge: el.getAttribute('edge') === '1',
         parentId: el.getAttribute('parent') || '1',
@@ -326,6 +326,22 @@ function descendantsByLocalName(root: Document | Element, name: string): Element
   const expected = name.toLowerCase()
   const candidates = Array.from(root.getElementsByTagName('*'))
   return candidates.filter((element) => localName(element).toLowerCase() === expected)
+}
+
+/**
+ * Newer Draw.io exports may store the visible text in a child `<mxLabel>`
+ * element instead of the traditional `mxCell[value]` attribute. Keep both
+ * forms compatible so generated diagrams do not render as unlabeled boxes.
+ */
+function cellValue(element: Element): string {
+  const value = element.getAttribute('value')
+  if (value !== null) return value
+  const label = descendantsByLocalName(element, 'mxLabel')[0]
+  if (!label) return ''
+  return ['label', 'label1', 'label2', 'label3']
+    .map((name) => label.getAttribute(name)?.trim() ?? '')
+    .filter((value, index, values) => Boolean(value) && values.indexOf(value) === index)
+    .join('\n')
 }
 
 function fitsInside(x: number, y: number, width: number, height: number, parent: CellInfo): boolean {
@@ -775,10 +791,12 @@ export function DrawioRenderer({ content, streaming, onContentChange }: DrawioRe
               dangerouslySetInnerHTML={{ __html: localSvg }}
             />
           ) : (
-            <div className="relative h-full">
-              <pre className="p-4 text-[13px] font-mono text-text-secondary leading-relaxed whitespace-pre-wrap break-words">
-                {content}
-              </pre>
+            <div className="h-full flex items-center justify-center p-6 text-center">
+              <div className="space-y-2">
+                <div className="mx-auto w-8 h-8 rounded-full border-2 border-accent/20 border-t-accent animate-spin" />
+                <p className="text-sm text-text-secondary">正在解析 Draw.io 图形结构…</p>
+                <p className="text-xs text-text-tertiary">结构完成后将显示实时预览</p>
+              </div>
             </div>
           )}
         </div>

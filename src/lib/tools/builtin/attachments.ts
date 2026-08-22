@@ -1,9 +1,13 @@
-import { attachmentSections, readAttachmentRange, searchAttachmentResources, type AttachmentResource } from '../../attachments/types'
+import { attachmentSections, buildAttachmentEvidencePack, readAttachmentRange, searchAttachmentResources, type AttachmentResource } from '../../attachments/types'
 import { failure, success } from './helpers'
 import type { Tool } from '../types'
 
 interface SearchAttachmentsInput { query: string; attachmentIds?: string[]; limit?: number }
 interface ReadAttachmentInput { attachmentId: string; sectionId?: string; offset?: number; limit?: number }
+export interface PrepareAttachmentEvidenceInput {
+  attachmentIds?: string[]
+  maxChars?: number
+}
 
 function selected(resources: readonly AttachmentResource[] | undefined, ids?: readonly string[]): AttachmentResource[] {
   if (!resources) return []
@@ -108,4 +112,40 @@ export const readAttachmentTool: Tool<ReadAttachmentInput> = {
     )
   },
   renderCall: (input) => `读取附件 ${input.attachmentId}${input.sectionId ? `/${input.sectionId}` : ''}`,
+}
+
+export const prepareAttachmentEvidenceTool: Tool<PrepareAttachmentEvidenceInput> = {
+  name: 'prepare_attachment_evidence',
+  description: 'Prepare a bounded evidence pack from attachment sections in one call. Use this for complete-reading tasks before requesting a specific gap.',
+  loopGroup: 'attachment-retrieval',
+  loopKey: 'evidence',
+  replaySafe: true,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      attachmentIds: { type: 'array', items: { type: 'string', minLength: 1 }, maxItems: 20 },
+      maxChars: { type: 'integer', minimum: 1_000, maximum: 48_000 },
+    },
+    additionalProperties: false,
+  },
+  readOnly: true,
+  concurrencySafe: true,
+  destructive: false,
+  requiresConfirmation: false,
+  availability: 'always',
+  permissions: [],
+  async execute(input, ctx) {
+    const selection = selectWithValidation(ctx.attachments, input.attachmentIds)
+    if (selection.missing.length > 0) return failure('not_found', `附件不存在或不属于当前运行：${selection.missing.join(', ')}`, true)
+    if (selection.resources.length === 0) return failure('not_found', '当前运行没有可准备证据的附件。', true)
+
+    const pack = buildAttachmentEvidencePack(selection.resources, undefined, input.maxChars)
+    if (!pack) return failure('runtime', '当前附件没有可提取的文本内容。', true)
+    return success(pack.content, {
+      maxChars: pack.maxChars,
+      truncated: pack.truncated,
+      entries: pack.entries,
+    })
+  },
+  renderCall: () => '准备附件证据包',
 }

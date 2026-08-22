@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Plus, Trash2, Eye, EyeOff, ChevronLeft, Pencil, Check, X, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
@@ -14,7 +14,7 @@ import { useSkillStore, type CustomSkill } from '@/stores/skill-store'
 import { builtinSkills } from '@/lib/skills'
 import { useNavigate } from 'react-router-dom'
 import { getFlags, setFlagOverride } from '@/lib/harness/flags'
-import { migrateStoredCustomSkills } from '@/lib/skills/migration'
+import { finalizeSkillMigrationWindow, getSkillMigrationWindowStatus, migrateStoredCustomSkills } from '@/lib/skills/migration'
 import { modelSupportsVision } from '@/lib/model/capabilities'
 
 function ProviderForm({
@@ -370,6 +370,26 @@ export function SettingsPage() {
   const [workbenchV2Enabled, setWorkbenchV2Enabled] = useState(() => getFlags().workbenchV2)
   const [skillV2Enabled, setSkillV2Enabled] = useState(() => getFlags().skillV2)
   const [subAgentsEnabled, setSubAgentsEnabled] = useState(() => getFlags().subAgents)
+  const [migrationStatus, setMigrationStatus] = useState(() => getSkillMigrationWindowStatus())
+
+  const refreshMigrationStatus = async () => {
+    await migrateStoredCustomSkills()
+    setMigrationStatus(getSkillMigrationWindowStatus())
+  }
+
+  useEffect(() => {
+    if (!skillV2Enabled) return
+    let cancelled = false
+    void migrateStoredCustomSkills()
+      .then(() => {
+        if (!cancelled) setMigrationStatus(getSkillMigrationWindowStatus())
+      })
+      .catch((error) => {
+        console.warn('[skills] Legacy Skill migration status refresh failed:', error)
+        if (!cancelled) setMigrationStatus(getSkillMigrationWindowStatus())
+      })
+    return () => { cancelled = true }
+  }, [skillV2Enabled])
 
   const editingProvider = editingId ? providers.find((p) => p.id === editingId) : null
   const editingSkill = editingSkillId ? customSkills.find((s) => s.id === editingSkillId) : null
@@ -644,7 +664,7 @@ export function SettingsPage() {
                     setSkillV2Enabled(value)
                     setFlagOverride('skillV2', value)
                     if (value) {
-                      void migrateStoredCustomSkills().catch((error) => {
+                      void refreshMigrationStatus().catch((error) => {
                         console.warn('[skills] Legacy Skill migration failed:', error)
                       })
                     }
@@ -696,6 +716,36 @@ export function SettingsPage() {
                 <Sparkles size={16} strokeWidth={1.75} />
                 打开 Skill 管理
               </Button>
+              <div className="rounded-md border border-border bg-surface px-4 py-3 space-y-2">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-medium text-text-primary">旧 Skill 迁移窗口</p>
+                    <p className="text-xs text-text-tertiary mt-0.5">
+                      {migrationStatus.retired
+                        ? '兼容窗口已关闭，旧运行时不会被重新启用。'
+                        : migrationStatus.readyToFinalize
+                          ? `已连续完成 ${migrationStatus.observations} 次干净启动，可关闭兼容窗口。`
+                          : migrationStatus.migrated
+                            ? `目录迁移已标记，当前干净启动观察次数：${migrationStatus.observations}/2。`
+                            : '尚未确认目录迁移完成，旧数据仍保留。'}
+                    </p>
+                  </div>
+                  <Button variant="ghost" size="sm" onClick={() => void refreshMigrationStatus()}>
+                    重新检查
+                  </Button>
+                </div>
+                {migrationStatus.readyToFinalize && !migrationStatus.retired && (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => {
+                      if (finalizeSkillMigrationWindow()) setMigrationStatus(getSkillMigrationWindowStatus())
+                    }}
+                  >
+                    关闭旧运行时兼容窗口
+                  </Button>
+                )}
+              </div>
             </section>
           ) : <section className="space-y-4">
             <div className="flex items-center justify-between">

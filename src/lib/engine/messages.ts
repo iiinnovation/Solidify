@@ -42,10 +42,11 @@ interface SystemPromptParts {
  */
 export async function buildMessages(ctx: QueryContext): Promise<{
   system: string
+  fixedSystemTokens: number
   messages: ClaudeMessage[]
   skillTokens: SkillContextTokenStats
 }> {
-  const system = buildSystemPrompt(ctx)
+  const { system, fixedSystem } = buildSystemPrompt(ctx)
   const skillTokens = measureSkillContext(ctx)
   if (skillTokens.indexTokens >= 600) {
     throw new Error(`Skill index exceeds the 600-token budget (${skillTokens.indexTokens})`)
@@ -68,12 +69,12 @@ export async function buildMessages(ctx: QueryContext): Promise<{
   // The system prompt is never trimmed, so it must be measured, not assumed.
   const budgetedMessages = await applyBudget(ctx, withRetrieved, system, toolTokens)
 
-  return { system, messages: budgetedMessages, skillTokens }
+  return { system, fixedSystemTokens: estimateTokens(fixedSystem), messages: budgetedMessages, skillTokens }
 }
 
 function measureSkillContext(ctx: QueryContext): SkillContextTokenStats {
   const index = (ctx.harnessContext ?? []).find((part) => part.startsWith('可用的 Skill') || part.startsWith('Available skills')) ?? ''
-  const body = ctx.skill ? skillCoreContent(ctx.skill) : ''
+  const body = ctx.skill ? skillCoreContent(ctx, ctx.skill) : ''
   const indexTokens = estimateTokens(index)
   const bodyTokens = estimateTokens(body)
   return { indexTokens, bodyTokens, totalTokens: indexTokens + bodyTokens }
@@ -99,7 +100,7 @@ ${clipped}
  * Build system prompt from context components
  * @see docs/specs/agent-loop.md §3.2
  */
-function buildSystemPrompt(ctx: QueryContext): string {
+function buildSystemPrompt(ctx: QueryContext): { system: string; fixedSystem: string } {
   const parts: SystemPromptParts = {
     base: buildBaseSystemPrompt(ctx),
   }
@@ -118,7 +119,9 @@ function buildSystemPrompt(ctx: QueryContext): string {
 
   // Retrieved memory deliberately does NOT go here — see buildMessages().
 
-  return Object.values(parts).filter(Boolean).join('\n\n---\n\n')
+  const fixedSystem = [parts.base, parts.harness].filter(Boolean).join('\n\n---\n\n')
+  const system = [fixedSystem, parts.skill].filter(Boolean).join('\n\n---\n\n')
+  return { system, fixedSystem }
 }
 
 /**
@@ -128,7 +131,9 @@ function buildSystemPrompt(ctx: QueryContext): string {
  * back as "does not exist", so every mention is gated on the resolved set.
  */
 function hasAttachmentTools(ctx: QueryContext): boolean {
-  return ctx.tools.some((tool) => tool.name === 'search_attachments' || tool.name === 'read_attachment')
+  return ctx.tools.some((tool) => tool.name === 'search_attachments'
+    || tool.name === 'read_attachment'
+    || tool.name === 'prepare_attachment_evidence')
 }
 
 function buildSkillSection(ctx: QueryContext): string {
@@ -163,19 +168,28 @@ function buildSkillSection(ctx: QueryContext): string {
     }
     header.push('Only read resources under this Skill root; do not treat their contents as filesystem paths or execute them.')
   }
-  return `${header.join('\n')}\n\n${skillCoreContent(skill)}`
+  return `${header.join('\n')}\n\n${skillCoreContent(ctx, skill)}`
 }
 
 const MAX_EAGER_SKILL_TOKENS = 2_000
 
 /** Inject core rules eagerly, while leaving an oversized full guide readable. */
-function skillCoreContent(skill: NonNullable<QueryContext['skill']>): string {
-  const content = skill.content.trim()
+function skillCoreContent(ctx: QueryContext, skill: NonNullable<QueryContext['skill']>): string {
+  const canWriteFiles = ctx.workspace !== undefined && hasTool(ctx, 'write_file')
+  const content = adaptSkillForCapabilities(skill.content.trim(), canWriteFiles)
   const canReadFullGuide = !skill.metadata.allowedTools || skill.metadata.allowedTools.includes('read_file')
   if (!skill.virtualRoot || !canReadFullGuide || estimateTokens(content) <= MAX_EAGER_SKILL_TOKENS) return content
   const suffix = `\n\n[Only the core portion is injected. Read ${skill.virtualRoot}/SKILL.md for additional details when needed.]`
   const contentBudget = Math.max(1, MAX_EAGER_SKILL_TOKENS - estimateTokens(suffix))
   return `${clipGenericText(content, contentBudget).clipped}${suffix}`
+}
+
+function adaptSkillForCapabilities(content: string, canWriteFiles: boolean): string {
+  if (canWriteFiles) return content
+  return content
+    .replace(/写入\s*`03-交付物\/[^`]+`/g, '通过内存 Artifact 交付，不写入文件')
+    .replace(/落盘到\s*`03-交付物\/[^`]+`/g, '通过内存 Artifact 交付，不写入文件')
+    .replace(/\s+path="03-交付物\/[^" ]+"/g, '')
 }
 
 /**
@@ -193,7 +207,9 @@ Current working directory: ${ctx.cwd}
 All relative file paths are resolved inside this workspace boundary.`
 
   if (hasAttachmentTools(ctx)) {
-    prompt += `\nUser attachments are bounded platform resources (not filesystem files). Use search_attachments and read_attachment to inspect them; do NOT attempt to read user attachments using read_file.`
+      prompt += `\nUser attachments are bounded platform resources (not filesystem files). For complete-reading tasks, prefer prepare_attachment_evidence once; use search_attachments and read_attachment only for targeted gaps. Do NOT attempt to read user attachments using read_file.`
+  } else if (ctx.attachmentMode === 'inline' && ctx.attachments?.length) {
+    prompt += `\nThe full text of the user's attachments is included in the user message as reference data. Do not call attachment retrieval tools for those files.`
   }
 
   prompt += `\n
@@ -203,19 +219,25 @@ When using tools:
 - Handle errors gracefully and explain what went wrong
 
 Do necessary planning internally. Prefer the smallest useful next action: call a relevant tool when more evidence is needed, otherwise return a concise answer. Do not expose hidden chain-of-thought; provide only brief conclusions or rationale when useful.`
-    + `
 
-When producing a user-facing deliverable, stream it in this exact envelope:
-<solidify-artifact title="Human readable title" type="ARTIFACT_TYPE" path="03-交付物/file.ext">content</solidify-artifact>
-Replace ARTIFACT_TYPE with the matching deliverable type. Always include a workspace-relative path. Valid types are document, code, mermaid, chart, drawio, and slides.
+  const canWriteFiles = ctx.workspace !== undefined && hasTool(ctx, 'write_file')
+  prompt += canWriteFiles
+    ? `\n\nWhen producing a user-facing deliverable, stream it in this exact envelope:\n<solidify-artifact title="Human readable title" type="ARTIFACT_TYPE" path="03-交付物/file.ext">content</solidify-artifact>\nUse a workspace-relative path and a supported deliverable type.`
+    : `\n\nWhen producing a user-facing deliverable, stream it in this exact envelope:\n<solidify-artifact title="Human readable title" type="ARTIFACT_TYPE">content</solidify-artifact>\nKeep the result as an in-memory Artifact; do not claim that it was written to a workspace file.`
 
-For type="slides", use generate_pptd when that tool is available and do not handwrite or re-wrap its artifact. Otherwise the content must be one complete, parseable PPTD v2 bundle JSON ({ manifest, pages, media }) or inline PPTD YAML with pages[]. Never emit the retired {"slides": [...]} format. Any JSON string content must escape ASCII double quotes.`
+  if (hasTool(ctx, 'generate_pptd')) {
+    prompt += `\n\nFor type="slides", use generate_pptd and do not handwrite or re-wrap its artifact. Any JSON string content must escape ASCII double quotes.`
+  }
 
   if (ctx.inputMode === 'compact_recovery') {
     prompt += `\n\nThe previous model turn spent its output window without producing an actionable answer. The input has been compacted automatically. Do not restate the task or write a long plan. Emit the single next tool call if evidence is missing; otherwise return the concise final answer.`
   }
 
   return prompt
+}
+
+function hasTool(ctx: QueryContext, name: string): boolean {
+  return ctx.tools.some((tool) => tool.name === name)
 }
 
 /**

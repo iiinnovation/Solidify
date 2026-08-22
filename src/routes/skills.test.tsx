@@ -35,7 +35,8 @@ vi.mock('@/lib/skills/package', () => ({
   readSkillPackage: mocks.readSkillPackage,
 }))
 
-vi.mock('@/lib/skills/migration', () => ({
+vi.mock('@/lib/skills/migration', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/lib/skills/migration')>(),
   removeUserSkillDirectory: vi.fn(),
   writeUserSkillDocument: vi.fn(),
   writeUserSkillPackage: mocks.writeUserSkillPackage,

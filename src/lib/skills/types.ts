@@ -37,6 +37,8 @@ export interface SkillRegistryApi {
   load(path: string): Promise<LoadedSkill>
   list(): Promise<SkillMetadata[]>
   resolve(name: string): Promise<LoadedSkill | null>
+  /** Optional resolver for runtime activation; absent in minimal test registries. */
+  resources?(name: string): Promise<SkillResourceResolver | undefined>
 }
 
 export interface SkillLoadError {

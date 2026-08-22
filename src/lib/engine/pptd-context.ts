@@ -9,7 +9,7 @@ const INITIAL_PPTD_BLOCKED_TOOLS = new Set(['capture_preview'])
 // spend several turns searching/reading the same document before it can start
 // the deck pipeline, which is both slower and more expensive. Keep these tools
 // out of the PPTD turn; a standalone chat can still inspect excerpts on demand.
-const PPTD_ATTACHMENT_TOOLS = new Set(['search_attachments', 'read_attachment'])
+const PPTD_ATTACHMENT_TOOLS = new Set(['search_attachments', 'read_attachment', 'prepare_attachment_evidence'])
 
 /** Attach the PPTD pipeline for the canonical Skill. */
 export function enablePptdPipeline(base: QueryContext): QueryContext {

@@ -79,16 +79,18 @@ const defaultConcurrency = (input.maxPages ?? DEFAULT_MAX_PAGES) <= SMALL_DECK_M
 
 ## 🔄 后续优化建议
 
-### 优先级 1：Prompt Caching（高收益，中等难度）
+### 历史建议：Prompt Caching（已接入基础适配，收益仍需基准验证）
 
-**预期收益**：首字延迟减少 50-70%
+不要把 50–70% 视为生产结论。当前只在 provider 请求中发送原生缓存控制并记录命中
+token，延迟和成本收益必须以 `benchmarks/agent-pipeline` 的真实 provider 结果为准。
 
 详见 `docs/performance-optimization.md` 中的完整实现方案。
 
 **关键点**：
 - 缓存 `<design_spec>` 和 `<theme>`（每页重复）
 - 缓存长的 `<layout_reference_page>`
-- Anthropic API 原生支持，只需添加 `cache_control` 标记
+- Anthropic adapter 对稳定 system/tool 前缀添加 `cache_control`；OpenAI-compatible
+  adapter 发送 `prompt_cache_key`。
 
 ### 优先级 2：分阶段超时（低难度，小收益）
 

@@ -11,7 +11,7 @@ skip-confirmation: true
 
 # 需求分析
 
-第一步读取 `reference/legacy-guidance.md` 和 `reference/output-format.md`。再读取用户提供的全部材料，提取背景、目标、功能与非功能需求，标注假设和待确认事项，生成结构化 Markdown 交付物并写入 `03-交付物/`。
+先读取用户提供的全部材料，提取背景、目标、功能与非功能需求，标注假设和待确认事项，生成结构化 Markdown 交付物。只有用户要求严格编号或特殊输出格式时，才按需读取 `reference/output-format.md`。存在工作区时写入 `03-交付物/`，否则通过内存 Artifact 交付。
 
 ## 提交前自检
 

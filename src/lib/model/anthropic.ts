@@ -44,6 +44,7 @@ export class AnthropicProvider implements ModelProvider {
       supportsVision: config.supportsVision ?? true,
       supportsTools: config.supportsTools ?? true,
       supportsStreaming: true,
+      supportsPromptCache: true,
       defaultMaxTokens: 4096,
       models: [
         'claude-opus-5',
@@ -71,7 +72,17 @@ export class AnthropicProvider implements ModelProvider {
     try {
       // Convert to Anthropic format
       const messages = this.convertMessages(request.messages)
-      const tools = request.tools ? this.convertTools(request.tools) : undefined
+      let tools = request.tools ? this.convertTools(request.tools) : undefined
+      if (tools && request.promptCache?.tools && tools.length > 0) {
+        // Anthropic caches all preceding tool blocks at the last breakpoint.
+        const last = tools.length - 1
+        tools = tools.map((tool, index) => index === last
+          ? { ...tool, cache_control: { type: 'ephemeral' as const } }
+          : tool)
+      }
+      const system = request.system && request.promptCache?.system
+        ? [{ type: 'text' as const, text: request.system, cache_control: { type: 'ephemeral' as const } }]
+        : request.system
 
       // Call Anthropic API
       // M1-12: signal aborts the underlying HTTP request immediately.
@@ -83,7 +94,7 @@ export class AnthropicProvider implements ModelProvider {
       const stream = await this.client.messages.create(
         {
           model: request.model,
-          system: request.system,
+          system,
           messages,
           tools,
           max_tokens: request.maxTokens ?? this.metadata.defaultMaxTokens,
@@ -110,6 +121,8 @@ export class AnthropicProvider implements ModelProvider {
       // a mid-stream error is reported as an empty successful turn.
       let inputTokens = 0
       let outputTokens = 0
+      let cacheReadTokens = 0
+      let cacheWriteTokens = 0
       let stopReason: 'end_turn' | 'max_tokens' | 'stop_sequence' | 'tool_use' | undefined
 
       // Convert Anthropic events to unified format with a chunk stall watchdog
@@ -190,6 +203,8 @@ export class AnthropicProvider implements ModelProvider {
             case 'message_start':
               inputTokens = event.message.usage?.input_tokens ?? 0
               outputTokens = event.message.usage?.output_tokens ?? 0
+              cacheReadTokens = event.message.usage?.cache_read_input_tokens ?? 0
+              cacheWriteTokens = event.message.usage?.cache_creation_input_tokens ?? 0
               break
 
             case 'message_delta':
@@ -212,6 +227,8 @@ export class AnthropicProvider implements ModelProvider {
                   inputTokens,
                   outputTokens,
                   totalTokens: inputTokens + outputTokens,
+                  cacheReadTokens,
+                  cacheWriteTokens,
                 },
                 stopReason,
               }

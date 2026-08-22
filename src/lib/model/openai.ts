@@ -28,6 +28,7 @@ const OPENAI_METADATA: ProviderMetadata = {
   supportsVision: true,
   supportsTools: true,
   supportsStreaming: true,
+  supportsPromptCache: true,
   defaultMaxTokens: 4096,
   models: [
     'gpt-4-turbo',
@@ -107,6 +108,7 @@ export class OpenAIProvider implements ModelProvider {
           max_tokens: request.maxTokens,
           stream: true,
           stream_options: { include_usage: true },
+          ...(request.promptCache?.key ? { prompt_cache_key: request.promptCache.key } : {}),
         },
         {
           signal: abortController.signal,
@@ -163,10 +165,12 @@ export class OpenAIProvider implements ModelProvider {
       const stallTimeoutMs = resolveStallTimeout(request)
       for await (const chunk of iterateWithStallTimeout(stream, stallTimeoutMs, () => abortController.abort())) {
         if (chunk.usage) {
+          const details = (chunk.usage as { prompt_tokens_details?: { cached_tokens?: number } }).prompt_tokens_details
           usage = {
             inputTokens: chunk.usage.prompt_tokens,
             outputTokens: chunk.usage.completion_tokens,
             totalTokens: chunk.usage.total_tokens,
+            cacheReadTokens: details?.cached_tokens,
           }
         }
 
@@ -381,6 +385,19 @@ export class OpenAIProvider implements ModelProvider {
       }
     }
     if (error instanceof OpenAI.APIError) {
+      // OpenAI-compatible gateways frequently return 5xx HTML pages (for
+      // example Cloudflare 504) instead of a structured OpenAI error type.
+      // The SDK still exposes the HTTP status, so preserve it as a retryable
+      // upstream failure rather than misclassifying it as an unknown fatal
+      // error.
+      if (typeof error.status === 'number' && error.status >= 500 && error.status <= 599) {
+        return {
+          code: String(error.status),
+          message: error.message,
+          type: 'api_error',
+          retryable: true,
+        }
+      }
       const type = this.mapErrorType(error.type)
       return {
         code: error.code || 'unknown',

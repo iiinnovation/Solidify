@@ -65,6 +65,26 @@ export function toRouteCandidates(skills: readonly SkillMetadata[]): SkillRouteC
     }))
 }
 
+/**
+ * Route only unmistakable deliverable requests without a provider call.
+ * Ambiguous/topic-only messages deliberately fall through to activate_skill or
+ * the opt-in remote router, so a keyword never becomes a permanent false positive.
+ */
+export function routeSkillLocally(message: string, skills: readonly SkillMetadata[]): string | undefined {
+  const text = message.trim()
+  if (!text || /(?:不要|无需|不需要|解释|讨论|方法论|什么是|如何安排)/i.test(text)) return undefined
+  const enabled = new Set(toRouteCandidates(skills).map((skill) => skill.name))
+  const routes: Array<[string, RegExp]> = [
+    ['pptd-deck', /(?:制作|生成|创建|输出).{0,16}(?:PPT|PPTX|演示文稿|幻灯片|汇报|课件|答辩)/i],
+    ['drawio-diagram', /(?:绘制|生成|创建|输出).{0,16}(?:Draw\.?io|流程图|架构图|时序图)/i],
+    ['requirement-analysis', /(?:整理|梳理|输出|编写).{0,16}(?:需求规格|需求文档|需求分析|用户故事)/i],
+    ['meeting-notes', /(?:整理|输出|生成).{0,16}(?:会议纪要|会议记录|会议待办)/i],
+    ['test-plan', /(?:生成|输出|编写).{0,16}(?:测试计划|测试方案|UAT)/i],
+    ['solution-design', /(?:输出|生成|编写).{0,16}(?:技术方案|解决方案|架构设计|实施计划)/i],
+  ]
+  return routes.find(([name, pattern]) => enabled.has(name) && pattern.test(text))?.[0]
+}
+
 export function buildSkillRoutePrompt(
   message: string,
   candidates: readonly SkillRouteCandidate[],

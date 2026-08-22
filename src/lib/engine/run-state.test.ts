@@ -75,6 +75,13 @@ describe('run state reducer', () => {
     expect(JSON.stringify(state)).not.toContain('隐藏思维链')
   })
 
+  it('shows runtime Skill activation as a visible preparation stage', () => {
+    const state = applyRunEvent(createRunState('run-skill'), {
+      type: 'skill.activated', name: 'requirement-analysis', version: '2.1.0',
+    })
+    expect(state.activity).toEqual({ phase: 'preparing', label: '正在使用 requirement-analysis Skill…' })
+  })
+
   it('charges concurrent tools once instead of once per call', () => {
     // Three read-only tools run in parallel for 1s inside a 2s run. Summing
     // their durations would subtract 3s from the 2s window, clamp it to zero

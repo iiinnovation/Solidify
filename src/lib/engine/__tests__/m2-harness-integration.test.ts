@@ -7,6 +7,7 @@ import { createHarnessRuntime } from '../../harness/builtin-hooks'
 import { resetFlagCache, setFlagOverride } from '../../harness/flags'
 import { RunLedger } from '../../harness/ledger'
 import type { Tool, ToolResult } from '../../tools/types'
+import { activateSkillTool } from '../../tools/builtin/activate-skill'
 import { runQuery } from '../query'
 import type { QueryContext, QueryEvent } from '../types'
 
@@ -222,13 +223,117 @@ describe('M2 Harness query integration', () => {
         maxTokens: 1000,
         stream: true,
       },
+      contextStats: {
+        slots: {
+          systemTokens: expect.any(Number),
+          toolsTokens: expect.any(Number),
+          historyTokens: expect.any(Number),
+          attachmentTokens: expect.any(Number),
+          currentTaskTokens: expect.any(Number),
+        },
+        fixedPrefixFingerprint: expect.stringMatching(/^ctx-/),
+      },
     })
+    expect(ledger.find('model.completed')).toHaveLength(2)
+    expect(ledger.find('model.completed').every((event) => {
+      const value = (event.payload as { firstChunkAt?: unknown }).firstChunkAt
+      return typeof value === 'string' && !Number.isNaN(Date.parse(value))
+    })).toBe(true)
     expect(ledger.find('run.started')[0].payload).toMatchObject({
       conversationId: `${runId}-conversation`,
       startupDelayMs: expect.any(Number),
       model: { provider: 'mock', model: 'mock-model' },
       skill: null,
     })
+  })
+
+  it('does not scan the full Skill index when a Skill is already bound', async () => {
+    const context = {
+      ...makeContext('m4r-06-bound-skill', scriptedProvider([finalTurn]), []),
+      skill: {
+        metadata: { name: 'demo-code', version: '1.0.0', description: 'demo' },
+        content: '生成 demo',
+        path: 'builtin://demo-code/SKILL.md',
+      },
+    } satisfies QueryContext
+    const list = vi.fn(async () => [{ name: 'other', version: '1.0.0', description: 'other' }])
+    const runtime = createHarnessRuntime(context, {
+      skillRegistry: { load: async () => { throw new Error('not used') }, resolve: async () => null, list },
+    })
+    await runtime.hooks.waterfall('before_query', { messages: context.messages }, {
+      type: 'before_query', runId: context.runId, signal: context.signal,
+    })
+    expect(list).not.toHaveBeenCalled()
+  })
+
+  it('keeps the fixed context fingerprint stable when only the user task changes', async () => {
+    await collect({
+      ...makeContext('m4r-01-fingerprint-a', scriptedProvider([finalTurn]), []),
+      messages: [{ role: 'user', content: '请整理需求' }],
+    })
+    await collect({
+      ...makeContext('m4r-01-fingerprint-b', scriptedProvider([finalTurn]), []),
+      messages: [{ role: 'user', content: '请解释幂等性' }],
+    })
+    const fingerprint = (runId: string) => {
+      const payload = new RunLedger(runId).find('model.called')[0].payload as { contextStats?: { fixedPrefixFingerprint?: string } }
+      return payload.contextStats?.fixedPrefixFingerprint
+    }
+    expect(fingerprint('m4r-01-fingerprint-a')).toBe(fingerprint('m4r-01-fingerprint-b'))
+  })
+
+  it('activates a trusted Skill on the next model turn without expanding permissions', async () => {
+    const runId = 'm4r-11-activate-skill'
+    const provider = scriptedProvider([
+      toolTurn([{ id: 'activate-1', name: 'activate_skill', input: { skillName: 'demo-code' } }]),
+      finalTurn,
+    ])
+    const context = {
+      ...makeContext(runId, provider, [activateSkillTool as Tool]),
+      skillRegistry: {
+        load: async () => { throw new Error('not used') },
+        list: async () => [],
+        resolve: async (name: string) => name === 'demo-code'
+          ? { metadata: { name, version: '1.0.0', description: 'demo', allowedTools: ['read_file'] }, content: 'demo rules', path: 'builtin://demo-code/SKILL.md' }
+          : null,
+      },
+    } satisfies QueryContext
+    const events = await collect(context)
+    expect(events).toContainEqual({ type: 'skill.activated', name: 'demo-code', version: '1.0.0' })
+    expect(new RunLedger(runId).find('skill.activated')).toHaveLength(1)
+    expect(events.at(-1)?.type).toBe('run.completed')
+  })
+
+  it('keeps caller-injected runtime tools when a Skill is activated', async () => {
+    const requests: CompletionRequest[] = []
+    const runtimeTool = makeTool('dispatch_agent', async () => ({ success: true, content: 'runtime' }))
+    const provider = scriptedProvider([
+      toolTurn([{ id: 'activate-runtime', name: 'activate_skill', input: { skillName: 'demo-code' } }]),
+      finalTurn,
+    ], requests)
+    const context = {
+      ...makeContext('m4r-11-runtime-tools', provider, [activateSkillTool as Tool, runtimeTool]),
+      skillRegistry: {
+        load: async () => { throw new Error('not used') },
+        list: async () => [],
+        resolve: async (name: string) => name === 'demo-code'
+          ? { metadata: { name, version: '1.0.0', description: 'demo', allowedTools: ['read_file'] }, content: 'demo rules', path: 'builtin://demo-code/SKILL.md' }
+          : null,
+      },
+    } satisfies QueryContext
+
+    await collect(context)
+    expect(requests[1]?.tools?.map((tool) => tool.name)).toContain('dispatch_agent')
+  })
+
+  it('records null when a model turn yields no non-ping chunk', async () => {
+    const runId = 'm4r-02-no-chunk'
+    const events = await collect({
+      ...makeContext(runId, scriptedProvider([[{ type: 'ping' }]]), []),
+    })
+    expect(events.at(-1)?.type).toBe('run.completed')
+    const completed = new RunLedger(runId).find('model.completed')[0]
+    expect(completed.payload).toMatchObject({ firstChunkAt: null })
   })
 
   it('records the selected Skill identity and version at run start', async () => {

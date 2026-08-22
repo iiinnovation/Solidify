@@ -6,6 +6,7 @@ import { SkillRegistry } from '@/lib/skills/registry'
 import { clearChatSkillRuntimeCache } from '@/lib/engine/chat-context'
 import type { SkillLoadError, SkillLoadResult, SkillMetadata } from '@/lib/skills/types'
 import { getDisabledSkillNames } from '@/lib/skills/settings'
+import { migrateStoredCustomSkills } from '@/lib/skills/migration'
 
 export interface SkillRegistryState {
   registry: SkillRegistry | null
@@ -55,6 +56,10 @@ export function useSkillRegistry(): SkillRegistryState {
     let current: SkillRegistry | null = null
     let stopWatching: (() => void) | null = null
     void (async () => {
+      // Complete the one-way legacy localStorage migration before the first
+      // registry scan. The marker makes this idempotent; failures leave the
+      // source untouched so the compatibility window remains recoverable.
+      await migrateStoredCustomSkills()
       const loader = new SkillLoader({ workspaceRoot, userSkillsRoot: await ensureUserSkillsRoot() })
       const created = new SkillRegistry(loader)
       current = created

@@ -88,6 +88,25 @@ describe('chat Agent workspace context', () => {
     expect(context.workspace).toBeUndefined()
   })
 
+  it('keeps an unselected canonical run on discovery tools until Skill activation', () => {
+    featureFlags.skillV2 = true
+    const context = createChatQueryContext({
+      runId: 'run-discovery',
+      conversationId: 'conversation-discovery',
+      messages: [{ role: 'user', content: 'hello' }],
+      provider,
+      signal: new AbortController().signal,
+      workspaceRoot: '/Users/test/workspace/',
+      skillRegistry: { list: async () => [], resolve: async () => null } as never,
+    })
+    const names = context.tools.map((tool) => tool.name)
+    expect(names).toContain('activate_skill')
+    expect(names).toContain('read_file')
+    expect(names).not.toContain('write_file')
+    expect(names).not.toContain('generate_pptd')
+    expect(names).not.toContain('capture_preview')
+  })
+
   it('binds desktop tools, snapshots and path checks to the selected root', () => {
     const context = create('/Users/test/workspace/')
     const names = context.tools.map((tool) => tool.name)
@@ -147,7 +166,7 @@ describe('chat Agent workspace context', () => {
     })
 
     expect(context.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining([
-      'search_attachments', 'read_attachment',
+      'search_attachments', 'read_attachment', 'prepare_attachment_evidence',
     ]))
   })
 
@@ -165,6 +184,34 @@ describe('chat Agent workspace context', () => {
     const names = context.tools.map((tool) => tool.name)
     expect(names).not.toContain('search_attachments')
     expect(names).not.toContain('read_attachment')
+    expect(names).not.toContain('prepare_attachment_evidence')
+  })
+
+  it('exposes runtime Skill activation only when a trusted registry is available', () => {
+    featureFlags.skillV2 = true
+    const context = createChatQueryContext({
+      runId: 'run-skill-activation', conversationId: 'conversation',
+      messages: [{ role: 'user', content: '请选择合适的 Skill' }], provider,
+      signal: new AbortController().signal,
+      skillRegistry: { load: async () => { throw new Error('not used') }, list: async () => [], resolve: async () => null },
+    })
+    expect(context.tools.map((tool) => tool.name)).toContain('activate_skill')
+  })
+
+  it('hides attachment readers when full text is already inline', () => {
+    const context = createChatQueryContext({
+      runId: 'run-inline-attachment', conversationId: 'conversation',
+      messages: [{ role: 'user', content: '请完整阅读附件\n<attachments_inline>正文</attachments_inline>' }],
+      provider, signal: new AbortController().signal,
+      attachments: [{ id: 'att-1', name: 'brief.md', size: 6, text: '正文' }],
+      attachmentMode: 'inline',
+    })
+
+    const names = context.tools.map((tool) => tool.name)
+    expect(context.attachmentMode).toBe('inline')
+    expect(names).not.toContain('search_attachments')
+    expect(names).not.toContain('read_attachment')
+    expect(names).not.toContain('prepare_attachment_evidence')
   })
 
   it('treats unknown custom models as non-vision unless explicitly enabled', () => {

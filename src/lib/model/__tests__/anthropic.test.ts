@@ -95,4 +95,36 @@ describe('AnthropicProvider', () => {
     expect(events).toContainEqual({ type: 'reasoning_delta', delta: '内部分析' })
     expect(events).toContainEqual({ type: 'content_delta', delta: '最终答案' })
   })
+
+  it('marks the stable system and tool prefix for native prompt caching', async () => {
+    let captured: unknown
+    async function* response() {
+      yield { type: 'message_start', message: { usage: { input_tokens: 3, output_tokens: 0 } } }
+      yield { type: 'message_stop' }
+    }
+    Object.defineProperty(provider, 'client', {
+      value: {
+        messages: {
+          create: async (params: unknown) => {
+            captured = params
+            return response()
+          },
+        },
+      },
+    })
+
+    for await (const _event of provider.stream({
+      model: 'claude-test',
+      system: 'stable system',
+      messages: [{ role: 'user', content: 'hello' }],
+      tools: [{ name: 'lookup', description: 'Lookup', inputSchema: { type: 'object' } }],
+      stream: true,
+      promptCache: { key: 'ctx-test', system: true, tools: true },
+    })) { /* drain */ }
+
+    expect(captured).toMatchObject({
+      system: [{ type: 'text', text: 'stable system', cache_control: { type: 'ephemeral' } }],
+      tools: [{ cache_control: { type: 'ephemeral' } }],
+    })
+  })
 })

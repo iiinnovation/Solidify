@@ -8,9 +8,9 @@
 | **规格** | [specs/skill-format.md](../specs/skill-format.md) |
 | **相关决策** | [ADR-0004](../04-decisions.md#adr-0004) |
 | **特性开关** | `skillV2` |
-| **状态** | ✅ 已完成（2026-08-15） |
+| **状态** | ✅ 基础能力完成；M4-R 链路改进进行中（2026-08-22） |
 
-> **归档决定（2026-08-15）**：目录加载、渐进式披露、工具白名单、迁移、管理 UI 与自动化验收全部完成；桌面 GUI 热加载、10 个内置 Skill 逐项质量对比及典型场景的一次性交办均已人工验收。M4 形成稳定检查点，允许进入 M5-A。
+> **归档决定（2026-08-15）**：目录加载、渐进式披露、工具白名单、管理 UI 与基础自动化验收完成，M4 形成稳定检查点。M4-R 后续继续处理运行中激活、上下文编译、provider 缓存、旧 localStorage 写路径退出和真实质量门禁；旧的双轨兼容代码在迁移窗口结束前保留。
 
 ## 目标
 
@@ -22,7 +22,7 @@ M4 是四根支柱中最后一根落地，完成后 [00-vision-and-scope.md §4]
 
 > 把一个 Skill 目录拖进 `~/.solidify/skills/`，命令面板中立刻出现，无需重启。
 >
-> 唤起它并交办任务，在运行时间线上能看到 AI **主动调用 `read_file`** 去读该 Skill 的 `reference/` 下的详细规范，然后才开始干活。
+> 唤起它并交办任务，运行时间线上能看到统一 `run.phase`；只有任务确实需要详细规范时，模型才调用 `read_file` 读取对应 `reference/`，不再把“第一步读取”作为成功条件。
 >
 > 不选任何 Skill 时，检查上下文，只有各 Skill 的一行描述，总计不超过 600 token。
 
@@ -95,14 +95,14 @@ M4-10 的拆分原则见 [skill-format.md §7](../specs/skill-format.md)：把"�
 
 自动化覆盖包括目录热重载、无选择时只注入索引、选中 Skill 后真实 `read_file` 资源读取、工具白名单、三级优先级、显式解析错误和 localStorage 三 Skill 迁移。M4 阶段尚无 M5 的 PPTD Skill，因此用内置 `requirement-analysis` / `presentation` 验证相同的第 2 层读取链路。
 
-真实模型验收使用 DeepSeek-compatible OpenAI 协议端点，不配置或回退到 Anthropic。2026-08-15 的 `npm run test:m4-live` 已验证 `deepseek-v4-flash` 在最终回答前依次读取：
+> 历史记录（不再作为 M4-R 性能门禁）：真实模型验收使用 DeepSeek-compatible OpenAI 协议端点，不配置或回退到 Anthropic。2026-08-15 的 `npm run test:m4-live` 已验证 `deepseek-v4-flash` 在最终回答前依次读取：
 
 ```text
 .solidify/skills/requirement-analysis/reference/legacy-guidance.md
 .solidify/skills/requirement-analysis/reference/output-format.md
 ```
 
-该次运行共 2 次工具调用、2 轮、4968 tokens，最终状态为 `run.completed`。普通测试默认跳过此付费测试，只有显式执行 `test:m4-live` 才会调用真实模型。
+该次运行共 2 次工具调用、2 轮、4968 tokens，最终状态为 `run.completed`。这证明旧资源解析链路可用，但额外 reference 轮次不代表成功标准；普通 Skill 现在默认直接使用核心规则，只有明确条件成立才读取具体 reference。普通测试默认跳过此付费测试，只有显式执行 `test:m4-live` 才会调用真实模型。
 
 桌面人工验收覆盖全部 10 个迁移 Skill：`demo-code`、`drawio-diagram`、`gap-analysis`、`glossary`、`meeting-notes`、`presentation`、`report-outline`、`requirement-analysis`、`solution-design`、`test-plan`。同输入对比未发现相对旧 prompt 的明显结构或质量退化；目录热加载、管理页导入导出和典型场景的一次性交办均通过。验收中发现模型会猜测不存在的 `examples/` 目录，收口时已改为只向模型列出实际打包的资源文件，并将目录读取明确归类为可恢复的 `invalid_input`，不再误报工作区越界。
 
@@ -110,7 +110,7 @@ M4-10 的拆分原则见 [skill-format.md §7](../specs/skill-format.md)：把"�
 
 | 风险 | 应对 |
 |---|---|
-| 模型不主动读 `reference/` | SKILL.md 正文里显式写"第一步：读取 reference/xxx.md"；在 M4-15 中作为验收用例 |
+| 模型不主动读 `reference/` | 仅在任务条件需要时读取具体 reference；不要把“第一步读取”作为验收指标 |
 | 迁移后 Skill 效果不如从前 | 迁移一个验证一个，用同样的输入对比产出；不要 10 个一起改完再测 |
 | Web 端降级路径遗漏 | M4-15 中包含 Web 端用例 |
 | Skill 目录结构约定与生态不一致 | 采用通用 frontmatter 约定，不自创字段名 |
@@ -129,7 +129,7 @@ M4-10 的拆分原则见 [skill-format.md §7](../specs/skill-format.md)：把"�
 | 门禁 | 结果 |
 |---|---|
 | `vitest run` | ✅ 48 个测试文件、291 项测试通过；M4/M1 联网 suite 按设计跳过 |
-| M4 真实模型验收 | ✅ `deepseek-v4-flash`，2 次 reference 读取、2 轮、4968 tokens |
+| M4 真实模型验收（历史） | ✅ `deepseek-v4-flash`，2 次 reference 读取、2 轮、4968 tokens；不作为 M4-R 性能门禁 |
 | 桌面 GUI Demo | ✅ 热加载、管理页、10 个内置 Skill 与一次性交办人工验收通过 |
 | `eslint .` | ✅ 0 错误 0 警告 |
 | `tsc -b && vite build` | ✅ 生产构建成功 |

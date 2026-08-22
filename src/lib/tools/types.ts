@@ -9,7 +9,7 @@ import type { WorkspaceHandle } from '../workspace/types'
 import type { MemoryState } from '../memory/types'
 import type { Settings, PermissionMap, Platform } from '../harness/types'
 import type { RunLogger } from '../harness/types'
-import type { SkillResourceResolver } from '../skills/types'
+import type { SkillRegistryApi, SkillResourceResolver } from '../skills/types'
 import type { AttachmentResource } from '../attachments/types'
 
 // ============================================================================
@@ -110,6 +110,8 @@ export interface ToolUseContext {
   readonly logger: RunLogger              // Write to run ledger
   /** Read-only resources for the currently selected Skill. */
   readonly skillResources?: SkillResourceResolver
+  /** Trusted registry used by the runtime-only activate_skill tool. */
+  readonly skillRegistry?: SkillRegistryApi
   /** User attachments explicitly associated with the current run. */
   readonly attachments?: readonly AttachmentResource[]
   /** Current conversation, exposed only for recoverable tool-input repairs. */
@@ -184,6 +186,8 @@ export interface ResolveContext {
   skillAllowedTools?: string[]  // From SKILL.md frontmatter
   /** A selected Skill with no declaration receives the default read-only set. */
   skillActive?: boolean
+  /** Unselected canonical Skill runs expose only discovery/read tools until activation. */
+  minimalUnselected?: boolean
   /** Allows read_file to expose only the selected Skill's bundled virtual root on Web. */
   skillResourceAccess?: boolean
   /** The run carries user attachments, which unlocks the attachment readers. */

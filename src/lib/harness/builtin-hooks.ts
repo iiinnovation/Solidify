@@ -5,9 +5,9 @@ import { HookManager, type GuardDecision } from './hooks'
 import { RunLedger } from './ledger'
 import { PolicyEngine, type PolicyInput, type PermissionDecision } from './policy'
 import { approvalResponder } from './approval-channel'
-import { builtinSkills } from '../skills'
 import { formatSkillIndex } from '../skills/registry'
 import type { SkillRegistryApi } from '../skills/types'
+import { compiledBuiltinSkills } from '../skills/generated/manifest'
 import { prefetchMemory } from '../memory'
 
 export interface HarnessRuntimeOptions {
@@ -40,7 +40,7 @@ export function createHarnessRuntime(ctx: QueryContext, options: HarnessRuntimeO
     },
   })
   const hooks = new HookManager()
-  hooks.register({ id: 'injectEnvironment', type: 'before_query', mode: 'waterfall', priority: 10, handler: (value: unknown) => ({ action: 'continue' as const, value: appendQueryContext(value, `Environment: cwd=${ctx.cwd}; platform=${ctx.platform ?? 'web'}; time=${new Date().toISOString()}`) }) })
+  hooks.register({ id: 'injectEnvironment', type: 'before_query', mode: 'waterfall', priority: 10, handler: (value: unknown) => ({ action: 'continue' as const, value: appendQueryContext(value, `Environment: cwd=${ctx.cwd}; platform=${ctx.platform ?? 'web'}`) }) })
   hooks.register({ id: 'prepareRunContext', type: 'before_query', mode: 'waterfall', priority: 15, handler: async (value: unknown) => {
     // Memory retrieval and Skill indexing are independent I/O. Preparing them
     // together removes an avoidable serial wait before the first model call.
@@ -48,11 +48,17 @@ export function createHarnessRuntime(ctx: QueryContext, options: HarnessRuntimeO
       console.warn('[harness] Workspace memory prefetch failed, continuing without it:', error)
       return null
     })
-    const skillIndexPromise = options.skillRegistry
-      ? options.skillRegistry.list().then((skills) => formatSkillIndex(skills))
-      : Promise.resolve(formatSkillIndex(builtinSkills.map((skill) => ({ name: skill.id, displayName: skill.name, version: '1.0.0', description: skill.description }))))
+    const skillIndexPromise = ctx.skill
+      ? Promise.resolve('')
+      : options.skillRegistry
+        ? options.skillRegistry.list().then((skills) => formatSkillIndex(skills, undefined, { includePaths: false }))
+        : Promise.resolve(formatSkillIndex(
+          compiledBuiltinSkills.map((skill) => skill.metadata),
+          undefined,
+          { includePaths: false },
+        ))
     const [memoryContext, index] = await Promise.all([memoryPromise, skillIndexPromise])
-    const withIndex = appendQueryContext(value, index)
+    const withIndex = index ? appendQueryContext(value, index) : value
     if (!memoryContext || !isRecord(withIndex)) return { action: 'continue' as const, value: withIndex }
     // Retrieved file text remains user-role context; it must never enter the
     // trusted system-prompt context array.

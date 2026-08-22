@@ -5,7 +5,7 @@
 
 ## 1. 从字符串到目录
 
-现状（`src/lib/skills.ts`）：一个 Skill 就是一个 `systemPrompt` 字符串，全部内容一次性塞进上下文。
+历史实现（`src/lib/skills.ts`）：一个 Skill 曾经是一个 `systemPrompt` 字符串，全部内容一次性塞进上下文；目录 Skill 和静态 manifest 现在是默认事实来源，旧文件仅在兼容窗口保留。
 
 目标：Skill 是一个目录，内容按需加载。
 
@@ -90,18 +90,19 @@ recommended-models: [claude-sonnet-4, deepseek-chat]
 
 ### 第 1 层怎么触发
 
-「被选中」有两条路径，都发生在运行开始之前：
+当前运行时有三条路径：
 
-1. **手选**：用户在输入框用 `/` 从技能面板挑一个。
-2. **自动路由**：用户没手选时，`skills/auto-route.ts` 用一次极小的分类调用
-   （温度 0、24 token 上限、8 秒超时）把消息判给某个 Skill 或判为「不启用」。
-   可在 Skill 管理页关闭，默认开启。
+1. **手选**：用户在输入框用 `/` 从技能面板挑一个。请求直接绑定该 Skill，跳过全量
+   Skill 索引和远程路由调用。
+2. **高置信本地路由**：对“制作 PPT”“生成架构图”“输出需求规格”等明确交付请求，
+   `skills/auto-route.ts` 只在强规则命中且未被用户禁用时本地选择，不产生 provider 调用。
+3. **运行中激活**：普通请求由同一 Agent 回合决定是否调用 `activate_skill`。激活后
+   引擎重新计算该 Skill 的工具白名单和资源解析器，并在下一轮继续；激活事件进入同一
+   运行事件流。旧的远程自动路由仅作为显式设置开启的兼容/回滚路径。
 
-**为什么不让模型在循环里自己读 SKILL.md 来激活。** 一个 Skill 不只是提示词：
-它的 `allowed-tools` 白名单和资源解析器是在 `createChatQueryContext` 构建运行
-上下文时挂上去的（见 engine/chat-context.ts、engine/pptd-context.ts）。模型在
-循环中途读到 SKILL.md 正文，也拿不到这个 Skill 依赖的工具——例如 `pptd-deck`
-的 `generate_pptd`。所以选择必须先于上下文构建完成。
+**为什么不能只让模型在循环里读取 SKILL.md。** 一个 Skill 不只是提示词：它的
+`allowed-tools` 白名单和资源解析器需要由运行时重新绑定。因此 `activate_skill` 是受
+注册表约束的运行时事件，而不是任意文件读取。
 
 同理，`read_file` 对 `.solidify/skills/...` 的访问由当前已选 Skill 的资源解析器
 授权；没有已选 Skill 时这些路径一律拒绝，第 0 层索引里的路径提示只对已激活的
@@ -158,7 +159,7 @@ const available = registry.resolve({
 
 ## 7. 迁移现有 10 个 Skill
 
-现有内容在 `src/lib/skills.ts`，每个 Skill 的 `systemPrompt` 里其实已经混杂了三种内容，迁移时要拆开：
+历史内容在 `src/lib/skills.ts`，每个 Skill 的 `systemPrompt` 里曾混杂三种内容；迁移时拆开：
 
 | 原 systemPrompt 中的内容 | 迁移去向 |
 |---|---|
@@ -179,11 +180,18 @@ meeting-notes  report-outline  glossary  presentation  drawio-diagram
 
 ## 8. 用户自定义 Skill
 
-现状是 localStorage（`src/stores/skill-store.ts`）。M4 迁移到 `~/.solidify/skills/`。
+历史存储是 localStorage（`src/stores/skill-store.ts`）。M4-R 启动时通过一次性迁移器写入 `~/.solidify/skills/`，迁移失败保留原数据；迁移成功后旧 store 立即只读。兼容窗口需在聚合遥测连续干净观察后显式调用 `finalizeSkillMigrationWindow()`，再进入旧 fallback 删除阶段。
 
 - 提供一次性迁移：读 localStorage → 写成目录 → 标记已迁移
+- 启动期间的并发迁移请求共享同一个进行中的 Promise；部分写入后重试会识别已迁移目录，不创建重复后缀目录
 - UI 上「新建 Skill」创建目录并打开编辑器
 - 支持把一个 Skill 目录导出为 zip，以及导入
+
+迁移窗口验证步骤：
+
+1. 启用目录式 Skill 并完成一次启动，确认自定义 Skill 已出现在目录式 Skill 管理页；原 `solidify-custom-skills` 数据仍保留。
+2. 在不改动旧 Skill 数据的前提下，再完整启动应用两次；设置页应显示 `2/2` 次干净启动观察。
+3. 仅当设置页出现“关闭旧运行时兼容窗口”按钮时点击它。按钮不可见或迁移状态为错误/延迟时，不得手动删除旧数据或关闭兼容窗口。
 
 ## 9. 版本与兼容
 
@@ -198,6 +206,7 @@ Web 端无文件系统：
 - 内置 Skill 打包进 bundle，由 `SkillResourceResolver` 把虚拟路径映射到内存内容
 - 用户级/项目级 Skill 不可用
 - 选中内置 Skill 时仅开放 `read_file` 读取当前 Skill 的虚拟根；普通工作区路径和其他 Skill 根仍拒绝
+- 未选 Skill 的 canonical 运行只暴露发现/只读工具；`activate_skill` 成功后才按白名单重建专用工具集
 - 第 2 层继续由模型按需读取，不直接注入 system prompt
 
 ## 11. 验收测试
@@ -206,7 +215,7 @@ Web 端无文件系统：
 |---|---|
 | 拖入一个 Skill 目录到 `~/.solidify/skills/` | 命令面板中出现，无需重启 |
 | 未选中任何 Skill 时提问 | 上下文中只有 Skill 索引（< 600 token），无正文 |
-| 选中 PPTD Skill 后要求做 PPT | 模型主动 `read_file` 读取 `reference/pptd.md` |
+| 选中 PPTD Skill 后要求做 PPT | 普通生成直接调用 `generate_pptd`；只有明确检查/编辑规范时才读取对应 reference |
 | Skill 声明 `allowed-tools: [read_file]` 后要求写文件 | 模型看不到 `write_file`，不会尝试调用 |
 | 项目级与用户级同名 Skill | 项目级生效 |
 | SKILL.md frontmatter 缺 `description` | 加载失败并给出明确错误，不静默忽略 |

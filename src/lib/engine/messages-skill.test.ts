@@ -20,7 +20,7 @@ describe('skill prompt assembly', () => {
     expect(result.messages).toEqual([{ role: 'user', content: 'Create an outline' }])
   })
 
-  it('defines the slides artifact contract in the base prompt', async () => {
+  it('does not describe unavailable slide tooling in the base prompt', async () => {
     const ctx = {
       messages: [{ role: 'user', content: 'Create slides' }],
       tools: [],
@@ -28,8 +28,7 @@ describe('skill prompt assembly', () => {
     } as unknown as QueryContext
 
     const result = await buildMessages(ctx)
-    expect(result.system).toContain('For type="slides"')
-    expect(result.system).toContain('generate_pptd')
-    expect(result.system).toContain('Never emit the retired {"slides": [...]} format')
+    expect(result.system).not.toContain('For type="slides"')
+    expect(result.system).not.toContain('generate_pptd')
   })
 })

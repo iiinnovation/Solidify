@@ -18,8 +18,8 @@ import {
   useIncrementTemplateUsage,
 } from '@/hooks/use-templates'
 import type { Template } from '@/lib/api/types'
-import { builtinSkills } from '@/lib/skills'
 import { useUIStore } from '@/stores/ui-store'
+import { useSkillRegistry } from '@/hooks/use-skill-registry'
 
 export function TemplatesPage() {
   const navigate = useNavigate()
@@ -30,6 +30,7 @@ export function TemplatesPage() {
   const [usingTemplate, setUsingTemplate] = useState<Template | null>(null)
   const [skillFilter, setSkillFilter] = useState<string>('')
   const [showPublicOnly, setShowPublicOnly] = useState(false)
+  const { skills } = useSkillRegistry()
 
   const { data: templates = [], isLoading } = useTemplates({
     skill_id: skillFilter || undefined,
@@ -126,9 +127,9 @@ export function TemplatesPage() {
               className="px-3 py-1.5 border rounded-lg text-sm"
             >
               <option value="">所有技能</option>
-              {builtinSkills.map((skill) => (
-                <option key={skill.id} value={skill.id}>
-                  {skill.name}
+              {skills.map((skill) => (
+                <option key={skill.name} value={skill.name}>
+                  {skill.displayName ?? skill.name}
                 </option>
               ))}
             </select>

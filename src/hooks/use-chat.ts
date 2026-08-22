@@ -10,7 +10,7 @@ import { isEnabled } from '@/lib/harness/flags'
 import { runQuery } from '@/lib/engine/query'
 import { applyRunEvent, createRunState } from '@/lib/engine/run-state'
 import { createChatQueryContext, loadChatSkillRuntime } from '@/lib/engine/chat-context'
-import { createSkillRouteModelCaller, routeSkill } from '@/lib/skills/auto-route'
+import { createSkillRouteModelCaller, routeSkill, routeSkillLocally } from '@/lib/skills/auto-route'
 import { isSkillAutoRouteEnabled } from '@/lib/skills/settings'
 import type { SkillMetadata } from '@/lib/skills/types'
 import type { QueryEvent } from '@/lib/engine/types'
@@ -21,7 +21,7 @@ import { attachmentMediaPath, loadAttachmentMedia, saveAttachmentMedia } from '@
 import { useSkillStore } from '@/stores/skill-store'
 import { deriveArtifactPath, materializeArtifact, normalizeArtifactPath, normalizeArtifactType } from '@/lib/workspace/materialize'
 import { isTauri } from '@/lib/tauri'
-import { createAttachmentResourceId, formatAttachmentManifest, type AttachmentResource } from '@/lib/attachments/types'
+import { buildAttachmentEvidencePack, chooseAttachmentContextMode, createAttachmentResourceId, formatAttachmentManifest, formatInlineAttachments, type AttachmentResource } from '@/lib/attachments/types'
 import { loadAttachmentResource, loadAttachmentResources, saveAttachmentResource } from '@/lib/attachments/store'
 
 function genId() {
@@ -329,7 +329,12 @@ export function useChat(conversationId?: string) {
       streamConversationRef.current = currentConvId
 
       const skillObj = skillId
-        ? { id: skillId, name: skillName || useSkillStore.getState().getAllSkills().find((s) => s.id === skillId)?.name || skillId }
+        ? {
+            id: skillId,
+            name: skillName || (isEnabled('skillV2')
+              ? skillId
+              : useSkillStore.getState().getAllSkills().find((s) => s.id === skillId)?.name || skillId),
+          }
         : (skillSystemPrompt ? { id: 'custom', name: '自定义技能' } : undefined)
 
       const userMessageId = genId()
@@ -356,8 +361,16 @@ export function useChat(conversationId?: string) {
           recoverable: a.recoverable,
         }))
       }
+      const initialRunId = resume?.assistantMessage.agentRun?.runId ?? newId('run')
+      const initialPhase: QueryEvent = {
+        type: 'run.phase',
+        phase: composerAttachments?.length ? 'preparing_attachments' : (!skillId && isEnabled('skillV2') ? 'selecting_skill' : 'generating'),
+      }
       const assistantMsg: Message = resume?.assistantMessage
-        ?? { id: genId(), role: 'assistant', content: '' }
+        ?? {
+          id: genId(), role: 'assistant', content: '',
+          ...(isEnabled('agentLoop') ? { agentRun: applyRunEvent(createRunState(initialRunId), initialPhase) } : {}),
+        }
       setIsStreaming(true)
       const abortController = new AbortController()
       abortRef.current = abortController
@@ -418,12 +431,12 @@ export function useChat(conversationId?: string) {
               // scan already started for skillRuntimePromise.
               const runtime = await loadChatSkillRuntime({ workspaceRoot: preloadWorkspaceRoot })
               const skills = await runtime.registry.list()
-              const routed = await routeSkill({
-                message: content,
-                skills,
-                callModel: createSkillRouteModelCaller(activeProvider),
-                signal: abortController.signal,
-              })
+              const routed = routeSkillLocally(content, skills) ?? await routeSkill({
+                  message: content,
+                  skills,
+                  callModel: createSkillRouteModelCaller(activeProvider),
+                  signal: abortController.signal,
+                })
               return routed ? skills.find((skill) => skill.name === routed) : undefined
             } catch (error) {
               console.warn('[skills] Auto-routing failed; continuing without a Skill:', error)
@@ -644,10 +657,29 @@ ${result.content}
       const canReadAttachments = isEnabled('agentLoop')
         && isEnabled('toolCalling')
         && activeProvider.supportsTools !== false
+      const attachmentMode = chooseAttachmentContextMode({
+        resources: attachmentResources,
+        userContent: content,
+        contextWindow: activeProvider.contextWindow,
+        reservedTokens: Math.ceil(messages.reduce((sum, message) => {
+          return sum + message.content.length / 3
+        }, 0)) + 4_000,
+      })
+      const shouldPrepareEvidence = attachmentMode === 'retrieval'
+        && canReadAttachments
+        && /(?:全文|完整阅读|通读|全部内容|基于全文|阅读附件)/i.test(content)
+        && !/(?:多轮|分步骤|分阶段|多个交付物|分别|逐个|持续)/i.test(content)
+      const evidencePack = shouldPrepareEvidence
+        ? buildAttachmentEvidencePack(attachmentResources, undefined, 16_000)
+        : undefined
       const attachmentContext = attachmentResources.length > 0
-        ? `\n\n${formatAttachmentManifest(attachmentResources)}\n\n${canReadAttachments
-          ? '附件正文不会自动展开；需要时请使用 search_attachments 和 read_attachment 按需读取。'
-          : '当前为兼容聊天模式，只提供附件的有限预览；如需分段读取，请启用 Agent 模式。'}`
+        ? attachmentMode === 'inline'
+          ? formatInlineAttachments(attachmentResources)
+          : `\n\n${formatAttachmentManifest(attachmentResources, evidencePack ? { includePreview: false } : undefined)}${evidencePack
+            ? `\n\n<attachment_evidence_pack>\n${evidencePack.content}\n</attachment_evidence_pack>`
+            : ''}\n\n${canReadAttachments
+            ? '附件正文不会自动展开；完整阅读时优先使用 prepare_attachment_evidence，一次准备证据包；需要时再用 search_attachments 和 read_attachment 定位缺口。'
+            : '当前为兼容聊天模式，只提供附件的有限预览；如需分段读取，请启用 Agent 模式。'}`
         : ''
       let enrichedContent = `${content}${attachmentContext}`
 
@@ -879,7 +911,7 @@ ${result.content}
         }
 
         {
-          const runId = assistantMsg.agentRun?.runId ?? newId('run')
+          const runId = assistantMsg.agentRun?.runId ?? initialRunId
           let run = assistantMsg.agentRun
             ? {
                 ...assistantMsg.agentRun,
@@ -928,6 +960,7 @@ ${result.content}
             skillRegistry: skillRuntime?.registry,
             pptdMedia,
             attachments: attachmentResources,
+            attachmentMode,
             workspaceRoot: agentContext.workspaceRoot,
             restoreSnapshot: Boolean(resume),
           })
@@ -966,7 +999,7 @@ ${result.content}
               // the text is already accumulated into `run.text` by applyRunEvent.
               // Persisting them grew runEvents without bound and made every patch
               // copy an ever-larger array into localStorage.
-              const isDurableFact = event.type !== 'tool.progress' && event.type !== 'model.progress'
+              const isDurableFact = event.type !== 'tool.progress' && event.type !== 'model.progress' && event.type !== 'run.phase'
               if (isDurableFact) runEvents.push(event)
               const pptdPreview = getPptdProgressPreview(event)
               const reducedEvent = pptdPreview && event.type === 'tool.progress'
@@ -1209,7 +1242,7 @@ ${result.content}
     const { setComposerDraft } = useUIStore.getState()
     let draftSkill = null
     if (targetUserMsg.skill) {
-      const allSkills = useSkillStore.getState().getAllSkills()
+      const allSkills = isEnabled('skillV2') ? [] : useSkillStore.getState().getAllSkills()
       draftSkill = allSkills.find((s) => s.id === targetUserMsg.skill?.id) ?? {
         id: targetUserMsg.skill.id,
         name: targetUserMsg.skill.name,

@@ -3,6 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest'
+import OpenAI from 'openai'
 import { OpenAIProvider } from '../openai'
 import { AnthropicProvider } from '../anthropic'
 import { ProviderTransportError } from '../provider-transport'
@@ -80,6 +81,21 @@ describe('OpenAIProvider', () => {
     expect(events.at(-1)).toMatchObject({
       type: 'error',
       error: { code: 'network', type: 'network', message: diagnostic },
+    })
+  })
+
+  it('marks gateway 5xx HTML responses as retryable upstream failures', async () => {
+    const gateway = new OpenAI.APIError(504, undefined, '<html>Gateway time-out</html>', undefined)
+    Object.defineProperty(provider, 'client', {
+      value: {
+        chat: { completions: { create: async () => { throw gateway } } },
+      },
+    })
+
+    const events = await collectStream(provider)
+    expect(events.at(-1)).toMatchObject({
+      type: 'error',
+      error: { code: '504', type: 'api_error', retryable: true },
     })
   })
 
@@ -217,6 +233,36 @@ describe('OpenAIProvider', () => {
       role: 'user',
       content: [{ type: 'text', text: 'hi' }],
     })
+  })
+
+  it('passes the stable prefix key to OpenAI-compatible prompt caching', async () => {
+    let captured: unknown
+    async function* response() {
+      yield { choices: [{ delta: { content: 'ok' }, finish_reason: 'stop' }] }
+      yield { choices: [], usage: { prompt_tokens: 4, completion_tokens: 1, total_tokens: 5 } }
+    }
+    Object.defineProperty(provider, 'client', {
+      value: {
+        chat: {
+          completions: {
+            create: async (params: unknown) => {
+              captured = params
+              return response()
+            },
+          },
+        },
+      },
+    })
+
+    for await (const _event of provider.stream({
+      model: 'test-model',
+      system: 'stable system',
+      messages: [{ role: 'user', content: 'hello' }],
+      stream: true,
+      promptCache: { key: 'ctx-test', system: true, tools: false },
+    })) { /* drain */ }
+
+    expect(captured).toMatchObject({ prompt_cache_key: 'ctx-test' })
   })
 
   it('emits tool_call_end even if finish_reason is stop or missing', async () => {

@@ -90,6 +90,23 @@ describe('read_handle', () => {
     expect(result.content).toContain('实际句柄')
   })
 
+  it('stops a repeated handle page and points to the next offset', async () => {
+    const memory = new InMemoryState()
+    const handle = await memory.store('large PPT source')
+    const result = await readHandleTool.execute(
+      { handle, offset: 0 },
+      context(memory, [
+        { role: 'assistant', content: [{ type: 'tool_use', id: 'read-1', name: 'read_handle', input: { handle, offset: 0 } }] },
+        { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'read-1', content: 'first page\n\n[分页提示] 当前已读取 offset=0；请继续调用 read_handle 并使用 offset=10。' }] },
+      ]),
+      new AbortController().signal,
+    )
+
+    expect(result.success).toBe(false)
+    expect(result.error?.kind).toBe('loop_detected')
+    expect(result.content).toContain('offset=10')
+  })
+
   it('keeps multibyte chunks below the handleization byte threshold', async () => {
     const memory = new InMemoryState()
     const handle = await memory.store('甲'.repeat(9000))

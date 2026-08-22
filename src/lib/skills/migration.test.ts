@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import type { Skill } from '@/lib/skills'
-import { migrateCustomSkills } from './migration'
+import { finalizeSkillMigrationWindow, getSkillMigrationWindowStatus, isLegacySkillRuntimeRetired, isLegacySkillStoreWriteAllowed, migrateCustomSkills, migrateStoredCustomSkills, readSkillMigrationTelemetry, SKILL_MIGRATION_MARKER, SKILL_MIGRATION_OBSERVATION_SESSION_KEY, SKILL_MIGRATION_TELEMETRY_KEY, SKILL_RUNTIME_RETIRED_MARKER } from './migration'
 
 const skill: Skill = {
   id: 'skill-custom-123',
@@ -13,6 +13,117 @@ const skill: Skill = {
 }
 
 describe('custom Skill migration', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    sessionStorage.removeItem(SKILL_MIGRATION_OBSERVATION_SESSION_KEY)
+  })
+
+  it('closes the legacy store write boundary only after the migration marker', () => {
+    localStorage.removeItem(SKILL_MIGRATION_MARKER)
+    try {
+      expect(isLegacySkillStoreWriteAllowed()).toBe(true)
+      localStorage.setItem(SKILL_MIGRATION_MARKER, 'true')
+      expect(isLegacySkillStoreWriteAllowed()).toBe(false)
+    } finally {
+      localStorage.removeItem(SKILL_MIGRATION_MARKER)
+    }
+  })
+
+  it('validates aggregate migration telemetry without retaining Skill bodies', () => {
+    localStorage.setItem(SKILL_MIGRATION_TELEMETRY_KEY, JSON.stringify({
+      version: 1,
+      attempts: 2,
+      observations: 2,
+      migrated: 3,
+      skipped: 1,
+      errors: 0,
+      deferred: 1,
+      lastStatus: 'deferred',
+      lastAt: '2026-08-22T00:00:00.000Z',
+    }))
+    expect(readSkillMigrationTelemetry()).toMatchObject({ attempts: 2, migrated: 3, lastStatus: 'deferred' })
+    localStorage.setItem(SKILL_MIGRATION_TELEMETRY_KEY, '{bad json')
+    expect(readSkillMigrationTelemetry()).toBeNull()
+    localStorage.removeItem(SKILL_MIGRATION_TELEMETRY_KEY)
+  })
+
+  it('upgrades telemetry written before the observation counter existed', () => {
+    localStorage.setItem(SKILL_MIGRATION_TELEMETRY_KEY, JSON.stringify({
+      version: 1, attempts: 1, migrated: 1, skipped: 0, errors: 0, deferred: 0,
+      lastStatus: 'completed', lastAt: '2026-08-22T00:00:00.000Z',
+    }))
+    expect(readSkillMigrationTelemetry()).toMatchObject({ observations: 0 })
+    localStorage.removeItem(SKILL_MIGRATION_TELEMETRY_KEY)
+  })
+
+  it('retires the legacy runtime only after clean repeated observations', () => {
+    localStorage.removeItem(SKILL_RUNTIME_RETIRED_MARKER)
+    localStorage.setItem(SKILL_MIGRATION_MARKER, 'true')
+    localStorage.setItem(SKILL_MIGRATION_TELEMETRY_KEY, JSON.stringify({
+      version: 1, attempts: 1, observations: 1, migrated: 1, skipped: 0, errors: 0, deferred: 0,
+      lastStatus: 'completed', lastAt: '2026-08-22T00:00:00.000Z',
+    }))
+    expect(finalizeSkillMigrationWindow()).toBe(false)
+    localStorage.setItem(SKILL_MIGRATION_TELEMETRY_KEY, JSON.stringify({
+      version: 1, attempts: 1, observations: 2, migrated: 1, skipped: 0, errors: 0, deferred: 0,
+      lastStatus: 'completed', lastAt: '2026-08-22T00:00:00.000Z',
+    }))
+    expect(finalizeSkillMigrationWindow()).toBe(true)
+    expect(isLegacySkillRuntimeRetired()).toBe(true)
+    localStorage.removeItem(SKILL_RUNTIME_RETIRED_MARKER)
+    localStorage.removeItem(SKILL_MIGRATION_MARKER)
+    localStorage.removeItem(SKILL_MIGRATION_TELEMETRY_KEY)
+  })
+
+  it('reports each migration-window gate without mutating storage', () => {
+    localStorage.clear()
+    expect(getSkillMigrationWindowStatus()).toMatchObject({ readyToFinalize: false, reason: 'not-migrated' })
+    localStorage.setItem(SKILL_MIGRATION_MARKER, 'true')
+    localStorage.setItem(SKILL_MIGRATION_TELEMETRY_KEY, JSON.stringify({
+      version: 1, attempts: 1, observations: 1, migrated: 1, skipped: 0, errors: 0, deferred: 0,
+      lastStatus: 'completed', lastAt: '2026-08-22T00:00:00.000Z',
+    }))
+    expect(getSkillMigrationWindowStatus()).toMatchObject({ migrated: true, observations: 1, reason: 'insufficient-observations' })
+    localStorage.setItem(SKILL_MIGRATION_TELEMETRY_KEY, JSON.stringify({
+      version: 1, attempts: 1, observations: 2, migrated: 1, skipped: 0, errors: 1, deferred: 0,
+      lastStatus: 'failed', lastAt: '2026-08-22T00:00:00.000Z',
+    }))
+    expect(getSkillMigrationWindowStatus()).toMatchObject({ readyToFinalize: false, reason: 'unclean' })
+    expect(localStorage.getItem(SKILL_RUNTIME_RETIRED_MARKER)).toBeNull()
+    localStorage.clear()
+  })
+
+  it('records at most one clean observation per application session', async () => {
+    localStorage.setItem(SKILL_MIGRATION_MARKER, 'true')
+    localStorage.setItem(SKILL_MIGRATION_TELEMETRY_KEY, JSON.stringify({
+      version: 1, attempts: 1, observations: 0, migrated: 1, skipped: 0, errors: 0, deferred: 0,
+      lastStatus: 'completed', lastAt: '2026-08-22T00:00:00.000Z',
+    }))
+    await migrateStoredCustomSkills()
+    await migrateStoredCustomSkills()
+    expect(readSkillMigrationTelemetry()).toMatchObject({ observations: 1 })
+    localStorage.clear()
+  })
+
+  it('backfills telemetry when an older build left only the migration marker', async () => {
+    localStorage.setItem(SKILL_MIGRATION_MARKER, 'true')
+    localStorage.removeItem(SKILL_MIGRATION_TELEMETRY_KEY)
+    // This test intentionally runs after the session-count test in a fresh
+    // module instance in the normal Vitest file isolation.
+    await migrateStoredCustomSkills()
+    expect(readSkillMigrationTelemetry()).toMatchObject({ observations: 1, lastStatus: 'completed' })
+    localStorage.clear()
+  })
+
+  it('shares concurrent startup migration calls', async () => {
+    localStorage.clear()
+    const first = migrateStoredCustomSkills()
+    const second = migrateStoredCustomSkills()
+    expect(first).toBe(second)
+    await expect(first).resolves.toMatchObject({ migrated: [], skipped: [], errors: [] })
+    localStorage.clear()
+  })
+
   it('writes a SKILL.md directory and preserves the legacy id', async () => {
     const files = new Map<string, string>()
     const result = await migrateCustomSkills([skill], '/home/.solidify/skills', {
@@ -74,5 +185,20 @@ describe('custom Skill migration', () => {
     expect(result.errors).toEqual([])
     expect(files.has('/skills/skill-custom-123/SKILL.md')).toBe(false)
     expect(files.get('/skills/skill-custom-123-2/SKILL.md')).toContain('name: skill-custom-123-2')
+  })
+
+  it('retries a partially migrated Skill idempotently instead of creating a duplicate', async () => {
+    const files = new Map<string, string>([
+      ['/skills/skill-custom-123/SKILL.md', '---\nname: skill-custom-123\nlegacy-id: "skill-custom-123"\nversion: 1.0.0\ndescription: "整理客户需求"\n---\n\n先读取材料，再输出需求文档。\n'],
+    ])
+    const result = await migrateCustomSkills([skill], '/skills', {
+      exists: async (path) => path === '/skills/skill-custom-123',
+      readFile: async (path) => files.get(path) ?? (() => { throw new Error('missing') })(),
+      mkdir: async () => undefined,
+      writeFile: async (path, content) => { files.set(path, content) },
+    })
+
+    expect(result).toEqual({ migrated: [skill.id], skipped: [], errors: [] })
+    expect([...files.keys()]).toEqual(['/skills/skill-custom-123/SKILL.md'])
   })
 })

@@ -91,4 +91,24 @@ describe('DrawioRenderer streaming updates', () => {
     expect(view.container.textContent).not.toContain('本地预览不可用')
     expect([...view.container.querySelectorAll('text')].map((item) => item.textContent)).toContain('输入 & 校验')
   })
+
+  it('renders labels stored in the newer mxLabel child format', () => {
+    const content = `<mxfile><diagram><mxGraphModel><root>
+      <mxCell id="0"/><mxCell id="1" parent="0"/>
+      <mxCell id="node" style="rounded=1;fillColor=#DBEAFE;strokeColor=#1E40AF;" vertex="1" parent="1">
+        <mxGeometry x="20" y="20" width="240" height="80" as="geometry"/>
+        <mxLabel label="政务·数字审计 AI 综合场景建设技术架构" label1="基础设施与数据支撑层" label2="模型服务层"/>
+      </mxCell>
+    </root></mxGraphModel></diagram></mxfile>`
+
+    const view = render(<DrawioRenderer content={content} streaming={false} />)
+    expect([...view.container.querySelectorAll('text')].map((item) => item.textContent))
+      .toContain('政务·数字审计 AI 综合场景建设技术架构')
+  })
+
+  it('does not expose partial Draw.io XML as a code block while streaming', () => {
+    const view = render(<DrawioRenderer content="<mxfile><diagram>" streaming />)
+    expect(view.container.querySelector('pre')).toBeNull()
+    expect(view.container.textContent).toContain('正在解析 Draw.io 图形结构')
+  })
 })

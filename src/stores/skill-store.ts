@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { builtinSkills, type Skill } from '@/lib/skills'
+import { isLegacySkillStoreWriteAllowed } from '@/lib/skills/migration'
 
 export interface CustomSkill extends Skill {
   isCustom: true
@@ -31,6 +32,7 @@ export const useSkillStore = create<SkillState>()(
 
       addSkill: (skill) => {
         const id = genId()
+        if (!isLegacySkillStoreWriteAllowed()) return id
         const newSkill: CustomSkill = { ...skill, id, isCustom: true }
         set((state) => ({
           customSkills: [...state.customSkills, newSkill],
@@ -39,6 +41,7 @@ export const useSkillStore = create<SkillState>()(
       },
 
       updateSkill: (id, updates) => {
+        if (!isLegacySkillStoreWriteAllowed()) return
         set((state) => ({
           customSkills: state.customSkills.map((s) =>
             s.id === id ? { ...s, ...updates } : s,
@@ -47,12 +50,16 @@ export const useSkillStore = create<SkillState>()(
       },
 
       removeSkill: (id) => {
+        if (!isLegacySkillStoreWriteAllowed()) return
         set((state) => ({
           customSkills: state.customSkills.filter((s) => s.id !== id),
         }))
       },
 
-      clearCustomSkills: () => set({ customSkills: [] }),
+      clearCustomSkills: () => {
+        if (!isLegacySkillStoreWriteAllowed()) return
+        set({ customSkills: [] })
+      },
 
       getAllSkills: () => {
         const { customSkills } = get()

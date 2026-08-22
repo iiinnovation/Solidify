@@ -1,4 +1,3 @@
-import { builtinSkills } from '@/lib/skills'
 import {
   isTauri,
   listenWorkspaceChanges,
@@ -36,12 +35,18 @@ export class SkillLoader {
   constructor(options: SkillLoaderOptions = {}) {
     this.options = options
     this.fileSystem = options.fileSystem ?? createTauriSkillFileSystem(options.workspaceRoot)
-    this.builtins = options.builtins ?? bundledOrLegacyBuiltinSkills()
+    this.builtins = options.builtins ?? loadBundledSkills()
     this.roots = buildRoots(options)
   }
 
   async load(): Promise<SkillLoadResult> {
     const errors: SkillLoadResult['errors'] = []
+    if (this.builtins.length === 0 && !this.options.builtins) {
+      errors.push({
+        path: 'builtin://manifest',
+        message: '内置 Skill bundle 为空；请先运行 compile:skills，禁止回退到旧 inline Skill。',
+      })
+    }
     const byName = new Map<string, LoadedSkill>()
     const builtinVersions = new Map(this.builtins.map((skill) => [skill.metadata.name, skill.metadata.version]))
 
@@ -224,32 +229,6 @@ function buildRoots(options: SkillLoaderOptions): SkillRoot[] {
   if (options.workspaceRoot) roots.push({ path: joinPath(options.workspaceRoot, '.solidify/skills'), source: 'project' })
   if (options.userSkillsRoot) roots.push({ path: options.userSkillsRoot, source: 'user' })
   return roots
-}
-
-function legacyBuiltinSkills(): LoadedSkill[] {
-  return builtinSkills.map((skill) => ({
-    metadata: {
-      name: skill.id,
-      version: '1.0.0',
-      description: skill.description,
-      displayName: skill.name,
-      icon: skill.icon,
-      placeholder: skill.placeholder,
-      skipConfirmation: skill.skipConfirmation,
-      recommendedModels: skill.recommendedModels,
-      source: 'builtin',
-      directory: `builtin://${skill.id}`,
-    },
-    content: skill.systemPrompt,
-    path: `builtin://${skill.id}/SKILL.md`,
-    source: 'builtin',
-    virtualRoot: virtualRootFor(skill.id),
-  }))
-}
-
-function bundledOrLegacyBuiltinSkills(): LoadedSkill[] {
-  const bundled = loadBundledSkills()
-  return bundled.length > 0 ? bundled : legacyBuiltinSkills()
 }
 
 function withVirtualRoot(skill: LoadedSkill): LoadedSkill {

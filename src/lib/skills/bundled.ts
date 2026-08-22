@@ -1,31 +1,26 @@
 import type { LoadedSkill } from './types'
-import { parseSkillDocument } from './parse'
-import { builtinSkills } from '@/lib/skills'
+import { compiledBuiltinSkills } from './generated/manifest'
 
 const documents = import.meta.glob('./builtin/*/SKILL.md', { eager: true, query: '?raw', import: 'default' }) as Record<string, string>
 const resources = import.meta.glob('./builtin/*/{reference,examples,assets}/**/*', { eager: true, query: '?raw', import: 'default' }) as Record<string, string>
 
-/** Parse bundled directories once; Vite embeds these for the Web fallback. */
+/** Load the generated bundled manifest; Vite embeds resource files for the Web fallback. */
 export function loadBundledSkills(): LoadedSkill[] {
-  return Object.entries(documents).flatMap(([file, content]) => {
-    const match = file.match(/^\.\/builtin\/([^/]+)\/SKILL\.md$/)
-    if (!match) return []
-    const name = match[1]
-    try {
-      const skill = parseSkillDocument(content, `builtin://${name}/SKILL.md`, 'builtin')
-      const legacyGuidance = builtinSkills.find((item) => item.id === name)?.systemPrompt
-      return [{
-        ...skill,
-        resourceFiles: {
-          'SKILL.md': content,
-          ...(legacyGuidance ? { 'reference/legacy-guidance.md': legacyGuidance } : {}),
-          ...collectResources(name),
-        },
-      }]
-    } catch (error) {
-      console.error(`[skills] Invalid bundled Skill ${name}:`, error)
-      return []
-    }
+  return compiledBuiltinSkills.flatMap((compiled) => {
+    const name = compiled.metadata.name
+    const content = documents[`./builtin/${name}/SKILL.md`]
+    if (!content) return []
+    return [{
+      metadata: compiled.metadata,
+      content: compiled.coreInstructions,
+      path: compiled.path,
+      source: 'builtin' as const,
+      virtualRoot: `.solidify/skills/${name}`,
+      resourceFiles: {
+        'SKILL.md': content,
+        ...collectResources(name),
+      },
+    }]
   })
 }
 

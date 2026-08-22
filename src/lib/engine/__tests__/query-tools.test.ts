@@ -394,6 +394,38 @@ describe('runQuery tool execution (M1-14/15)', () => {
     ]))
   })
 
+  it('exposes pagination metadata to the next model turn for handle reads', async () => {
+    const requests: CompletionRequest[] = []
+    const provider = makeMockProvider([
+      [
+        { type: 'tool_call_start', id: 'handle-1', name: 'read_handle' },
+        { type: 'tool_call_end', id: 'handle-1', input: { handle: 'handle-1' } },
+        { type: 'message_end', stopReason: 'tool_use' },
+      ],
+      finalTurn,
+    ], requests)
+    const reader: Tool = {
+      name: 'read_handle', description: 'read handle', inputSchema: { type: 'object' },
+      readOnly: true, concurrencySafe: true, destructive: false,
+      requiresConfirmation: false, availability: 'always', permissions: [],
+      async execute(): Promise<ToolResult> {
+        return { success: true, content: 'page', data: { offset: 0, nextOffset: 4, total: 8 } }
+      },
+      renderCall: () => 'read',
+    }
+
+    for await (const _event of runQuery(makeCtx(provider, [reader]))) {
+      // consume the run
+    }
+
+    const nextTurn = requests[1]
+    const lastContent = nextTurn.messages.at(-1)?.content
+    const toolResult = Array.isArray(lastContent)
+      ? lastContent.find((part) => part.type === 'tool_result')
+      : undefined
+    expect(toolResult).toMatchObject({ content: expect.stringContaining('offset=4') })
+  })
+
   it('runs read-only concurrency-safe tools in parallel', async () => {
     const trace: string[] = []
     const slowA = makeSlowReadTool('slow_a', 40, trace)

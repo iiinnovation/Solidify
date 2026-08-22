@@ -1,3 +1,5 @@
+import { isLegacySkillRuntimeRetired } from '@/lib/skills/migration'
+
 /**
  * 特性开关
  *
@@ -98,6 +100,9 @@ let cache: FeatureFlags | null = null
 export function getFlags(): FeatureFlags {
   if (!cache) {
     cache = { ...DEFAULT_FLAGS, ...readEnvOverrides(), ...readStorageOverrides() }
+    // An explicit migration-window close is irreversible for this install;
+    // do not let a stale local override resurrect the inline runtime.
+    if (isLegacySkillRuntimeRetired()) cache.skillV2 = true
     applyFeatureDependencies(cache)
   }
   return cache

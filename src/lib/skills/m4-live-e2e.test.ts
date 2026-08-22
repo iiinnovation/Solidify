@@ -25,7 +25,7 @@ const LIVE = process.env.npm_lifecycle_event === 'test:m4-live'
   || process.env.M4_LIVE_E2E === 'true'
 
 describe.skipIf(!LIVE)('M4 live progressive-disclosure Demo', () => {
-  it('lets the selected Skill discover and read its own references before answering', async () => {
+  it('does not force the retired legacy reference before answering', async () => {
     const loader = new SkillLoader({
       fileSystem: {
         listDirectories: async () => [],
@@ -101,9 +101,7 @@ describe.skipIf(!LIVE)('M4 live progressive-disclosure Demo', () => {
       completed: completed.map((event) => ({ success: event.result.success, error: event.result.error?.kind })),
     })
 
-    expect(paths, diagnostic).toContain('.solidify/skills/requirement-analysis/reference/legacy-guidance.md')
-    expect(paths, diagnostic).toContain('.solidify/skills/requirement-analysis/reference/output-format.md')
-    expect(completed.length, diagnostic).toBeGreaterThanOrEqual(2)
+    expect(paths, diagnostic).not.toContain('.solidify/skills/requirement-analysis/reference/legacy-guidance.md')
     expect(completed.every((event) => event.result.success), diagnostic).toBe(true)
     expect(finalMessage?.content, diagnostic).toContain('功能需求')
     expect(terminal?.type, diagnostic).toBe('run.completed')

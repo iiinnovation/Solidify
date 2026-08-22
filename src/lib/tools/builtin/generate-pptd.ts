@@ -1,7 +1,7 @@
 import type { QueryContext } from '../../engine/types'
 import { PPTD_DESIGN_SYSTEM_IDS } from '../../pptd/design-resources'
 import { pptdMediaDataUrl } from '../../pptd/media'
-import { runPptdDeckPipeline, type PptdDeckPipelineResult } from '../../pptd/pipeline'
+import { runPptdDeckPipeline, type PptdDeckPipelineInput, type PptdDeckPipelineResult, type RunPptdDeckPipelineOptions } from '../../pptd/pipeline'
 import { PPTD_THEME_IDS, type PptdThemeId } from '../../pptd/theme-presets'
 import { readWorkspaceBytes, readWorkspaceFile, writeWorkspaceFile } from '@/lib/tauri'
 import { attachmentMediaPath } from '@/lib/attachment-media'
@@ -19,6 +19,8 @@ export interface GeneratePptdInput {
   mediaPaths?: string[]
   maxPages?: number
   artifactPath?: string
+  /** Fast skips optional planning/visual rounds; premium enables deeper review. */
+  mode?: 'fast' | 'standard' | 'premium'
 }
 
 export interface GeneratePptdOutput {
@@ -32,6 +34,8 @@ export interface GeneratePptdOutput {
 }
 
 export const GENERATE_PPTD_TIMEOUT_MS = 30 * 60_000
+const MAX_TRANSIENT_PIPELINE_RETRIES = 1
+const TRANSIENT_PIPELINE_RETRY_DELAY_MS = 1_000
 
 /** Dynamic because the pipeline must use the active run's provider and budget. */
 export function createGeneratePptdTool(getParent: () => QueryContext): Tool<GeneratePptdInput, GeneratePptdOutput> {
@@ -105,15 +109,27 @@ export function createGeneratePptdTool(getParent: () => QueryContext): Tool<Gene
             }
           },
         } : {}
-        const result = await runPptdDeckPipeline(parent, {
+        const mode = input.mode ?? (input.maxPages !== undefined && input.maxPages <= 6 ? 'fast' : 'standard')
+        const visionAvailable = providerSupportsVision(parent)
+        const pipelineInput: PptdDeckPipelineInput = {
           ...input,
           attachmentSources: (parent.attachments ?? [])
             .filter((attachment) => requestedAttachmentIds.includes(attachment.id))
-            .filter((attachment): attachment is typeof attachment & { text: string } => typeof attachment.text === 'string')
-            .map((attachment) => ({ id: attachment.id, name: attachment.name, text: attachment.text })),
+          .filter((attachment): attachment is typeof attachment & { text: string } => typeof attachment.text === 'string')
+          .map((attachment) => ({ id: attachment.id, name: attachment.name, text: attachment.text })),
           media: { ...attachmentMedia, ...workspaceMedia },
-        }, {
+        }
+        const pipelineOptions: RunPptdDeckPipelineOptions = {
           signal,
+          planningMode: mode === 'premium' ? 'model' : 'deterministic',
+          sourceRefinementMode: mode === 'premium' ? 'model' : 'deterministic',
+          // The pipeline intentionally caps repair rounds at two. Premium
+          // changes planning and visual-review depth, but must not pass an
+          // out-of-range repair count into the pipeline validator.
+          maxRepairRounds: mode === 'fast' ? 1 : 2,
+          visualReview: mode === 'fast'
+            ? undefined
+            : { visionAvailable, maxRounds: mode === 'premium' ? 2 : 1 },
           ...checkpointIO,
           onProgress(progress) {
             onProgress?.({
@@ -124,7 +140,17 @@ export function createGeneratePptdTool(getParent: () => QueryContext): Tool<Gene
               detail: progress,
             })
           },
-        })
+        }
+        let result: PptdDeckPipelineResult
+        for (let attempt = 0; ; attempt++) {
+          try {
+            result = await runPptdDeckPipeline(parent, pipelineInput, pipelineOptions)
+            break
+          } catch (error) {
+            if (attempt >= MAX_TRANSIENT_PIPELINE_RETRIES || !isTransientPptdFailure(error)) throw error
+            await waitForTransientPipelineRetry(signal)
+          }
+        }
         const contentHandle = await ctx.memory.store(result.artifact.envelope)
         const output: GeneratePptdOutput = {
           directAssistantContent: true,
@@ -171,6 +197,44 @@ export function createGeneratePptdTool(getParent: () => QueryContext): Tool<Gene
       return `生成 PPTD 演示文稿${input.title ? `：${input.title}` : ''}`
     },
   }
+}
+
+function providerSupportsVision(context: QueryContext): boolean {
+  try { return context.providerRegistry.get(context.model.provider).metadata.supportsVision }
+  catch { return false }
+}
+
+function isTransientPptdFailure(error: unknown): boolean {
+  const modelError = error && typeof error === 'object' && 'modelError' in error
+    ? (error as { modelError?: { retryable?: boolean; type?: string } }).modelError
+    : undefined
+  if (modelError) {
+    if (modelError.retryable === true
+      || modelError.type === 'network'
+      || modelError.type === 'rate_limit'
+      || modelError.type === 'timeout') return true
+  }
+  const message = error instanceof Error ? error.message : String(error)
+  return /\b5\d{2}\b|gateway\s+(?:time[- ]out|timeout)|timed?\s*out|network|fetch failed|connection reset/i.test(message)
+}
+
+function waitForTransientPipelineRetry(signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(signal.reason instanceof Error ? signal.reason : new Error('PPTD 重试已取消'))
+      return
+    }
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort)
+      resolve()
+    }, TRANSIENT_PIPELINE_RETRY_DELAY_MS)
+    const onAbort = () => {
+      clearTimeout(timer)
+      signal.removeEventListener('abort', onAbort)
+      reject(signal.reason instanceof Error ? signal.reason : new Error('PPTD 重试已取消'))
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
 }
 
 /**
@@ -222,6 +286,10 @@ function buildGeneratePptdInputSchema(attachments?: readonly AttachmentResource[
       maxPages: {
         type: 'integer', minimum: 1, maximum: 24,
         description: 'Maximum page count. Use 10-14 for an ordinary document deck; omitted runs default to 12.',
+      },
+      mode: {
+        type: 'string', enum: ['fast', 'standard', 'premium'],
+        description: 'Generation path: fast for clear 3-6 page decks, standard for ordinary decks, premium for high-fidelity or complex visual work.',
       },
       artifactPath: { type: 'string', minLength: 1, maxLength: 240 },
     },

@@ -11,7 +11,7 @@ skip-confirmation: true
 
 # 方案设计
 
-第一步读取 `reference/legacy-guidance.md` 和 `reference/mermaid-syntax.md`，再读取输入需求。输出技术选型、功能模块、数据模型、接口设计、实施计划和风险评估；架构图使用 Mermaid，并将文档与图分别落盘到 `03-交付物/`。
+先读取输入需求，输出技术选型、功能模块、数据模型、接口设计、实施计划和风险评估；架构图使用 Mermaid。只有用户要求严格 Mermaid 语法时，才按需读取 `reference/mermaid-syntax.md`。存在工作区时将文档与图分别落盘到 `03-交付物/`，否则通过内存 Artifact 交付。
 
 ## 提交前自检
 

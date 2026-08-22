@@ -3,6 +3,7 @@ import {
   NO_SKILL,
   buildSkillRoutePrompt,
   parseSkillRouteReply,
+  routeSkillLocally,
   routeSkill,
   toRouteCandidates,
   type SkillRouteCandidate,
@@ -83,6 +84,23 @@ describe('parseSkillRouteReply', () => {
     // Substring matching here would let a chatty model start an expensive
     // pipeline it never actually selected.
     expect(parseSkillRouteReply('我认为应该使用 pptd-deck 这个技能', CANDIDATES)).toBeUndefined()
+  })
+})
+
+describe('routeSkillLocally', () => {
+  it('routes unmistakable deliverable requests without a provider call', () => {
+    expect(routeSkillLocally('请制作一份 6 页产品汇报 PPT', [PPTD, DRAWIO])).toBe('pptd-deck')
+    expect(routeSkillLocally('请生成系统架构图', [PPTD, DRAWIO])).toBe('drawio-diagram')
+  })
+
+  it('does not route topic discussion or negative requests', () => {
+    expect(routeSkillLocally('解释 PPT 设计中如何安排叙事节奏', [PPTD])).toBeUndefined()
+    expect(routeSkillLocally('不要制作 PPT，只讨论叙事方法', [PPTD])).toBeUndefined()
+  })
+
+  it('respects disabled Skills', () => {
+    localStorage.setItem('solidify-disabled-skills', JSON.stringify(['pptd-deck']))
+    expect(routeSkillLocally('请制作一份季度汇报 PPT', [PPTD])).toBeUndefined()
   })
 })
 

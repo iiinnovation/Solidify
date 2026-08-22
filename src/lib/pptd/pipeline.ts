@@ -793,9 +793,10 @@ export function runPptdDeckPipeline(
     planningMode: options.planningMode ?? 'deterministic',
     sourceRefinementMode: options.sourceRefinementMode ?? 'deterministic',
     callModel: createPptdModelCaller(ctx),
-    // One screenshot review keeps a real visual QA pass without doubling the
-    // longest model/render/repair tail on document decks.
-    visualReview: { visionAvailable: ctx.providerRegistry.get(ctx.model.provider).metadata.supportsVision, maxRounds: 1 },
+    // Standard keeps one bounded screenshot review. Fast can explicitly omit
+    // it, while premium can request a deeper review without changing the
+    // default path for existing callers.
+    visualReview: options.visualReview ?? { visionAvailable: ctx.providerRegistry.get(ctx.model.provider).metadata.supportsVision, maxRounds: 1 },
   })
 }
 
@@ -2185,7 +2186,10 @@ function repairPageSnapshot(state: PageState): string {
 const CHECKPOINT_FIELD = 'x-solidify-checkpoint'
 
 function checkpointRootFor(input: PptdDeckPipelineInput): string {
-  return `.solidify/pptd-checkpoints/${checkpointSourceHash(input)}`
+  // `.solidify/` is reserved for internal persistence and intentionally
+  // blocked by the agent-facing workspace write command. PPTD checkpoints
+  // are tool-owned resumable data, so keep them in the writable process area.
+  return `02-过程/pptd-checkpoints/${checkpointSourceHash(input)}`
 }
 
 function checkpointSourceHash(input: PptdDeckPipelineInput): string {
@@ -2671,12 +2675,20 @@ function stringArray(value: unknown, field: string, minimum: number, maximum: nu
   return result
 }
 
-function safeArtifactPath(path?: string): string {
+export function safeArtifactPath(path?: string): string {
   const normalized = path?.trim().replace(/\\/g, '/').replace(/^\.\//, '') || '03-交付物/deck.pptd'
-  if (normalized.startsWith('/') || normalized.split('/').some((part) => !part || part === '.' || part === '..')) {
-    throw new Error(`PPTD artifact 路径不安全：${normalized}`)
-  }
-  return normalized
+  if (!normalized.startsWith('/') && !normalized.split('/').some((part) => !part || part === '.' || part === '..')) return normalized
+
+  // Models occasionally emit an absolute desktop path even though the
+  // artifact contract is workspace-relative. Keep the safe basename and put
+  // it under the standard deliverables directory instead of aborting an
+  // otherwise valid deck generation. No filesystem access is performed here.
+  const basename = normalized.split('/').filter(Boolean).at(-1)
+  const safeBasename = basename
+    ?.replace(/[\\/:*?"<>|]/g, '-')
+    .replace(/\.{2,}/g, '.')
+    .replace(/^\.+|\.+$/g, '')
+  return safeBasename ? `03-交付物/${safeBasename}` : '03-交付物/deck.pptd'
 }
 
 function pagePathFor(pageIndex: number): string {

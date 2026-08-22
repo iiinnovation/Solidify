@@ -140,6 +140,11 @@ describe('M1-27 agent loop acceptance', () => {
       'tool.requested', 'tool.progress', 'tool.completed',
       'tool.requested', 'tool.progress', 'tool.completed',
     ])
+    const phases = events
+      .filter((event): event is Extract<QueryEvent, { type: 'run.phase' }> => event.type === 'run.phase')
+      .map((event) => event.phase)
+    expect(phases[0]).toBe('generating')
+    expect(phases).toContain('reading_sources')
     expect(events.at(-1)?.type).toBe('run.completed')
   })
 
@@ -290,6 +295,7 @@ describe('M1-27 agent loop acceptance', () => {
     const generator = runQuery(makeContext(provider))
 
     expect((await generator.next()).value).toMatchObject({ type: 'run.started' })
+    expect((await generator.next()).value).toMatchObject({ type: 'run.phase', phase: 'generating' })
     expect((await generator.next()).value).toMatchObject({ type: 'model.progress', phase: 'preparing' })
     expect((await generator.next()).value).toMatchObject({ type: 'model.progress', phase: 'generating' })
     expect((await generator.next()).value).toMatchObject({ type: 'message.delta' })

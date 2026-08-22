@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { buildMessages } from './messages'
-import { readAttachmentTool, searchAttachmentsTool } from '@/lib/tools/builtin/attachments'
+import { prepareAttachmentEvidenceTool, readAttachmentTool, searchAttachmentsTool } from '@/lib/tools/builtin/attachments'
 import type { Tool } from '@/lib/tools/types'
 import type { QueryContext } from './types'
 
 function attachmentTools(): Tool[] {
-  return [searchAttachmentsTool as Tool, readAttachmentTool as Tool]
+  return [searchAttachmentsTool as Tool, readAttachmentTool as Tool, prepareAttachmentEvidenceTool as Tool]
 }
 
 function context(overrides: Partial<QueryContext> = {}): QueryContext {
@@ -33,6 +33,18 @@ describe('Skill progressive disclosure context', () => {
     expect(result.skillTokens.bodyTokens).toBe(0)
     expect(result.system).not.toContain('# Active Skill:')
     expect(result.system).not.toContain('先读取 reference')
+  })
+
+  it('removes workspace-write instructions when the runtime has no write capability', async () => {
+    const result = await buildMessages(context({
+      skill: {
+        metadata: { name: 'demo-code', version: '1.0.0', description: 'demo' },
+        content: '完成后写入 `03-交付物/demo.html`。<solidify-artifact path="03-交付物/demo.html">',
+        path: 'builtin://demo-code/SKILL.md',
+      },
+    }))
+    expect(result.system).not.toContain('03-交付物/demo.html')
+    expect(result.system).toContain('内存 Artifact')
   })
 
   it('reports layer-0 and layer-1 token usage and injects virtual resource guidance', async () => {
@@ -121,6 +133,17 @@ describe('Skill progressive disclosure context', () => {
     expect(result.system).not.toContain('search_attachments')
     expect(result.system).not.toContain('read_attachment')
     expect(result.system).toContain('bundled PPTD resources are already loaded')
+  })
+
+  it('describes the evidence-pack tool when it is the only attachment reader', async () => {
+    const result = await buildMessages(context({
+      tools: [prepareAttachmentEvidenceTool as Tool],
+      attachments: [{ id: 'att-1', name: 'brief.md', size: 10, text: 'brief' }],
+      attachmentMode: 'retrieval',
+      workspace: undefined,
+    }))
+
+    expect(result.system).toContain('prepare_attachment_evidence')
   })
 
   it('rejects an oversized layer-0 index instead of silently exceeding the budget', async () => {

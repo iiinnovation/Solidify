@@ -6,6 +6,7 @@ export interface SkillDirectoryWriter {
   mkdir(path: string): Promise<void>
   writeFile(path: string, content: string): Promise<void>
   exists?(path: string): Promise<boolean>
+  readFile?(path: string): Promise<string>
 }
 
 export interface SkillMigrationResult {
@@ -14,7 +15,111 @@ export interface SkillMigrationResult {
   errors: Array<{ id: string; message: string }>
 }
 
-const MIGRATION_MARKER = 'solidify-skill-v2-migrated'
+export interface SkillMigrationTelemetry {
+  version: 1
+  attempts: number
+  /** Number of startup observations after the migration marker was written. */
+  observations: number
+  migrated: number
+  skipped: number
+  errors: number
+  deferred: number
+  lastStatus: 'completed' | 'deferred' | 'failed'
+  lastAt: string
+}
+
+export const SKILL_MIGRATION_MARKER = 'solidify-skill-v2-migrated'
+export const SKILL_MIGRATION_TELEMETRY_KEY = 'solidify-skill-v2-migration-telemetry'
+export const SKILL_RUNTIME_RETIRED_MARKER = 'solidify-skill-runtime-retired'
+export const SKILL_MIGRATION_OBSERVATION_SESSION_KEY = 'solidify-skill-v2-observation-session'
+
+export interface SkillMigrationWindowStatus {
+  migrated: boolean
+  retired: boolean
+  readyToFinalize: boolean
+  observations: number
+  reason: 'already-retired' | 'not-migrated' | 'insufficient-observations' | 'unclean' | 'ready'
+}
+
+let migrationInFlight: Promise<SkillMigrationResult | null> | null = null
+// Fallback for non-browser test/SSR environments where sessionStorage is not
+// available; Tauri/Web always use the session key below.
+let migrationObservationRecorded = false
+
+/**
+ * The legacy Zustand store is a read-only compatibility surface after a
+ * successful directory migration.  Keeping this decision in one module
+ * prevents individual UI consumers from accidentally reintroducing writes.
+ */
+export function isLegacySkillStoreWriteAllowed(): boolean {
+  if (typeof localStorage === 'undefined') return true
+  return localStorage.getItem(SKILL_MIGRATION_MARKER) !== 'true'
+}
+
+/** True only after an explicit, evidence-backed compatibility-window close. */
+export function isLegacySkillRuntimeRetired(): boolean {
+  if (typeof localStorage === 'undefined') return false
+  return localStorage.getItem(SKILL_RUNTIME_RETIRED_MARKER) === 'true'
+}
+
+/**
+ * Return the release/operator-facing state of the compatibility window without
+ * exposing any migrated Skill content. This is deliberately separate from the
+ * mutating finalize function so status checks are safe to run on every startup.
+ */
+export function getSkillMigrationWindowStatus(minObservations = 2): SkillMigrationWindowStatus {
+  const retired = isLegacySkillRuntimeRetired()
+  if (retired) return { migrated: true, retired: true, readyToFinalize: true, observations: readSkillMigrationTelemetry()?.observations ?? 0, reason: 'already-retired' }
+  if (typeof localStorage === 'undefined') return { migrated: false, retired: false, readyToFinalize: false, observations: 0, reason: 'not-migrated' }
+  const migrated = localStorage.getItem(SKILL_MIGRATION_MARKER) === 'true'
+  if (!migrated) return { migrated: false, retired: false, readyToFinalize: false, observations: 0, reason: 'not-migrated' }
+  const telemetry = readSkillMigrationTelemetry()
+  const observations = telemetry?.observations ?? 0
+  if (!telemetry || observations < Math.max(1, minObservations)) {
+    return { migrated: true, retired: false, readyToFinalize: false, observations, reason: 'insufficient-observations' }
+  }
+  const clean = telemetry.lastStatus === 'completed'
+    && telemetry.errors === 0
+    && telemetry.skipped === 0
+    && telemetry.deferred === 0
+  if (!clean) return { migrated: true, retired: false, readyToFinalize: false, observations, reason: 'unclean' }
+  return { migrated: true, retired: false, readyToFinalize: true, observations, reason: 'ready' }
+}
+
+/**
+ * Require clean migration telemetry from at least two startup observations
+ * before retiring the old runtime. The function only writes the retirement
+ * marker when the caller explicitly opts into the irreversible compatibility
+ * transition; migration itself never flips it automatically.
+ */
+export function finalizeSkillMigrationWindow(minObservations = 2): boolean {
+  const status = getSkillMigrationWindowStatus(minObservations)
+  if (status.retired) return true
+  if (!status.readyToFinalize || typeof localStorage === 'undefined') return false
+  localStorage.setItem(SKILL_RUNTIME_RETIRED_MARKER, 'true')
+  return true
+}
+
+/** Read aggregate migration counters without exposing Skill bodies or names. */
+export function readSkillMigrationTelemetry(): SkillMigrationTelemetry | null {
+  if (typeof localStorage === 'undefined') return null
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(SKILL_MIGRATION_TELEMETRY_KEY) ?? 'null')
+    if (!value || typeof value !== 'object') return null
+    const item = value as Partial<SkillMigrationTelemetry>
+    if (item.version !== 1 || !['completed', 'deferred', 'failed'].includes(item.lastStatus ?? '')) return null
+    if (![item.attempts, item.migrated, item.skipped, item.errors, item.deferred].every(isNonNegativeInteger)) return null
+    if (item.observations !== undefined && !isNonNegativeInteger(item.observations)) return null
+    if (typeof item.lastAt !== 'string') return null
+    return { ...item, observations: item.observations ?? 0 } as SkillMigrationTelemetry
+  } catch {
+    return null
+  }
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0
+}
 
 /** Convert the persisted legacy Skill records into SKILL.md directories. */
 export async function migrateCustomSkills(
@@ -28,6 +133,17 @@ export async function migrateCustomSkills(
   for (const skill of skills) {
     try {
       const normalizedRoot = root.replace(/[\\/]$/, '')
+      const baseName = normalizedSkillName(skill.id)
+      const existingDirectory = `${normalizedRoot}/${baseName}`
+      if (await writer.exists?.(existingDirectory) === true
+        && await isMigratedSkillDirectory(writer, existingDirectory, skill.id, baseName)) {
+        // A previous attempt may have written this Skill before another item
+        // failed. Treat the matching directory as already migrated so retries
+        // remain idempotent instead of creating `-2` duplicates.
+        usedNames.add(baseName)
+        result.migrated.push(skill.id)
+        continue
+      }
       const name = await availableSkillName(skill.id, normalizedRoot, usedNames, writer)
       const directory = `${normalizedRoot}/${name}`
       await writer.mkdir(directory)
@@ -43,23 +159,105 @@ export async function migrateCustomSkills(
 }
 
 /** One-shot browser/Tauri migration entry point used during app startup. */
-export async function migrateStoredCustomSkills(): Promise<SkillMigrationResult | null> {
+export function migrateStoredCustomSkills(): Promise<SkillMigrationResult | null> {
+  // App and the Skill registry both initialize at startup. Share one promise so
+  // concurrent callers cannot migrate the same localStorage snapshot twice and
+  // create suffixed duplicate directories.
+  if (migrationInFlight) return migrationInFlight
+  migrationInFlight = migrateStoredCustomSkillsOnce().finally(() => {
+    migrationInFlight = null
+  })
+  return migrationInFlight
+}
+
+async function migrateStoredCustomSkillsOnce(): Promise<SkillMigrationResult | null> {
   if (typeof localStorage === 'undefined') return null
   const root = await ensureUserSkillsRoot()
-  if (localStorage.getItem(MIGRATION_MARKER) === 'true') return null
+  if (localStorage.getItem(SKILL_MIGRATION_MARKER) === 'true') {
+    if (!hasMigrationObservationBeenRecorded()) {
+      recordMigrationObservation()
+      markMigrationObservationRecorded()
+    }
+    return null
+  }
   const raw = localStorage.getItem('solidify-custom-skills')
   if (!raw) {
-    localStorage.setItem(MIGRATION_MARKER, 'true')
-    return { migrated: [], skipped: [], errors: [] }
+    localStorage.setItem(SKILL_MIGRATION_MARKER, 'true')
+    const result = { migrated: [], skipped: [], errors: [] }
+    recordMigrationTelemetry(result, 'completed')
+    markMigrationObservationRecorded()
+    return result
   }
   const skills = readCustomSkills(raw)
-  if (!skills) return { migrated: [], skipped: [], errors: [{ id: 'storage', message: '自定义 Skill 存储格式无效，未删除原数据。' }] }
-  if (!root) return { migrated: [], skipped: skills.map((skill) => skill.id), errors: [] }
+  if (!skills) {
+    const result = { migrated: [], skipped: [], errors: [{ id: 'storage', message: '自定义 Skill 存储格式无效，未删除原数据。' }] }
+    recordMigrationTelemetry(result, 'failed')
+    return result
+  }
+  if (!root) {
+    const result = { migrated: [], skipped: skills.map((skill) => skill.id), errors: [] }
+    recordMigrationTelemetry(result, 'deferred')
+    return result
+  }
 
   const writer = await createTauriWriter()
   const result = await migrateCustomSkills(skills, root, writer)
-  if (result.errors.length === 0) localStorage.setItem(MIGRATION_MARKER, 'true')
+  if (result.errors.length === 0) {
+    localStorage.setItem(SKILL_MIGRATION_MARKER, 'true')
+    markMigrationObservationRecorded()
+  }
+  recordMigrationTelemetry(result, result.errors.length === 0 ? 'completed' : 'failed')
   return result
+}
+
+function recordMigrationTelemetry(result: SkillMigrationResult, status: SkillMigrationTelemetry['lastStatus']): void {
+  if (typeof localStorage === 'undefined') return
+  const previous = readSkillMigrationTelemetry()
+  const next: SkillMigrationTelemetry = {
+    version: 1,
+    attempts: (previous?.attempts ?? 0) + 1,
+    observations: previous?.observations ?? 0,
+    migrated: (previous?.migrated ?? 0) + result.migrated.length,
+    skipped: (previous?.skipped ?? 0) + result.skipped.length,
+    errors: (previous?.errors ?? 0) + result.errors.length,
+    deferred: (previous?.deferred ?? 0) + (status === 'deferred' ? 1 : 0),
+    lastStatus: status,
+    lastAt: new Date().toISOString(),
+  }
+  localStorage.setItem(SKILL_MIGRATION_TELEMETRY_KEY, JSON.stringify(next))
+}
+
+function recordMigrationObservation(): void {
+  if (typeof localStorage === 'undefined') return
+  const previous = readSkillMigrationTelemetry()
+  if (!previous) {
+    // Older builds could write the migration marker before telemetry existed.
+    // Backfill an aggregate-only baseline so those installs are not stuck at
+    // 0/2 forever; no Skill body or name is reconstructed here.
+    localStorage.setItem(SKILL_MIGRATION_TELEMETRY_KEY, JSON.stringify({
+      version: 1,
+      attempts: 1,
+      observations: 1,
+      migrated: 0,
+      skipped: 0,
+      errors: 0,
+      deferred: 0,
+      lastStatus: 'completed',
+      lastAt: new Date().toISOString(),
+    } satisfies SkillMigrationTelemetry))
+    return
+  }
+  localStorage.setItem(SKILL_MIGRATION_TELEMETRY_KEY, JSON.stringify({ ...previous, observations: previous.observations + 1 }))
+}
+
+function hasMigrationObservationBeenRecorded(): boolean {
+  if (typeof sessionStorage !== 'undefined') return sessionStorage.getItem(SKILL_MIGRATION_OBSERVATION_SESSION_KEY) === 'true'
+  return migrationObservationRecorded
+}
+
+function markMigrationObservationRecorded(): void {
+  if (typeof sessionStorage !== 'undefined') sessionStorage.setItem(SKILL_MIGRATION_OBSERVATION_SESSION_KEY, 'true')
+  else migrationObservationRecorded = true
 }
 
 /** Write a user-level SKILL.md through the desktop filesystem permission layer. */
@@ -126,6 +324,7 @@ function serializeLegacySkill(skill: Skill, name: string): string {
   const lines = [
     '---',
     `name: ${name}`,
+    `legacy-id: ${yamlScalar(skill.id)}`,
     'version: 1.0.0',
     `displayName: ${yamlScalar(skill.name)}`,
     `description: ${yamlScalar(skill.description)}`,
@@ -140,6 +339,32 @@ function serializeLegacySkill(skill: Skill, name: string): string {
   return lines.join('\n')
 }
 
+function normalizedSkillName(id: string): string {
+  return id.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'custom-skill'
+}
+
+async function isMigratedSkillDirectory(
+  writer: SkillDirectoryWriter,
+  directory: string,
+  legacyId: string,
+  normalizedName: string,
+): Promise<boolean> {
+  if (!writer.readFile) return false
+  try {
+    const content = await writer.readFile(`${directory}/SKILL.md`)
+    const legacyMatch = content.match(/^legacy-id:\s*(.+)$/m)
+    if (legacyMatch) {
+      try { return JSON.parse(legacyMatch[1]) === legacyId }
+      catch { return false }
+    }
+    // Compatibility with directories produced before `legacy-id` was added.
+    const nameMatch = content.match(/^name:\s*([^\r\n]+)$/m)
+    return nameMatch?.[1].trim() === normalizedName
+  } catch {
+    return false
+  }
+}
+
 function yamlScalar(value: string): string {
   return JSON.stringify(value)
 }
@@ -150,7 +375,7 @@ async function availableSkillName(
   used: Set<string>,
   writer: SkillDirectoryWriter,
 ): Promise<string> {
-  const base = id.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'custom-skill'
+  const base = normalizedSkillName(id)
   let name = base
   let suffix = 2
   while (used.has(name) || await writer.exists?.(`${root}/${name}`) === true) name = `${base}-${suffix++}`
@@ -178,10 +403,11 @@ function isSkill(value: unknown): value is Skill {
 }
 
 async function createTauriWriter(): Promise<SkillDirectoryWriter> {
-  const { exists, mkdir, writeTextFile } = await import('@tauri-apps/plugin-fs')
+  const { exists, mkdir, readTextFile, writeTextFile } = await import('@tauri-apps/plugin-fs')
   return {
     mkdir: async (path) => { await mkdir(path, { recursive: true }) },
     writeFile: async (path, content) => { await writeTextFile(path, content) },
     exists,
+    readFile: readTextFile,
   }
 }
