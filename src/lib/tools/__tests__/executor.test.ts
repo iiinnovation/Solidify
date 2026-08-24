@@ -281,7 +281,7 @@ describe('executeCall (M1-14/16)', () => {
   })
 
   it('⑦ handleizes oversized content and sets truncated', async () => {
-    const fullContent = 'x'.repeat(30_000)
+    const fullContent = 'x'.repeat(40_000)
     const tool = makeTool({
       async execute(): Promise<ToolResult> {
         return { success: true, content: fullContent, data: { content: fullContent } }
@@ -292,20 +292,20 @@ describe('executeCall (M1-14/16)', () => {
     })
     const result = await executeCall(tool, call(), opts)
     expect(result.truncated).toBe(true)
-    expect(result.content.length).toBeLessThan(30_000)
+    expect(result.content.length).toBeLessThan(40_000)
     expect(result.content).toContain('Result stored as')
     expect(result.handle).toBeDefined()
     expect(result.data).toBeUndefined()
     expect(await opts.ctx.memory.retrieve(result.handle!)).toBe(fullContent)
   })
 
-  it('⑦ measures the 24KB threshold in UTF-8 bytes', async () => {
+  it('⑦ measures the 32KB threshold in UTF-8 bytes', async () => {
     const opts = makeOpts({
       ctx: { ...makeToolCtx(), memory: new InMemoryState() },
     })
     const result = await executeCall(makeTool({
       async execute(): Promise<ToolResult> {
-        return { success: true, content: '甲'.repeat(9000) }
+        return { success: true, content: '甲'.repeat(11_000) }
       },
     }), call(), opts)
 
@@ -319,11 +319,11 @@ describe('executeCall (M1-14/16)', () => {
     })
     const result = await executeCall(makeTool({
       async execute(): Promise<ToolResult> {
-        return { success: true, content: 'x'.repeat(30_000), data: { bytes: 30_000 } }
+        return { success: true, content: 'x'.repeat(40_000), data: { bytes: 40_000 } }
       },
     }), call(), opts)
 
-    expect(result.data).toEqual({ bytes: 30_000 })
+    expect(result.data).toEqual({ bytes: 40_000 })
   })
 })
 

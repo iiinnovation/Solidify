@@ -282,4 +282,4 @@ export interface ContextBudget {
  * budget and read_handle chunk ceiling.
  * Results larger than this are stored with a handle
  */
-export const HANDLE_THRESHOLD = 24_000  // 24KB
+export const HANDLE_THRESHOLD = 32_000  // 32KB

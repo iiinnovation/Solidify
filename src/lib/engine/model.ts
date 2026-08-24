@@ -12,8 +12,7 @@ import type {
 } from '../model'
 import { hasRenderedArtifactPreview } from '../tools/builtin/capture-preview'
 import { compileContext, type CompiledContextStats } from './context-compiler'
-
-const STORED_HANDLE_PATTERN = /\[Result stored as (?:mem|handle)-[^:\s]+:[^\]]*Use read_handle to retrieve it\.\]/i
+import { storedResultHandle } from './context-budget'
 
 export type RequestContextStats = CompiledContextStats
 
@@ -30,9 +29,11 @@ export async function* streamModel(
   // Resolve the visible tool set first: the system prompt names tools by hand
   // (attachment readers, handles), so it has to be built against the same list
   // the provider receives or the model calls something that isn't there.
-  const visibleTools = provider.metadata.supportsTools
+  let visibleTools = provider.metadata.supportsTools
     ? ctx.tools.filter((tool) => {
-        if (tool.name === 'read_handle') return hasReadableHandle(ctx.messages)
+        // read_handle visibility is finalized after context compaction below;
+        // the raw history can contain a handle that the model never receives.
+        if (tool.name === 'read_handle') return true
         if (tool.name === 'search_attachments' || tool.name === 'read_attachment' || tool.name === 'prepare_attachment_evidence') return (ctx.attachments?.length ?? 0) > 0
         // Capturing is a follow-up capability, not a way to validate an
         // artifact that this model turn has not produced yet. Requiring both a
@@ -46,8 +47,13 @@ export async function* streamModel(
     : []
 
   // Compile messages, tools, stable-prefix identity and budget stats together.
-  const modelCtx = visibleTools.length === ctx.tools.length ? ctx : { ...ctx, tools: visibleTools }
-  const compiled = await compileContext(modelCtx)
+  let modelCtx = visibleTools.length === ctx.tools.length ? ctx : { ...ctx, tools: visibleTools }
+  let compiled = await compileContext(modelCtx)
+  if (visibleTools.some((tool) => tool.name === 'read_handle') && !hasReadableHandle(compiled.messages)) {
+    visibleTools = visibleTools.filter((tool) => tool.name !== 'read_handle')
+    modelCtx = { ...ctx, tools: visibleTools }
+    compiled = await compileContext(modelCtx)
+  }
   const { system, messages, tools, stats: contextStats } = compiled
 
   // Convert messages to unified format
@@ -93,9 +99,12 @@ export async function* streamModel(
     ...(provider.metadata.supportsPromptCache
       ? {
           promptCache: {
-            key: contextStats.fixedPrefixFingerprint,
+            // OpenAI-compatible providers use this key for routing affinity,
+            // so it must remain stable while tools/history evolve in a run.
+            key: promptCacheKey(ctx.conversationId, ctx.model.model),
             system: true,
             tools: tools.length > 0,
+            messages: unifiedMessages.length > 0,
           },
         }
       : {}),
@@ -112,6 +121,7 @@ export async function* streamModel(
     maxTokens: request.maxTokens,
     topP: request.topP,
     stream: request.stream,
+    toolChoice: request.toolChoice,
     promptCache: request.promptCache,
   }, contextStats)
 
@@ -119,12 +129,25 @@ export async function* streamModel(
   yield* provider.stream(request)
 }
 
+function promptCacheKey(conversationId: string, model: string): string {
+  const value = `${conversationId}\u0000${model}`
+  let hash = 0x811c9dc5
+  for (let index = 0; index < value.length; index++) {
+    hash = Math.imul(hash ^ value.charCodeAt(index), 0x01000193)
+  }
+  return `conversation-${(hash >>> 0).toString(16).padStart(8, '0')}`
+}
+
 /** Do not invite fabricated mem-0/mem-1 calls before a real result exists. */
-function hasReadableHandle(messages: QueryContext['messages']): boolean {
+function hasReadableHandle(messages: readonly { content: string | readonly unknown[] }[]): boolean {
   return messages.some((message) => {
     if (typeof message.content === 'string') return false
     return message.content.some((part) =>
-      part.type === 'tool_result' && STORED_HANDLE_PATTERN.test(part.content),
+      Boolean(part)
+      && typeof part === 'object'
+      && (part as { type?: unknown }).type === 'tool_result'
+      && typeof (part as { content?: unknown }).content === 'string'
+      && storedResultHandle((part as { content: string }).content) !== undefined,
     )
   })
 }

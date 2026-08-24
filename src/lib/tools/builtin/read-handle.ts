@@ -13,6 +13,9 @@ const MAX_CHUNK_BYTES = 24_000
 export const readHandleTool: Tool<ReadHandleInput> = {
   name: 'read_handle',
   description: '分块读取先前因内容过大而保存的工具结果。仅在上一条工具结果明确出现“Result stored as <实际句柄>”时使用；handle 必须填写该实际句柄（如 mem-...），绝不能填写工具名 read_handle；如仍有内容，使用返回的 nextOffset 继续读取。',
+  loopGroup: 'attachment-retrieval',
+  loopKey: 'handle',
+  replaySafe: true,
   inputSchema: {
     type: 'object',
     properties: {
@@ -149,23 +152,22 @@ function findRecentHandle(messages: readonly unknown[] | undefined): string | un
 
 function sliceChunk(content: string, offset: number, limit: number) {
   const encoder = new TextEncoder()
-  const selected: string[] = []
-  let total = 0
-  let bytes = 0
-  let full = false
-
-  for (const character of content) {
-    if (!full && total >= offset && selected.length < limit) {
-      const characterBytes = encoder.encode(character).byteLength
-      if (bytes + characterBytes <= MAX_CHUNK_BYTES) {
-        selected.push(character)
-        bytes += characterBytes
-      } else {
-        full = true
-      }
-    }
-    total++
+  const characters = [...content]
+  const safeOffset = Math.max(0, Math.min(offset, characters.length))
+  const candidate = characters.slice(safeOffset, safeOffset + limit)
+  const candidateText = candidate.join('')
+  if (encoder.encode(candidateText).byteLength <= MAX_CHUNK_BYTES) {
+    return { chunk: candidateText, count: candidate.length, total: characters.length }
   }
 
-  return { chunk: selected.join(''), count: selected.length, total }
+  // A CJK-heavy page can hit the byte ceiling before the character ceiling.
+  // Binary search needs O(log n) encodes instead of encoding every code point.
+  let low = 0
+  let high = candidate.length
+  while (low < high) {
+    const length = Math.ceil((low + high) / 2)
+    if (encoder.encode(candidate.slice(0, length).join('')).byteLength <= MAX_CHUNK_BYTES) low = length
+    else high = length - 1
+  }
+  return { chunk: candidate.slice(0, low).join(''), count: low, total: characters.length }
 }

@@ -39,6 +39,8 @@ export interface PromptCacheRequest {
   system?: boolean
   /** Mark the tool schema prefix as cacheable where the provider supports it. */
   tools?: boolean
+  /** Mark the end of the current message history as a cache breakpoint. */
+  messages?: boolean
 }
 
 /**

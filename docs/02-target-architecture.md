@@ -47,7 +47,7 @@ src/lib/engine/
 ├── query-engine.ts     会话容器：打包 cwd/记忆/工具/权限为不可变上下文
 ├── query-loop.ts       核心循环：async generator，产出 QueryEvent 流
 ├── model-gateway.ts    模型接入：统一 openai/anthropic 两种 wire format
-├── stream-parser.ts    SSE 解析：文本增量 + tool_use 增量
+├── model.ts            调用 provider adapter 并统一文本/tool_use 增量
 └── tombstone.ts        异常消息墓碑化，不崩会话
 ```
 

@@ -78,6 +78,8 @@ describe('native provider request policy', () => {
       max_tokens: 123,
       stream: true,
       stream_options: { include_usage: true },
+      tool_choice: 'none',
+      prompt_cache_key: 'conversation-123',
       arbitrary_url: 'https://internal.example',
       metadata: { admin: true },
     }, 'server-model', 'openai')
@@ -89,6 +91,8 @@ describe('native provider request policy', () => {
       max_tokens: 123,
       stream: true,
       stream_options: { include_usage: true },
+      tool_choice: 'none',
+      prompt_cache_key: 'conversation-123',
       model: 'server-model',
     })
     expect(body).not.toHaveProperty('arbitrary_url')
@@ -100,11 +104,13 @@ describe('native provider request policy', () => {
       system: 'system',
       messages,
       top_p: 0.9,
+      tool_choice: { type: 'none' },
       ignored: true,
     }, 'claude-model', 'anthropic')).toEqual({
       system: 'system',
       messages,
       top_p: 0.9,
+      tool_choice: { type: 'none' },
       model: 'claude-model',
       stream: false,
     })

@@ -10,7 +10,7 @@ import { isEnabled } from '@/lib/harness/flags'
 import { runQuery } from '@/lib/engine/query'
 import { applyRunEvent, createRunState } from '@/lib/engine/run-state'
 import { createChatQueryContext, loadChatSkillRuntime } from '@/lib/engine/chat-context'
-import { createSkillRouteModelCaller, routeSkill, routeSkillLocally } from '@/lib/skills/auto-route'
+import { routeSkillLocally } from '@/lib/skills/auto-route'
 import { isSkillAutoRouteEnabled } from '@/lib/skills/settings'
 import type { SkillMetadata } from '@/lib/skills/types'
 import type { QueryEvent } from '@/lib/engine/types'
@@ -21,7 +21,7 @@ import { attachmentMediaPath, loadAttachmentMedia, saveAttachmentMedia } from '@
 import { useSkillStore } from '@/stores/skill-store'
 import { deriveArtifactPath, materializeArtifact, normalizeArtifactPath, normalizeArtifactType } from '@/lib/workspace/materialize'
 import { isTauri } from '@/lib/tauri'
-import { buildAttachmentEvidencePack, buildDiagramAttachmentEvidencePack, chooseAttachmentContextMode, createAttachmentResourceId, formatAttachmentManifest, formatInlineAttachments, type AttachmentContextMode, type AttachmentResource } from '@/lib/attachments/types'
+import { buildAttachmentEvidencePack, chooseAttachmentContextMode, createAttachmentResourceId, formatAttachmentManifest, formatInlineAttachments, type AttachmentResource } from '@/lib/attachments/types'
 import { loadAttachmentResource, loadAttachmentResources, saveAttachmentResource } from '@/lib/attachments/store'
 import {
   abortChatRun,
@@ -461,12 +461,10 @@ export function useChat(conversationId?: string) {
               // scan already started for skillRuntimePromise.
               const runtime = await loadChatSkillRuntime({ workspaceRoot: preloadWorkspaceRoot })
               const skills = await runtime.registry.list()
-              const routed = routeSkillLocally(content, skills) ?? await routeSkill({
-                  message: content,
-                  skills,
-                  callModel: createSkillRouteModelCaller(activeProvider),
-                  signal: abortController.signal,
-                })
+              // Routing is deliberately local. A hidden classification request
+              // added an entire provider round trip (up to eight seconds)
+              // before every ordinary chat whose wording missed the heuristic.
+              const routed = routeSkillLocally(content, skills)
               return routed ? skills.find((skill) => skill.name === routed) : undefined
             } catch (error) {
               console.warn('[skills] Auto-routing failed; continuing without a Skill:', error)
@@ -693,7 +691,7 @@ ${result.content}
       const canReadAttachments = isEnabled('agentLoop')
         && isEnabled('toolCalling')
         && activeProvider.supportsTools !== false
-      const routedAttachmentMode = chooseAttachmentContextMode({
+      const attachmentMode = chooseAttachmentContextMode({
         resources: attachmentResources,
         userContent: content,
         contextWindow: activeProvider.contextWindow,
@@ -701,29 +699,21 @@ ${result.content}
           return sum + message.content.length / 3
         }, 0)) + 4_000,
       })
-      const diagramEvidencePack = effectiveSkillId === 'drawio-diagram'
-        ? buildDiagramAttachmentEvidencePack(attachmentResources, content, 24_000)
-        : undefined
-      const attachmentMode: AttachmentContextMode = diagramEvidencePack
-        ? 'evidence'
-        : routedAttachmentMode
       const shouldPrepareEvidence = attachmentMode === 'retrieval'
         && canReadAttachments
         && /(?:全文|完整阅读|通读|全部内容|基于全文|阅读附件)/i.test(content)
         && !/(?:多轮|分步骤|分阶段|多个交付物|分别|逐个|持续)/i.test(content)
-      const evidencePack = diagramEvidencePack ?? (shouldPrepareEvidence
+      const evidencePack = shouldPrepareEvidence
         ? buildAttachmentEvidencePack(attachmentResources, undefined, 16_000)
-        : undefined)
+        : undefined
       const attachmentContext = attachmentResources.length > 0
         ? attachmentMode === 'inline'
           ? formatInlineAttachments(attachmentResources)
           : `\n\n${formatAttachmentManifest(attachmentResources, evidencePack ? { includePreview: false } : undefined)}${evidencePack
             ? `\n\n<attachment_evidence_pack>\n${evidencePack.content}\n</attachment_evidence_pack>`
-            : ''}\n\n${attachmentMode === 'evidence'
-            ? '已在模型调用前准备好本次绘图所需的有界证据包；本次不提供附件检索工具。请直接依据证据生成最终 Draw.io Artifact，不要请求、模拟或输出任何工具调用。'
-            : canReadAttachments
-              ? '附件正文不会自动展开；完整阅读时优先使用 prepare_attachment_evidence，一次准备证据包；需要时再用 search_attachments 和 read_attachment 定位缺口。'
-              : '当前为兼容聊天模式，只提供附件的有限预览；如需分段读取，请启用 Agent 模式。'}`
+            : ''}\n\n${canReadAttachments
+            ? '附件正文不会自动展开；完整阅读时优先使用 prepare_attachment_evidence，一次准备证据包；需要时再用 search_attachments 和 read_attachment 定位缺口。'
+            : '当前为兼容聊天模式，只提供附件的有限预览；如需分段读取，请启用 Agent 模式。'}`
         : ''
       let enrichedContent = `${content}${attachmentContext}`
 

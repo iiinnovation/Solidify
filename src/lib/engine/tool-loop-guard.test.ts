@@ -133,6 +133,21 @@ describe('ToolLoopGuard', () => {
     expect(guard.isClosed('attachment-retrieval')).toBe(true)
   })
 
+  it('adds an explicit no-repeat instruction to replayed results', () => {
+    const guard = new ToolLoopGuard(makeContext())
+    const tool = makeTool('read_attachment', 'read')
+    const call = { id: '1', name: 'read_attachment', input: { attachmentId: 'a', offset: 0 } }
+    const result = { success: true, content: 'same page' }
+    guard.inspect(call, tool)
+    guard.observe(call, tool, result)
+    guard.inspect({ ...call, id: '2' }, tool)
+    guard.observe({ ...call, id: '2' }, tool, result)
+    expect(guard.inspect({ ...call, id: '3' }, tool)).toMatchObject({
+      kind: 'replay',
+      message: expect.stringContaining('不要再次提交相同参数'),
+    })
+  })
+
   it('does not classify changing pages as a loop', () => {
     const guard = new ToolLoopGuard(makeContext())
     const tool = makeTool('read_attachment', 'read')

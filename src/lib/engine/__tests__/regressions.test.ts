@@ -169,6 +169,15 @@ describe('context budget accounting', () => {
     expect(compact.toolResults).toBeLessThan(standard.toolResults)
   })
 
+  it('scales the standard tool-result slot with a large context window', () => {
+    const ctx = makeCtx(provider([doneTurn]), {
+      model: { provider: 'mock', model: 'mock-model', contextWindow: 200_000 },
+      limits: { maxTurns: 8, maxTokens: 200_000, maxOutputTokens: 8_192, maxToolCalls: 30, toolTimeoutMs: 1_000 },
+    })
+    const slots = calculateInputSlotBudgets(ctx, calculateBudget(ctx))
+    expect(slots.toolResults).toBeGreaterThan(50_000)
+  })
+
   it('bounds proactively retrieved memory before generic history trimming', async () => {
     const result = await buildMessages(makeCtx(provider([doneTurn]), {
       retrievedContext: '检'.repeat(20_000),
@@ -197,6 +206,28 @@ describe('context budget accounting', () => {
     expect(contents.at(-1)).toContain('NEWEST')
     expect(contents[0]).toContain('omitted')
     expect(contents.reduce((sum, content) => sum + estimateTokens(content), 0)).toBeLessThanOrEqual(520)
+  })
+
+  it('preserves an exact handle while forbidding replay of an omitted tool result', () => {
+    const messages: ClaudeMessage[] = [
+      {
+        role: 'user',
+        content: [{
+          type: 'tool_result',
+          tool_use_id: 'large-result',
+          content: `${'旧证据'.repeat(500)}\n\n[Result stored as mem-evidence-1: 40000 bytes, 12000 characters total. Use read_handle to retrieve it.]`,
+        }],
+      },
+      {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 'new-result', content: `最新证据：${'数'.repeat(450)}` }],
+      },
+    ]
+    const capped = capToolResultContext(messages, 600)
+    const first = (capped[0].content as Array<{ content: string }>)[0].content
+    expect(first).toContain('mem-evidence-1')
+    expect(first).toContain('Do not repeat the original tool call')
+    expect(first).not.toContain('re-read if needed')
   })
 
   it('counts CJK at roughly one token per character', () => {
@@ -240,20 +271,36 @@ describe('oversized results degrade instead of throwing', () => {
       search: async () => [],
       clear: async () => undefined,
     }
-    const result = await handleizeLargeResult('y'.repeat(30_000), failing)
+    const result = await handleizeLargeResult('y'.repeat(40_000), failing)
     expect(result.isHandleized).toBe(true)
     expect(result.handle).toBeUndefined()
     expect(result.content).toContain('Storage was unavailable')
   })
 
   it('does not split a surrogate pair in the summary', async () => {
-    const content = `${'a'.repeat(499)}😀${'b'.repeat(20_000)}`
+    const content = `${'a'.repeat(499)}😀${'b'.repeat(40_000)}`
     const { content: summary } = await handleizeLargeResult(content)
     expect(summary).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/)
+  })
+
+  it('keeps a full 8,000-character CJK attachment page inline with its prefix', async () => {
+    const content = `[attachment:att-1 offset:0]\n${'数'.repeat(8_000)}`
+    const result = await handleizeLargeResult(content, new InMemoryState())
+    expect(new TextEncoder().encode(content).byteLength).toBeGreaterThan(24_000)
+    expect(result.isHandleized).toBe(false)
+    expect(result.content).toBe(content)
   })
 })
 
 describe('read_handle model visibility', () => {
+  it('participates in the shared attachment retrieval loop budget', () => {
+    expect(readHandleTool).toMatchObject({
+      loopGroup: 'attachment-retrieval',
+      loopKey: 'handle',
+      replaySafe: true,
+    })
+  })
+
   it('hides the tool until a real stored-result marker is in the run', async () => {
     const requests: CompletionRequest[] = []
     const recordingProvider: ModelProvider = {

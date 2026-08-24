@@ -19,7 +19,7 @@ export interface ToolLoopObservation {
 export type ToolLoopDecision =
   | { kind: 'allow' }
   | { kind: 'warn'; message: string }
-  | { kind: 'replay'; result: ToolResult }
+  | { kind: 'replay'; result: ToolResult; message: string }
   | { kind: 'close'; message: string }
 
 const DEFAULT_SOFT_THRESHOLD = 3
@@ -156,7 +156,11 @@ export class ToolLoopGuard {
     if (cached && consecutive >= soft - 1) {
       if (tool.replaySafe) {
         reserve()
-        return { kind: 'replay', result: { ...cached, metadata: { ...cached.metadata, durationMs: 0 } } }
+        return {
+          kind: 'replay',
+          result: { ...cached, metadata: { ...cached.metadata, durationMs: 0 } },
+          message: `${this.noProgressMessage(tool.name, soft)} 已返回缓存结果；不要再次提交相同参数。`,
+        }
       }
       reserve()
       return { kind: 'warn', message: this.noProgressMessage(tool.name, soft) }

@@ -12,6 +12,8 @@ import type { CompletionChunk, CompletionRequest } from '../../model/types'
 import type { Tool, ToolResult } from '../../tools/types'
 import type { MemoryState } from '../../memory/types'
 import { clearFlagOverrides, setFlagOverride } from '../../harness/flags'
+import { readAttachmentTool } from '../../tools/builtin/attachments'
+import { readHandleTool } from '../../tools/builtin/read-handle'
 
 function makeMockProvider(script: CompletionChunk[][], requests?: CompletionRequest[]): ModelProvider {
   let callIndex = 0
@@ -106,8 +108,9 @@ const drawioFinalTurn: CompletionChunk[] = [
 
 describe('runQuery tool execution (M1-14/15)', () => {
   beforeEach(() => {
-    setFlagOverride('skillV2', false)
-    setFlagOverride('harness', false)
+    // Match production: canonical Skill V2 enables Harness through feature
+    // dependencies. Parallel tests must exercise that real path.
+    setFlagOverride('skillV2', true)
   })
 
   afterEach(() => clearFlagOverrides())
@@ -288,7 +291,7 @@ describe('runQuery tool execution (M1-14/15)', () => {
     expect(events.at(-1)).toMatchObject({ type: 'run.exhausted', reason: 'tool_loop' })
   })
 
-  it('generates Draw.io from preloaded evidence on the first zero-tool turn', async () => {
+  it('generates Draw.io from full inline attachment text on the first zero-tool turn', async () => {
     const requests: CompletionRequest[] = []
     const provider = makeMockProvider([drawioFinalTurn], requests)
     const unrelatedTool: Tool = {
@@ -302,9 +305,9 @@ describe('runQuery tool execution (M1-14/15)', () => {
     const events: QueryEvent[] = []
     for await (const event of runQuery({
       ...base,
-      attachmentMode: 'evidence',
+      attachmentMode: 'inline',
       attachments: [{ id: 'att-a', name: 'brief.md', size: 100, text: 'architecture evidence' }],
-      messages: [{ role: 'user', content: 'Draw the architecture.\n<attachment_evidence_pack>architecture evidence</attachment_evidence_pack>' }],
+      messages: [{ role: 'user', content: 'Draw the architecture.\n<attachments_inline>architecture evidence</attachments_inline>' }],
       skill: {
         metadata: { name: 'drawio-diagram', version: '2.1.0', description: 'draw diagram' },
         content: 'Generate the diagram from attachment evidence.',
@@ -321,7 +324,7 @@ describe('runQuery tool execution (M1-14/15)', () => {
     expect(events.at(-1)?.type).toBe('run.completed')
   })
 
-  it('keeps Draw.io retrieval closed after a hidden invalid call instead of reopening it', async () => {
+  it('keeps Draw.io retrieval available after valid evidence and rejects malformed follow-up input', async () => {
     const requests: CompletionRequest[] = []
     const provider = makeMockProvider([
       [
@@ -330,8 +333,8 @@ describe('runQuery tool execution (M1-14/15)', () => {
         { type: 'message_end', stopReason: 'tool_use' },
       ],
       [
-        // Reproduce the Qwen call from the ledger. The schema is already hidden
-        // on this turn, and the stale historical call also has a bad limit type.
+        // Reproduce the malformed Qwen call from the ledger. The common
+        // runtime keeps retrieval available but rejects the bad integer type.
         { type: 'tool_call_start', id: 'search-hidden-invalid', name: 'search_attachments' },
         { type: 'tool_call_end', id: 'search-hidden-invalid', input: { query: 'model layer', limit: '6' } },
         { type: 'message_end', stopReason: 'tool_use' },
@@ -383,16 +386,13 @@ describe('runQuery tool execution (M1-14/15)', () => {
 
     expect(executions).toBe(1)
     expect(requests.map((request) => request.tools?.map((tool) => tool.name) ?? []))
-      .toEqual([['search_attachments'], [], []])
-    expect(requests[1].system).toContain('Do not emit any tool call')
-    expect(requests[1].system).toContain('exactly one valid Draw.io Artifact')
-    expect(requests[1].toolChoice).toBe('none')
+      .toEqual([['search_attachments'], ['search_attachments'], ['search_attachments']])
     expect(events.find((event) => event.type === 'tool.completed' && event.callId === 'search-hidden-invalid'))
-      .toMatchObject({ result: { error: { kind: 'budget_exhausted' } } })
+      .toMatchObject({ result: { error: { kind: 'invalid_input' } } })
     expect(events.at(-1)?.type).toBe('run.completed')
   })
 
-  it('closes Draw.io retrieval after an inline evidence pack is prepared', async () => {
+  it('keeps retrieval schemas stable after an inline evidence pack is prepared', async () => {
     const requests: CompletionRequest[] = []
     const provider = makeMockProvider([
       [
@@ -436,12 +436,10 @@ describe('runQuery tool execution (M1-14/15)', () => {
     })) { /* drain */ }
 
     expect(requests.map((request) => request.tools?.map((tool) => tool.name) ?? []))
-      .toEqual([['prepare_attachment_evidence'], []])
-    expect(requests[1].system).toContain('Do not emit any tool call')
-    expect(requests[1].toolChoice).toBe('none')
+      .toEqual([['prepare_attachment_evidence'], ['prepare_attachment_evidence']])
   })
 
-  it('recovers a tagged Qwen tool call, then rejects leaked tool text after retrieval closes', async () => {
+  it('recovers tagged Qwen pagination calls without prematurely closing retrieval', async () => {
     const requests: CompletionRequest[] = []
     const taggedRead = [
       'I need one bounded section.',
@@ -458,7 +456,7 @@ describe('runQuery tool execution (M1-14/15)', () => {
       drawioFinalTurn,
     ], requests)
     let executions = 0
-    const readTool: Tool = {
+    const readTool: Tool<{ attachmentId: string; offset: number; limit: number }> = {
       name: 'read_attachment',
       description: 'read attachment',
       inputSchema: {
@@ -482,16 +480,16 @@ describe('runQuery tool execution (M1-14/15)', () => {
       replaySafe: true,
       async execute(input): Promise<ToolResult> {
         executions++
-        expect(input).toEqual({ attachmentId: 'att-a', offset: 10, limit: 760 })
+        expect(input).toMatchObject({ attachmentId: 'att-a', limit: 760 })
         return {
           success: true,
-          content: '[attachment:att-a offset:10]\nmodel layer evidence',
-          data: { attachmentId: 'att-a', offset: 10, total: 7_000 },
+          content: `[attachment:att-a offset:${input.offset}]\nmodel layer evidence`,
+          data: { attachmentId: 'att-a', offset: input.offset, total: 7_000 },
         }
       },
       renderCall: () => 'read attachment',
     }
-    const base = makeCtx(provider, [readTool])
+    const base = makeCtx(provider, [readTool as Tool])
     const events: QueryEvent[] = []
     for await (const event of runQuery({
       ...base,
@@ -503,12 +501,10 @@ describe('runQuery tool execution (M1-14/15)', () => {
       },
     })) events.push(event)
 
-    expect(executions).toBe(1)
+    expect(executions).toBe(2)
     expect(requests.map((request) => request.tools?.map((tool) => tool.name) ?? []))
-      .toEqual([['read_attachment'], [], []])
-    expect(requests[1].toolChoice).toBe('none')
-    expect(requests[2].toolChoice).toBe('none')
-    expect(events.filter((event) => event.type === 'tool.requested')).toHaveLength(1)
+      .toEqual([['read_attachment'], ['read_attachment'], ['read_attachment']])
+    expect(events.filter((event) => event.type === 'tool.requested')).toHaveLength(2)
     const streamed = events.filter((event): event is Extract<QueryEvent, { type: 'message.delta' }> => event.type === 'message.delta')
       .map((event) => event.text).join('')
     expect(streamed).toBe(drawioArtifact)
@@ -580,7 +576,7 @@ describe('runQuery tool execution (M1-14/15)', () => {
       },
       renderCall: () => 'prepare evidence',
     }
-    const base = makeCtx(provider, [evidenceTool])
+    const base = makeCtx(provider, [evidenceTool, readHandleTool as Tool])
     for await (const _event of runQuery({
       ...base,
       attachments: [{ id: 'att-a', name: 'brief.md', size: 48_000, text: 'large architecture evidence' }],
@@ -592,7 +588,10 @@ describe('runQuery tool execution (M1-14/15)', () => {
     })) { /* drain */ }
 
     expect(requests.map((request) => request.tools?.map((tool) => tool.name) ?? []))
-      .toEqual([['prepare_attachment_evidence'], ['prepare_attachment_evidence']])
+      .toEqual([
+        ['prepare_attachment_evidence'],
+        ['prepare_attachment_evidence', 'read_handle'],
+      ])
   })
 
   it('enforces the provider-reported token hard cap separately from progress budget', async () => {
@@ -743,6 +742,47 @@ describe('runQuery tool execution (M1-14/15)', () => {
     expect(toolResult).toMatchObject({ content: expect.stringContaining('offset=4') })
   })
 
+  it('does not append an attachment pagination instruction to a handleized result', async () => {
+    const requests: CompletionRequest[] = []
+    const provider = makeMockProvider([
+      [
+        { type: 'tool_call_start', id: 'large-page', name: 'read_attachment' },
+        { type: 'tool_call_end', id: 'large-page', input: { attachmentId: 'att-a', offset: 0, limit: 8_000 } },
+        { type: 'message_end', stopReason: 'tool_use' },
+      ],
+      finalTurn,
+    ], requests)
+    const reader: Tool = {
+      name: 'read_attachment', description: 'read attachment', inputSchema: { type: 'object' },
+      readOnly: true, concurrencySafe: true, destructive: false,
+      requiresConfirmation: false, availability: 'always', permissions: [],
+      async execute(): Promise<ToolResult> {
+        return {
+          success: true,
+          content: '[Result stored as mem-large-page: 40000 bytes. Use read_handle to retrieve it.]',
+          handle: 'mem-large-page',
+          truncated: true,
+          data: { attachmentId: 'att-a', offset: 0, nextOffset: 8_000, total: 20_000 },
+        }
+      },
+      renderCall: () => 'read attachment',
+    }
+    const ctx = makeCtx(provider, [reader])
+    for await (const _event of runQuery({
+      ...ctx,
+      attachments: [{ id: 'att-a', name: 'large.md', size: 20_000, text: 'x'.repeat(20_000) }],
+      attachmentMode: 'retrieval',
+    })) { /* drain */ }
+
+    const lastContent = requests[1].messages.at(-1)?.content
+    const toolResult = Array.isArray(lastContent)
+      ? lastContent.find((part) => part.type === 'tool_result')
+      : undefined
+    expect(toolResult).toMatchObject({ content: expect.stringContaining('mem-large-page') })
+    expect(JSON.stringify(toolResult)).not.toContain('[分页提示]')
+    expect(JSON.stringify(toolResult)).not.toContain('read_attachment 并使用 offset=8000')
+  })
+
   it('runs read-only concurrency-safe tools in parallel', async () => {
     const trace: string[] = []
     const slowA = makeSlowReadTool('slow_a', 40, trace)
@@ -773,6 +813,70 @@ describe('runQuery tool execution (M1-14/15)', () => {
     expect(completed.every((c) => c.result.success)).toBe(true)
 
     expect(events[events.length - 1].type).toBe('run.completed')
+  })
+
+  it('keeps a conversation-stable cache key and caches message history between tool rounds', async () => {
+    const requests: CompletionRequest[] = []
+    const trace: string[] = []
+    const reader = makeSlowReadTool('reader', 1, trace)
+    const toolTurn: CompletionChunk[] = [
+      { type: 'tool_call_start', id: 'cache-read', name: 'reader' },
+      { type: 'tool_call_end', id: 'cache-read', input: {} },
+      { type: 'message_end', stopReason: 'tool_use' },
+    ]
+    const scripted = makeMockProvider([toolTurn, finalTurn], requests)
+    const cacheProvider: ModelProvider = {
+      ...scripted,
+      metadata: { ...scripted.metadata, supportsPromptCache: true },
+    }
+
+    for await (const _event of runQuery(makeCtx(cacheProvider, [reader]))) {
+      // drain
+    }
+
+    expect(requests).toHaveLength(2)
+    expect(requests[0].promptCache?.messages).toBe(true)
+    expect(requests[1].promptCache?.messages).toBe(true)
+    expect(requests[0].promptCache?.key).toMatch(/^conversation-/)
+    expect(requests[1].promptCache?.key).toBe(requests[0].promptCache?.key)
+    expect(requests[1].tools?.map((tool) => tool.name)).toEqual(['reader'])
+  })
+
+  it('covers a 70K attachment in one parallel tool round plus the final model round', async () => {
+    const text = '数'.repeat(70_000)
+    const requests: CompletionRequest[] = []
+    const reads: CompletionChunk[] = Array.from({ length: 9 }, (_, index) => [
+      { type: 'tool_call_start' as const, id: `page-${index}`, name: 'read_attachment' },
+      {
+        type: 'tool_call_end' as const,
+        id: `page-${index}`,
+        input: { attachmentId: 'att-large', offset: index * 8_000, limit: 8_000 },
+      },
+    ]).flat()
+    reads.push({ type: 'message_end', stopReason: 'tool_use' })
+    const ctx = makeCtx(makeMockProvider([reads, finalTurn], requests), [readAttachmentTool as Tool])
+    const events: QueryEvent[] = []
+    for await (const event of runQuery({
+      ...ctx,
+      attachments: [{ id: 'att-large', name: 'large.md', size: text.length, text }],
+      attachmentMode: 'retrieval',
+      model: { ...ctx.model, contextWindow: 200_000 },
+      limits: {
+        ...ctx.limits,
+        maxToolCalls: 20,
+        toolLoopBudgets: {
+          'attachment-retrieval': { maxCalls: 13, softThreshold: 3, hardThreshold: 5 },
+          'attachment-retrieval:read': { maxCalls: 9, softThreshold: 3, hardThreshold: 5 },
+        },
+      },
+    })) events.push(event)
+
+    expect(requests).toHaveLength(2)
+    expect(events.filter((event) => event.type === 'tool.completed')).toHaveLength(9)
+    const secondPrompt = JSON.stringify(requests[1].messages)
+    expect(secondPrompt).not.toContain('re-read if needed')
+    expect(secondPrompt).not.toContain('Result stored as')
+    expect(events.at(-1)?.type).toBe('run.completed')
   })
 
   it('tombstones unknown tool in a batch while executing the valid one', async () => {
@@ -910,6 +1014,52 @@ describe('runQuery tool execution (M1-14/15)', () => {
     expect(sent[2]).not.toContain('安全熔断')
     expect(sent[3]).toContain('安全熔断')
     expect(sent[3]).toContain('fail_tool')
+  })
+
+  it('does not count loop_detected guidance as an execution failure streak', async () => {
+    let executions = 0
+    const loopAwareTool: Tool = {
+      name: 'loop_aware_read',
+      description: 'reports a repeated page',
+      inputSchema: { type: 'object' },
+      readOnly: true,
+      concurrencySafe: false,
+      destructive: false,
+      requiresConfirmation: false,
+      availability: 'always',
+      permissions: [],
+      async execute(): Promise<ToolResult> {
+        executions++
+        return {
+          success: false,
+          content: '不要重复读取同一页，请继续下一页。',
+          error: { kind: 'loop_detected', message: 'duplicate page', recoverable: true },
+        }
+      },
+      renderCall: () => 'loop-aware read',
+    }
+    const repeatedTurn = (id: string): CompletionChunk[] => [
+      { type: 'tool_call_start', id, name: 'loop_aware_read' },
+      { type: 'tool_call_end', id, input: { id } },
+      { type: 'message_end', stopReason: 'tool_use' },
+    ]
+    const requests: CompletionRequest[] = []
+    const ctx = makeCtx(makeMockProvider([
+      repeatedTurn('loop-1'),
+      repeatedTurn('loop-2'),
+      repeatedTurn('loop-3'),
+      repeatedTurn('loop-4'),
+      finalTurn,
+    ], requests), [loopAwareTool])
+
+    const events: QueryEvent[] = []
+    for await (const event of runQuery(ctx)) events.push(event)
+
+    expect(executions).toBe(4)
+    expect(requests).toHaveLength(5)
+    expect(JSON.stringify(requests)).not.toContain('安全熔断')
+    expect(events.some((event) => event.type === 'run.failed')).toBe(false)
+    expect(events.at(-1)?.type).toBe('run.completed')
   })
 
   it('resets the failure streak once the tool succeeds again', async () => {

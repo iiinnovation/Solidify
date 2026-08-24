@@ -21,6 +21,8 @@ const NATIVE_BODY_KEYS: Record<RelayApiFormat, readonly string[]> = {
     'max_tokens',
     'stream',
     'stream_options',
+    'tool_choice',
+    'prompt_cache_key',
   ],
   anthropic: [
     'system',
@@ -30,6 +32,7 @@ const NATIVE_BODY_KEYS: Record<RelayApiFormat, readonly string[]> = {
     'temperature',
     'top_p',
     'stream',
+    'tool_choice',
   ],
 }
 

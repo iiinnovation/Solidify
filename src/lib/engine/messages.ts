@@ -217,8 +217,6 @@ All relative file paths are resolved inside this workspace boundary.`
       prompt += `\nUser attachments are bounded platform resources (not filesystem files). For complete-reading tasks, prefer prepare_attachment_evidence once; use search_attachments and read_attachment only for targeted gaps. Do NOT attempt to read user attachments using read_file.`
   } else if (ctx.attachmentMode === 'inline' && ctx.attachments?.length) {
     prompt += `\nThe full text of the user's attachments is included in the user message as reference data. Do not call attachment retrieval tools for those files.`
-  } else if (ctx.attachmentMode === 'evidence' && ctx.attachments?.length) {
-    prompt += `\nA bounded, source-tagged evidence pack from the user's attachments is already included in the user message. Attachment retrieval is intentionally unavailable; use that evidence directly and do not emit or simulate tool calls.`
   }
 
   prompt += `\n

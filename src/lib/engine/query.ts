@@ -201,7 +201,6 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       const drawioGenerationOnly = drawioRun
         && (
           runCtx.attachmentMode === 'inline'
-          || runCtx.attachmentMode === 'evidence'
           || (!runCtx.attachments?.length && activeTools.length === 0)
           || closedToolGroups.has('attachment-retrieval')
         )
@@ -467,18 +466,6 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
         activeTools,
       )
 
-      // Draw.io generation is a targeted extraction task, not an open-ended
-      // document-reading session. Once a search/read result has produced
-      // concrete attachment evidence, close the retrieval phase and force the
-      // model to generate from that evidence instead of exploring every
-      // remaining reader and Skill reference.
-      if (
-        activeSkill?.metadata.name === 'drawio-diagram'
-        && hasDrawioAttachmentEvidence(response.toolCalls, results)
-      ) {
-        toolLoopGuard.closeGroup('attachment-retrieval')
-      }
-
       closedToolGroups = new Set(
         activeTools
           .flatMap((tool) => tool.loopGroup ? [tool.loopGroup] : [])
@@ -604,7 +591,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
           consecutiveToolFailures.set(call.name, 0)
         } else if (
           matchingResult
-          && !['invalid_input', 'permission_denied', 'aborted'].includes(matchingResult.error?.kind ?? '')
+          && !['invalid_input', 'permission_denied', 'aborted', 'loop_detected'].includes(matchingResult.error?.kind ?? '')
         ) {
           const current = (consecutiveToolFailures.get(call.name) ?? 0) + 1
           consecutiveToolFailures.set(call.name, current)
@@ -612,13 +599,9 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       }
 
       // Append tool results as next message
-      const suppressDrawioEvidenceHandle = activeSkill?.metadata.name === 'drawio-diagram'
-        && hasTargetedAttachmentEvidence(response.toolCalls, results)
       const toolResultContent: MessageContent[] = results.flatMap((result) => {
         const call = response.toolCalls.find((c) => c.id === result.callId)
-        let content = suppressDrawioEvidenceHandle && call?.name === 'prepare_attachment_evidence' && result.handle
-          ? '附件证据包已准备完成；本轮定向搜索结果已提供，直接依据这些证据生成 Draw.io 图表。'
-          : modelVisibleToolResult(call?.name, result)
+        let content = modelVisibleToolResult(call?.name, result)
         if (!result.success && call) {
           const failCount = consecutiveToolFailures.get(call.name) ?? 0
           if (failCount >= 3) {
@@ -1152,6 +1135,7 @@ async function* executeTools(
         loopGuard?.observe(call, prep.tool, loopDecision.result)
         const result: ToolResult & { callId: string } = {
           ...loopDecision.result,
+          content: `${loopDecision.result.content}\n\n[循环检测提示] ${loopDecision.message}`,
           callId: call.id,
           metadata: { ...loopDecision.result.metadata, durationMs: 0 },
         }
@@ -1212,10 +1196,73 @@ async function* executeTools(
     },
   })
 
-  // M1-15: Parallel only when EVERY tool is readOnly && concurrencySafe.
-  // Start all, then yield completions in model-returned order.
-  if (!harness && canRunInParallel(runnable.map(r => r.call), ctx.tools)) {
-    for (const { call } of runnable) {
+  // M1-15: Parallel only when EVERY tool is readOnly + concurrencySafe and the
+  // real Harness policy says every call is immediately allowed. A batch with
+  // one confirmation/denial stays on the serial path, preserving UI approval
+  // ordering. This keeps Harness enabled in production without making safe
+  // attachment/file reads artificially sequential.
+  let runInParallel = canRunInParallel(runnable.map(r => r.call), ctx.tools)
+  if (runInParallel && harness) {
+    runInParallel = runnable.every(({ call, tool }) => {
+      const policy = harness.policy.evaluate(tool, call, {
+        workspace: toolCtx.workspace,
+        platform: toolCtx.platform,
+        settings: toolCtx.settings,
+        permissions: toolCtx.permissions,
+        toolContext: toolCtx,
+        skillResources: toolCtx.skillResources,
+        isOnline: typeof navigator === 'undefined' || navigator.onLine,
+      })
+      return policy.kind === 'allow' && hardGuard(ctx, tool, call).kind !== 'deny'
+    })
+  }
+  if (runInParallel) {
+    const preflightResults = new Map<string, ToolResult & { callId: string }>()
+    const executable: typeof runnable = []
+    for (const item of runnable) {
+      const { call, tool } = item
+      if (!harness) {
+        executable.push(item)
+        continue
+      }
+      const authoritativeName = call.name
+      const authoritativeInput = JSON.stringify(call.input)
+      const hookCall = snapshotJson(call) as unknown as ToolCall
+      const beforeTool = await harness.hooks.waterfall('before_tool_call', hookCall, { type: 'before_tool_call', runId: ctx.runId, callId: call.id, signal: ctx.signal, onHookError: (id, error) => logger.warn('hook.failed', { id, error: String(error) }) })
+      let rejected: ToolResult & { callId: string } | undefined
+      if (beforeTool.action === 'abort') {
+        rejected = { callId: call.id, success: false, content: beforeTool.reason, error: { kind: 'permission_denied', message: beforeTool.reason, recoverable: true }, metadata: { durationMs: 0 } }
+      } else if (beforeTool.action === 'short_circuit') {
+        rejected = { ...beforeTool.result, callId: call.id }
+      } else if (beforeTool.value.name !== authoritativeName || JSON.stringify(beforeTool.value.input) !== authoritativeInput || call.name !== authoritativeName || JSON.stringify(call.input) !== authoritativeInput) {
+        const reason = '工具请求落账后不可修改名称或参数，请发起新的工具调用。'
+        rejected = { callId: call.id, success: false, content: reason, error: { kind: 'permission_denied', message: reason, recoverable: true }, metadata: { durationMs: 0 } }
+      } else {
+        const policy = Object.freeze(harness.policy.evaluate(tool, call, {
+          workspace: toolCtx.workspace,
+          platform: toolCtx.platform,
+          settings: toolCtx.settings,
+          permissions: toolCtx.permissions,
+          toolContext: toolCtx,
+          skillResources: toolCtx.skillResources,
+          isOnline: typeof navigator === 'undefined' || navigator.onLine,
+        }))
+        await harness.hooks.observe('on_permission', { type: 'on_permission', runId: ctx.runId, callId: call.id, call, decision: policy, onHookError: (id, error) => logger.warn('hook.failed', { id, error: String(error) }) })
+        const guard = hardGuard(ctx, tool, call)
+        if (policy.kind !== 'allow' || guard.kind === 'deny') {
+          const reason = policy.kind !== 'allow'
+            ? policy.reason
+            : guard.kind === 'deny'
+              ? guard.reason
+              : '工具未通过并行执行安全检查。'
+          rejected = { callId: call.id, success: false, content: reason, error: { kind: 'permission_denied', message: reason, recoverable: true }, metadata: { durationMs: 0 } }
+        }
+      }
+      if (rejected) preflightResults.set(call.id, rejected)
+      else executable.push(item)
+    }
+
+    for (const { call } of executable) {
       yield { type: 'run.phase', ...toolRunPhase(call.name) }
       yield {
         type: 'tool.progress',
@@ -1228,29 +1275,36 @@ async function* executeTools(
     // would leave the later ones unhandled if an earlier one rejects (or if the
     // consumer abandons the generator at the yield below), producing
     // unhandledrejection and discarding results that already completed.
-    const promises = runnable.map(({ tool, call }) =>
-      executeCall(tool, call, makeOpts(call)).catch((error): ToolResult => ({
-        success: false,
-        content: `工具执行失败：${error instanceof Error ? error.message : String(error)}`,
-        error: {
-          kind: 'runtime',
-          message: error instanceof Error ? error.message : String(error),
-          recoverable: true,
-        },
-        metadata: { durationMs: 0 },
-      })),
-    )
-    for (let i = 0; i < runnable.length; i++) {
-      const { call, tool, loopWarning } = runnable[i]
-      const executed = await promises[i]
-      loopGuard?.observe(call, tool, executed)
+    const promises = new Map(executable.map(({ tool, call }) => [call.id,
+      (harness
+        ? harness.hooks.around('execute_tool', { type: 'execute_tool', runId: ctx.runId, callId: call.id, call, signal: ctx.signal }, () => executeCall(tool, call, makeOpts(call)))
+        : executeCall(tool, call, makeOpts(call)))
+        .catch((error): ToolResult => ({
+          success: false,
+          content: `工具执行失败：${error instanceof Error ? error.message : String(error)}`,
+          error: {
+            kind: 'runtime',
+            message: error instanceof Error ? error.message : String(error),
+            recoverable: true,
+          },
+          metadata: { durationMs: 0 },
+        })),
+    ]))
+    for (const { call, tool, loopWarning } of runnable) {
+      const preflight = preflightResults.get(call.id)
+      const executed = preflight ?? await promises.get(call.id)!
+      if (!preflight) loopGuard?.observe(call, tool, executed)
       const result = {
         ...executed,
         ...(loopWarning ? { content: `${executed.content}\n\n[循环检测提示] ${loopWarning}` } : {}),
         callId: call.id,
       }
       results.push(result)
+      if (harness) recordToolCompleted(harness, result.callId, result)
       yield { type: 'tool.completed', callId: call.id, result }
+      if (harness && !preflight) {
+        await harness.hooks.observe('after_tool_call', { type: 'after_tool_call', runId: ctx.runId, callId: call.id, result: Object.freeze({ ...result }), onHookError: (id, error) => logger.warn('hook.failed', { id, error: String(error) }) })
+      }
       logger.log('tool.completed', {
         callId: call.id,
         name: call.name,
@@ -1415,6 +1469,9 @@ async function* executeTools(
  * the model can only guess the next offset and repeatedly request page zero.
  */
 function modelVisibleToolResult(toolName: string | undefined, result: ToolResult): string {
+  // A handle marker is itself the pagination instruction. Appending a second
+  // read_attachment offset hint creates two mutually exclusive next actions.
+  if (result.handle) return result.content
   if (!result.success || !result.data || typeof result.data !== 'object' || Array.isArray(result.data)) {
     return result.content
   }
@@ -1431,57 +1488,6 @@ function modelVisibleToolResult(toolName: string | undefined, result: ToolResult
     return `${result.content}\n\n[分页提示] 当前内容已读取到末尾（总长度 ${total}，当前 offset=${offset}）。请不要重复读取这一页。`
   }
   return result.content
-}
-
-function hasTargetedAttachmentEvidence(
-  calls: readonly ToolCall[],
-  results: readonly (ToolResult & { callId: string })[],
-): boolean {
-  const toolNames = new Map(calls.map((call) => [call.id, call.name]))
-  return results.some((result) => {
-    if (!result.success || typeof result.content !== 'string') return false
-    if (result.content.includes('没有找到与查询匹配的附件内容')) return false
-    const toolName = toolNames.get(result.callId)
-    if (toolName !== 'search_attachments' && toolName !== 'read_attachment') return false
-    const data = result.data
-    if (data !== undefined && data !== null && typeof data === 'object' && !Array.isArray(data)) {
-      if (toolName === 'search_attachments' && Array.isArray((data as { hits?: unknown }).hits)) {
-        return (data as { hits: unknown[] }).hits.length > 0
-      }
-      if (toolName === 'read_attachment') {
-        return typeof (data as { attachmentId?: unknown }).attachmentId === 'string'
-      }
-    }
-    // Normalization may drop oversized structured data after storing the full
-    // result behind a handle. A successful, non-empty result from these two
-    // call-verified attachment tools is still concrete model-visible evidence.
-    return result.content.trim().length > 0
-  })
-}
-
-/**
- * Decide when Draw.io has enough model-visible evidence to leave retrieval.
- *
- * A search hit or bounded read is already targeted. A prepared evidence pack
- * is sufficient only when it remained inline; a handleized/truncated pack gave
- * the model just a short preview, so one targeted search/read must remain
- * available to fill the actual diagram gap.
- */
-function hasDrawioAttachmentEvidence(
-  calls: readonly ToolCall[],
-  results: readonly (ToolResult & { callId: string })[],
-): boolean {
-  if (hasTargetedAttachmentEvidence(calls, results)) return true
-  const preparedIds = new Set(
-    calls
-      .filter((call) => call.name === 'prepare_attachment_evidence')
-      .map((call) => call.id),
-  )
-  return results.some((result) => preparedIds.has(result.callId)
-    && result.success
-    && !result.truncated
-    && !result.handle
-    && result.content.trim().length > 0)
 }
 
 /** Relay progress emitted during a pending tool promise without buffering it until completion. */

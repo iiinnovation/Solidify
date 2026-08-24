@@ -208,7 +208,7 @@ export interface ModelCapabilities {
 - 软提示一次、随后关闭检索组，并在下一轮隐藏该组工具；
 - 模型仍无视关闭信号时，产出 `run.exhausted{tool_loop}`，不继续消耗剩余轮次。
 
-附件检索默认采用 `search` 最多 3 次、`read` 最多 6 次、组内最多 10 次。达到预算后只保留已有证据，进入生成阶段。
+附件检索默认采用 `search` 最多 3 次；`read` 预算至少 6 次，并按可读附件总字符数的 `ceil(total / 8000)` 动态扩展，组预算同步覆盖全部读取页和检索余量。达到预算后只保留已有证据，进入生成阶段。
 
 ### 6.2 工具结果的本地去重
 
@@ -226,7 +226,7 @@ export interface ModelCapabilities {
 **大结果句柄化**（关键机制）：
 
 ```ts
-if (byteLength(result.data) > HANDLE_THRESHOLD) {   // 默认 24KB
+if (byteLength(result.data) > HANDLE_THRESHOLD) {   // 默认 32KB
   const handle = await memory.store(result.data)
   return {
     summary: truncate(result.data, 500),

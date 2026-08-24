@@ -71,7 +71,7 @@ export class AnthropicProvider implements ModelProvider {
 
     try {
       // Convert to Anthropic format
-      const messages = this.convertMessages(request.messages)
+      const messages = this.convertMessages(request.messages, request.promptCache?.messages === true)
       let tools = request.tools ? this.convertTools(request.tools) : undefined
       if (tools && request.promptCache?.tools && tools.length > 0) {
         // Anthropic caches all preceding tool blocks at the last breakpoint.
@@ -284,14 +284,29 @@ export class AnthropicProvider implements ModelProvider {
    * Convert unified messages to Anthropic format
    */
   private convertMessages(
-    messages: UnifiedMessage[]
+    messages: UnifiedMessage[],
+    cacheLastMessage = false,
   ): Anthropic.MessageParam[] {
-    return messages
+    const converted: Anthropic.MessageParam[] = messages
       .filter((m) => m.role !== 'system') // System handled separately
       .map((msg) => ({
         role: msg.role as 'user' | 'assistant',
         content: this.convertContent(msg.content),
       }))
+    if (!cacheLastMessage || converted.length === 0) return converted
+
+    // Anthropic reuses the entire prefix before the last cache breakpoint.
+    // Putting it on the newest message turns every subsequent agent round into
+    // an incremental prefill instead of reprocessing the full tool history.
+    const lastIndex = converted.length - 1
+    const last = converted[lastIndex]
+    const content = typeof last.content === 'string'
+      ? [{ type: 'text' as const, text: last.content, cache_control: { type: 'ephemeral' as const } }]
+      : last.content.map((block, index) => index === last.content.length - 1
+          ? { ...block, cache_control: { type: 'ephemeral' as const } }
+          : block)
+    converted[lastIndex] = { ...last, content } as Anthropic.MessageParam
+    return converted
   }
 
   /**

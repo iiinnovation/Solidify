@@ -34,12 +34,7 @@ export interface AttachmentEvidencePack {
   entries: Array<{ attachmentId: string; name: string; sectionId: string; offset: number; end: number }>
 }
 
-/**
- * `evidence` means the client has already assembled a bounded, source-tagged
- * evidence pack before the first model call. Unlike `retrieval`, it must not
- * expose attachment tools to the model.
- */
-export type AttachmentContextMode = 'inline' | 'retrieval' | 'evidence'
+export type AttachmentContextMode = 'inline' | 'retrieval'
 
 export interface AttachmentRoutingInput {
   resources: readonly AttachmentResource[]
@@ -50,7 +45,7 @@ export interface AttachmentRoutingInput {
   reservedTokens?: number
 }
 
-const INLINE_ATTACHMENT_RATIO = 0.20
+const INLINE_ATTACHMENT_RATIO = 0.60
 const DEFAULT_CONTEXT_WINDOW = 32_000
 
 /**
@@ -61,13 +56,14 @@ const DEFAULT_CONTEXT_WINDOW = 32_000
 export function chooseAttachmentContextMode(input: AttachmentRoutingInput): 'inline' | 'retrieval' {
   const resources = input.resources
   if (resources.length === 0 || resources.some((resource) => !resource.text?.trim())) return 'retrieval'
-  if (!/(全文|完整阅读|通读|逐段阅读|全部内容|基于全文|阅读附件)/i.test(input.userContent)) return 'retrieval'
+  if (!/(全文|完整阅读|通读|逐段阅读|全部内容|基于全文|阅读附件|附件|文档|材料|文件)/i.test(input.userContent)) return 'retrieval'
   if (/(多轮|分步骤|分阶段|先.+再|然后|多个交付物|分别|逐个|持续)/i.test(input.userContent)) return 'retrieval'
 
-  // This is intentionally conservative: UTF-8/Unicode tokenization varies by
-  // provider, so three characters per token avoids opting into an oversized
-  // first request. The 20% cap leaves room for the answer and fixed context.
-  const bodyTokens = resources.reduce((sum, resource) => sum + Math.ceil((resource.text?.length ?? 0) / 3), 0)
+  // CJK is close to one token per code point on the conservative engine
+  // estimator. Counting /3 made a 70K Chinese document look three times
+  // smaller than it was. The 60% cap leaves substantial output/history room
+  // while allowing a complete document task to finish in one model round.
+  const bodyTokens = resources.reduce((sum, resource) => sum + [...(resource.text ?? '')].length, 0)
   const contextWindow = Math.max(1, input.contextWindow ?? DEFAULT_CONTEXT_WINDOW)
   const reservedTokens = Math.max(0, input.reservedTokens ?? 0)
   const available = Math.max(0, contextWindow - reservedTokens)
@@ -172,83 +168,6 @@ export function buildAttachmentEvidencePack(
     content: chunks.join('\n\n'),
     maxChars,
     truncated: chunks.some((chunk) => chunk.includes('证据包已截断')),
-    entries,
-  }
-}
-
-/**
- * Assemble one bounded evidence pack for diagram generation before the model
- * runs. The leading document slice preserves titles and overview context;
- * targeted excerpts recover architecture/flow details that appear later in a
- * long, weakly-structured document. This removes the need for a model-driven
- * prepare/search/read loop.
- */
-export function buildDiagramAttachmentEvidencePack(
-  resources: readonly AttachmentResource[],
-  userContent: string,
-  requestedMaxChars = DEFAULT_EVIDENCE_CHARS,
-): AttachmentEvidencePack | undefined {
-  const maxChars = Math.max(1_000, Math.min(requestedMaxChars, MAX_EVIDENCE_CHARS))
-  const overviewBudget = Math.min(8_000, Math.max(1_000, Math.floor(maxChars * 0.4)))
-  const overview = buildAttachmentEvidencePack(resources, undefined, overviewBudget)
-  const focusedQuery = [
-    userContent,
-    '总体技术架构',
-    '架构设计',
-    '系统架构',
-    '业务应用层',
-    'AI能力层',
-    '模型服务层',
-    '数据支撑层',
-    '安全治理',
-    '集成运维',
-    '核心组件',
-    '业务流程',
-    '数据流',
-  ].join(' ')
-  const hits = searchAttachmentResources(resources, focusedQuery, 20)
-  const chunks = overview?.content ? [overview.content] : []
-  const entries = overview ? [...overview.entries] : []
-  let used = chunks.reduce((sum, chunk) => sum + chunk.length + 2, 0)
-  let omitted = false
-
-  for (const hit of hits) {
-    const overlapsExisting = entries.some((entry) =>
-      entry.attachmentId === hit.attachmentId
-      && hit.start < entry.end
-      && hit.end > entry.offset,
-    )
-    if (overlapsExisting) continue
-    const sectionId = hit.sectionId ?? 'section-01'
-    const prefix = `[source attachment:${hit.attachmentId} name:${hit.name} section:${sectionId} offset:${hit.start}]\n`
-    const remaining = maxChars - used - prefix.length
-    if (remaining <= 0) {
-      omitted = true
-      break
-    }
-    const text = hit.excerpt.length <= remaining
-      ? hit.excerpt
-      : `${hit.excerpt.slice(0, Math.max(1, remaining - 28)).trimEnd()}\n[…证据包已截断…]`
-    chunks.push(`${prefix}${text}`)
-    entries.push({
-      attachmentId: hit.attachmentId,
-      name: hit.name,
-      sectionId,
-      offset: hit.start,
-      end: hit.start + text.length,
-    })
-    used += prefix.length + text.length + 2
-    if (text.length < hit.excerpt.length) {
-      omitted = true
-      break
-    }
-  }
-
-  if (entries.length === 0) return undefined
-  return {
-    content: chunks.join('\n\n'),
-    maxChars,
-    truncated: Boolean(overview?.truncated) || omitted,
     entries,
   }
 }

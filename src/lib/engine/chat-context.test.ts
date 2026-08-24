@@ -182,9 +182,7 @@ describe('chat Agent workspace context', () => {
     expect(context.pptdMedia).toBe(media)
   })
 
-  it('keeps a preloaded Draw.io evidence run completely tool-free', () => {
-    // Diagram evidence is assembled before createChatQueryContext. Neither
-    // attachment readers nor unrelated Skill/runtime tools belong in turn 1.
+  it('keeps a full-inline Draw.io run completely tool-free', () => {
     const context = createChatQueryContext({
       runId: 'run-attachment', conversationId: 'conversation', messages: [{ role: 'user', content: '根据文档绘制架构图' }],
       provider, signal: new AbortController().signal,
@@ -194,10 +192,10 @@ describe('chat Agent workspace context', () => {
         path: 'builtin://drawio-diagram/SKILL.md',
       },
       attachments: [{ id: 'att-1', name: '技术服务项目.docx', size: 77_600, text: '总体技术架构……' }],
-      attachmentMode: 'evidence',
+      attachmentMode: 'inline',
     })
 
-    expect(context.attachmentMode).toBe('evidence')
+    expect(context.attachmentMode).toBe('inline')
     expect(context.tools).toEqual([])
   })
 
@@ -217,6 +215,23 @@ describe('chat Agent workspace context', () => {
     expect(names).not.toContain('search_attachments')
     expect(names).not.toContain('read_attachment')
     expect(names).not.toContain('prepare_attachment_evidence')
+  })
+
+  it('does not expose attachment readers when text extraction produced no readable body', () => {
+    const context = createChatQueryContext({
+      runId: 'run-unreadable-drawio', conversationId: 'conversation',
+      messages: [{ role: 'user', content: '根据附件绘制架构图' }], provider,
+      signal: new AbortController().signal,
+      loadedSkill: {
+        metadata: { name: 'drawio-diagram', version: '1.0.0', description: '绘制流程图', allowedTools: [] },
+        content: '根据材料绘制流程图。',
+        path: 'builtin://drawio-diagram/SKILL.md',
+      },
+      attachments: [{ id: 'att-binary', name: 'scan.pdf', size: 77_600 }],
+      attachmentMode: 'retrieval',
+    })
+
+    expect(context.tools).toEqual([])
   })
 
   it('keeps runtime Skill activation out of an unselected chat', () => {
@@ -245,8 +260,23 @@ describe('chat Agent workspace context', () => {
     expect(context.tools.map((tool) => tool.name).sort()).toEqual([
       'prepare_attachment_evidence',
       'read_attachment',
+      'read_handle',
       'search_attachments',
     ])
+  })
+
+  it('sizes attachment read budgets from the total readable document length', () => {
+    const text = '数'.repeat(70_000)
+    const context = createChatQueryContext({
+      runId: 'run-large-attachment', conversationId: 'conversation',
+      messages: [{ role: 'user', content: '完整阅读附件' }], provider,
+      signal: new AbortController().signal,
+      attachments: [{ id: 'att-large', name: 'large.md', size: text.length, text }],
+      attachmentMode: 'retrieval',
+    })
+
+    expect(context.limits.toolLoopBudgets?.['attachment-retrieval:read']?.maxCalls).toBe(9)
+    expect(context.limits.toolLoopBudgets?.['attachment-retrieval']?.maxCalls).toBeGreaterThanOrEqual(13)
   })
 
   it('hides attachment readers when full text is already inline', () => {

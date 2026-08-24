@@ -197,20 +197,6 @@ export function buildRunTree(ledgers: readonly RunLedger[], rootRunId: string): 
   return root
 }
 
-/** Load all localStorage ledgers and return the requested task tree. */
-export function loadRunTree(rootRunId: string): RunTreeNode | null {
-  if (typeof localStorage === 'undefined') return null
-  const ledgers: RunLedger[] = []
-  for (let index = 0; index < localStorage.length; index++) {
-    const key = localStorage.key(index)
-    if (!key?.startsWith('solidify-ledger:')) continue
-    const runId = key.slice('solidify-ledger:'.length)
-    if (!runId) continue
-    ledgers.push(new RunLedger(runId, key))
-  }
-  return buildRunTree(ledgers, rootRunId)
-}
-
 function isRecord(value: JsonValue): value is { [key: string]: JsonValue } {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }

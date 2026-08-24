@@ -123,15 +123,20 @@ export function calculateInputSlotBudgets(ctx: QueryContext, budget: ContextBudg
   const compact = ctx.inputMode === 'compact_recovery'
   return {
     retrieved: Math.max(256, Math.min(compact ? 512 : 1_500, Math.floor(budget.available * (compact ? 0.04 : 0.1)))),
-    toolResults: Math.max(512, Math.min(compact ? 2_000 : 12_000, Math.floor(budget.available * (compact ? 0.12 : 0.3)))),
+    // Evidence must scale with the actual model window. A fixed 12k ceiling
+    // discarded all but roughly two Chinese attachment pages even when 160k+
+    // input tokens were available, which then instructed the model to fetch
+    // the same pages again on every turn.
+    toolResults: Math.max(512, Math.floor(budget.available * (compact ? 0.12 : 0.3))),
   }
 }
 
 /**
- * Handle threshold for large tool results (24KB). This matches the maximum
- * read_handle chunk so a retrieved chunk is not immediately handleized again.
+ * Keep a full 8,000-character CJK attachment page inline. Its UTF-8 body is
+ * 24,000 bytes before the source prefix, so the old 24KB boundary handleized
+ * every full page by only a few dozen bytes and forced needless pagination.
  */
-export const HANDLE_THRESHOLD = 24_000
+export const HANDLE_THRESHOLD = 32_000
 
 /**
  * Handleize large tool result.
@@ -624,8 +629,26 @@ export async function applyBudget(
   return nonEmpty.length > 0 ? nonEmpty : messages.slice(-1)
 }
 
-const OMITTED_TOOL_RESULT = '[Earlier result omitted; re-read if needed.]'
 export const DUPLICATE_TOOL_RESULT = '[Duplicate tool output omitted; the latest identical result is retained.]'
+
+const STORED_RESULT_HANDLE_PATTERN = /(?:\[Result stored as|Stored handle:)\s*((?:mem|handle)-[^:;\s\]]+)/i
+
+/** Return the exact runtime handle retained in a model-visible result marker. */
+export function storedResultHandle(content: string): string | undefined {
+  return content.match(STORED_RESULT_HANDLE_PATTERN)?.[1]
+}
+
+/**
+ * Preserve continuation coordinates without teaching the model to replay the
+ * original tool. The generic predecessor explicitly said “re-read if needed”,
+ * creating the retrieval loop that context compaction was meant to prevent.
+ */
+function omittedToolResult(content: string): string {
+  const handle = storedResultHandle(content)
+  return handle
+    ? `[Earlier tool result omitted to preserve context. Do not repeat the original tool call. Stored handle: ${handle}; use read_handle with this exact handle only if the omitted evidence is essential.]`
+    : '[Earlier tool result omitted to preserve context. Do not repeat the original tool call; continue from the evidence still present.]'
+}
 
 /**
  * Replace repeated long tool payloads with a short marker before generic
@@ -671,27 +694,28 @@ export function capToolResultContext(messages: ClaudeMessage[], maxTokens: numbe
     ...message,
     content: typeof message.content === 'string' ? message.content : [...message.content],
   }))
-  const results: Array<{ messageIndex: number; partIndex: number; content: string }> = []
+  const results: Array<{ messageIndex: number; partIndex: number; content: string; marker: string }> = []
 
   for (let messageIndex = 0; messageIndex < output.length; messageIndex++) {
     const content = output[messageIndex].content
     if (typeof content === 'string') continue
     for (let partIndex = 0; partIndex < content.length; partIndex++) {
       const part = content[partIndex]
-      if (part.type === 'tool_result') results.push({ messageIndex, partIndex, content: part.content })
+      if (part.type === 'tool_result') {
+        results.push({ messageIndex, partIndex, content: part.content, marker: omittedToolResult(part.content) })
+      }
     }
   }
 
-  const markerTokens = estimateTokens(OMITTED_TOOL_RESULT)
   // Reserve a valid non-empty result for every tool call before spending the
   // rest on recent evidence. maxToolCalls is bounded, so the 512-token floor in
   // calculateInputSlotBudgets covers this reserve in normal operation.
-  let remaining = Math.max(0, maxTokens - markerTokens * results.length)
+  let remaining = Math.max(0, maxTokens - results.reduce((sum, result) => sum + estimateTokens(result.marker), 0))
   for (const result of results) {
     const message = output[result.messageIndex]
     if (typeof message.content === 'string') continue
     const part = message.content[result.partIndex]
-    if (part.type === 'tool_result') message.content[result.partIndex] = { ...part, content: OMITTED_TOOL_RESULT }
+    if (part.type === 'tool_result') message.content[result.partIndex] = { ...part, content: result.marker }
   }
 
   for (let index = results.length - 1; index >= 0 && remaining > 0; index--) {
@@ -701,6 +725,7 @@ export function capToolResultContext(messages: ClaudeMessage[], maxTokens: numbe
     const part = message.content[result.partIndex]
     if (part.type !== 'tool_result') continue
     const originalTokens = estimateTokens(result.content)
+    const markerTokens = estimateTokens(result.marker)
     const extraForFull = Math.max(0, originalTokens - markerTokens)
     if (extraForFull <= remaining) {
       message.content[result.partIndex] = { ...part, content: result.content }
@@ -710,7 +735,7 @@ export function capToolResultContext(messages: ClaudeMessage[], maxTokens: numbe
     const separatorTokens = estimateTokens('\n\n')
     const previewBudget = Math.max(0, remaining - separatorTokens)
     const preview = previewBudget > 0 ? clipGenericText(result.content, previewBudget).clipped.trim() : ''
-    const replacement = preview ? `${preview}\n\n${OMITTED_TOOL_RESULT}` : OMITTED_TOOL_RESULT
+    const replacement = preview ? `${preview}\n\n${result.marker}` : result.marker
     message.content[result.partIndex] = { ...part, content: replacement }
     remaining = 0
   }

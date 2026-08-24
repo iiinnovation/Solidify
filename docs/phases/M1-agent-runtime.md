@@ -50,7 +50,7 @@ M1-01/02/03 按照规格要求一起设计并提交，包含：
 |---|---|---|---|---|
 | M1-04 | 上下文组装与消息构建 | `src/lib/engine/messages.ts` | 1pd | ✅ |
 | M1-05 | 多 Provider 架构 + 工具 schema 生成 | `src/lib/model/*` + `src/lib/engine/model.ts` | 1pd | ✅ |
-| M1-06 | SSE 解析扩展：支持工具调用增量 | `src/lib/engine/stream-parser.ts` | 1.5pd | ✅ |
+| M1-06 | SSE 解析扩展：支持工具调用增量 | `src/lib/model/openai.ts`、`anthropic.ts` | 1.5pd | ✅ |
 | M1-07 | Edge Function 透传 tools 参数 | `supabase/functions/_shared/ai-providers.ts`、`chat/index.ts` | 0.5pd | ✅ |
 
 **架构调整说明**：
@@ -69,7 +69,7 @@ Provider 配置包含显式 `supportsTools` 能力位，旧配置缺省为支持
 
 **M1-06 关键实现细节**：
 
-两家的工具调用增量格式差异大，已在 `stream-parser.ts` 中统一处理：
+两家的工具调用增量格式差异大，现由各自 provider adapter 直接处理：
 - OpenAI：`delta.tool_calls[].function.arguments` 分片拼接，按 index 累积
 - Anthropic：`content_block_start` + `input_json_delta` + `content_block_stop`
 

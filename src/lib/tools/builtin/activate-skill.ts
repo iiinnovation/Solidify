@@ -11,6 +11,8 @@ export interface ActivateSkillResult { skillName: string }
 export const activateSkillTool: Tool<ActivateSkillInput, ActivateSkillResult> = {
   name: 'activate_skill',
   description: 'Activate one trusted Skill only when the user explicitly asks for that Skill\'s specialized deliverable or workflow. Do not activate for definitions, explanations, discussions, comparisons, or topic-only questions; answer those directly.',
+  loopGroup: 'skill-activation',
+  replaySafe: false,
   inputSchema: {
     type: 'object',
     properties: { skillName: { type: 'string', minLength: 1, maxLength: 100 } },

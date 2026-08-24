@@ -32,6 +32,8 @@ const DEFAULT_LIMITS: RunLimits = {
     'attachment-retrieval': { maxCalls: 10, softThreshold: 3, hardThreshold: 5 },
     'attachment-retrieval:search': { maxCalls: 3, softThreshold: 3, hardThreshold: 5 },
     'attachment-retrieval:read': { maxCalls: 6, softThreshold: 3, hardThreshold: 5 },
+    'attachment-retrieval:handle': { maxCalls: 6, softThreshold: 2, hardThreshold: 3 },
+    'skill-activation': { maxCalls: 1, softThreshold: 1, hardThreshold: 1 },
     // A capture reflects render state, not arguments. Two attempts are enough
     // to cover a legitimate retarget; beyond that the tool is looping on an
     // environment it cannot influence, so close the group instead of paying
@@ -75,12 +77,13 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
   const localWorkspaceEnabled = isEnabled('localWorkspace') && Boolean(workspaceRoot)
   configureLedgerWorkspace(localWorkspaceEnabled ? workspaceRoot ?? null : null)
   const hasAttachments = Boolean(options.attachments?.length)
+  const hasReadableAttachments = Boolean(options.attachments?.some((attachment) => attachment.text?.trim()))
   const agentToolsEnabled = getFlags().agentLoop
     && isEnabled('toolCalling')
     && options.provider.supportsTools !== false
-  const attachmentRetrievalActive = hasAttachments && options.attachmentMode === 'retrieval'
+  const attachmentRetrievalActive = hasReadableAttachments && options.attachmentMode === 'retrieval'
   const deterministicDrawio = skill?.metadata.name === 'drawio-diagram'
-    && (!hasAttachments || options.attachmentMode === 'inline' || options.attachmentMode === 'evidence')
+    && (!hasAttachments || !hasReadableAttachments || options.attachmentMode === 'inline')
   // Feature flags describe what the installation supports, not what every
   // conversation should receive. A run earns a tool surface only through an
   // explicitly selected/pre-routed Skill or a retrieval-mode attachment.
@@ -101,10 +104,10 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
       })
     : []
   const scopedTools = !skill && attachmentRetrievalActive
-    ? resolvedTools.filter((tool) => ATTACHMENT_TOOL_NAMES.has(tool.name))
+    ? resolvedTools.filter((tool) => ATTACHMENT_ONLY_TOOL_NAMES.has(tool.name))
     : resolvedTools
   const tools = (deterministicDrawio ? [] : scopedTools).filter((tool) =>
-    !ATTACHMENT_TOOL_NAMES.has(tool.name) || attachmentRetrievalActive,
+    !ATTACHMENT_READER_NAMES.has(tool.name) || attachmentRetrievalActive,
   ).filter((tool) =>
     tool.name !== 'activate_skill' || (skillV2Enabled && Boolean(options.skillRegistry) && !skill),
   )
@@ -132,7 +135,7 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
       maxTokens: maxOutputTokens,
       contextWindow: options.provider.contextWindow ?? inferContextWindow(options.provider.modelId),
     },
-    limits: { ...DEFAULT_LIMITS, maxOutputTokens },
+    limits: createRunLimits(options.attachments, maxOutputTokens),
     signal: options.signal,
     providerRegistry: createProviderRegistry({
       [providerName]: {
@@ -144,7 +147,10 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
           supportsTools: options.provider.supportsTools !== false,
           supportsVision: modelSupportsVision(options.provider.modelId, options.provider.supportsVision),
           timeout: 60000,
-          maxRetries: 2,
+          // SDK retries obey an upstream Retry-After header without a ceiling
+          // and emit no stream events while sleeping. Fail fast so a 429 is
+          // visible to the run instead of silently adding 30–60 seconds.
+          maxRetries: 0,
           fetch: createModelProviderFetch(options.provider),
         },
       },
@@ -164,10 +170,40 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
   return runToolsActive && !deterministicDrawio ? enablePptdPipeline(withSubAgents) : withSubAgents
 }
 
-const ATTACHMENT_TOOL_NAMES: ReadonlySet<string> = new Set([
+function createRunLimits(
+  attachments: readonly AttachmentResource[] | undefined,
+  maxOutputTokens: number,
+): RunLimits {
+  const readablePages = (attachments ?? []).reduce((sum, attachment) => {
+    const characters = attachment.text ? [...attachment.text].length : 0
+    return sum + (characters > 0 ? Math.ceil(characters / 8_000) : 0)
+  }, 0)
+  const readCalls = Math.max(6, readablePages)
+  const handleCalls = Math.max(6, readablePages)
+  return {
+    ...DEFAULT_LIMITS,
+    maxOutputTokens,
+    toolLoopBudgets: {
+      ...DEFAULT_LIMITS.toolLoopBudgets,
+      'attachment-retrieval': { maxCalls: Math.max(10, readCalls + 4), softThreshold: 3, hardThreshold: 5 },
+      'attachment-retrieval:read': { maxCalls: readCalls, softThreshold: 3, hardThreshold: 5 },
+      'attachment-retrieval:handle': { maxCalls: handleCalls, softThreshold: 2, hardThreshold: 3 },
+    },
+  }
+}
+
+const ATTACHMENT_READER_NAMES: ReadonlySet<string> = new Set([
   'search_attachments',
   'read_attachment',
   'prepare_attachment_evidence',
+])
+
+const ATTACHMENT_ONLY_TOOL_NAMES: ReadonlySet<string> = new Set([
+  ...ATTACHMENT_READER_NAMES,
+  // Hidden by streamModel until a compacted, model-visible result contains
+  // an exact stored handle. It still has to exist in the run tool registry so
+  // that it can become visible on the following model round.
+  'read_handle',
 ])
 
 export interface ChatSkillRuntime {

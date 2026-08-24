@@ -119,12 +119,16 @@ describe('AnthropicProvider', () => {
       messages: [{ role: 'user', content: 'hello' }],
       tools: [{ name: 'lookup', description: 'Lookup', inputSchema: { type: 'object' } }],
       stream: true,
-      promptCache: { key: 'ctx-test', system: true, tools: true },
+      promptCache: { key: 'ctx-test', system: true, tools: true, messages: true },
     })) { /* drain */ }
 
     expect(captured).toMatchObject({
       system: [{ type: 'text', text: 'stable system', cache_control: { type: 'ephemeral' } }],
       tools: [{ cache_control: { type: 'ephemeral' } }],
+      messages: [{
+        role: 'user',
+        content: [{ type: 'text', text: 'hello', cache_control: { type: 'ephemeral' } }],
+      }],
     })
   })
 
