@@ -104,6 +104,7 @@ export class OpenAIProvider implements ModelProvider {
           model: request.model,
           messages,
           tools,
+          ...(request.toolChoice ? { tool_choice: request.toolChoice } : {}),
           temperature: request.temperature,
           max_tokens: request.maxTokens,
           stream: true,

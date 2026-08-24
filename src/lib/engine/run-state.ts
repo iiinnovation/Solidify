@@ -8,6 +8,8 @@ export interface RunToolItem {
   progress?: string
   progressDetail?: unknown
   status: 'requested' | 'running' | 'completed'
+  /** Actual executor start; tool.requested may arrive while the model stream is still open. */
+  executionStartedAt?: number
   startedAt: number
   completedAt?: number
 }
@@ -97,9 +99,14 @@ function computeMetrics(state: RunState, usage?: UsageStats): ExecutionMetrics {
  */
 function toolExecutionMs(state: RunState): number {
   const spans = state.tools
-    .filter((tool): tool is typeof tool & { startedAt: number; completedAt: number } =>
-      typeof tool.startedAt === 'number' && typeof tool.completedAt === 'number' && tool.completedAt > tool.startedAt)
-    .map((tool) => ({ start: tool.startedAt, end: tool.completedAt }))
+    .flatMap((tool) => {
+      if (typeof tool.completedAt !== 'number') return []
+      const start = tool.executionStartedAt
+        ?? (wasToolExecuted(tool) ? tool.startedAt : undefined)
+      return typeof start === 'number' && tool.completedAt > start
+        ? [{ start, end: tool.completedAt }]
+        : []
+    })
     .sort((a, b) => a.start - b.start)
 
   let total = 0
@@ -120,6 +127,15 @@ function toolExecutionMs(state: RunState): number {
     mergedEnd = span.end
   }
   return mergedStart === undefined ? 0 : total + (mergedEnd - mergedStart)
+}
+
+const PRE_EXECUTION_ERRORS = new Set(['invalid_input', 'permission_denied', 'circuit_breaker', 'budget_exhausted'])
+
+/** Distinguish model requests from calls that actually reached a tool executor. */
+export function wasToolExecuted(tool: RunToolItem): boolean {
+  if (tool.executionStartedAt !== undefined) return true
+  if (tool.status !== 'completed') return false
+  return !tool.result?.error || !PRE_EXECUTION_ERRORS.has(tool.result.error.kind)
 }
 
 export function applyRunEvent(state: RunState, event: QueryEvent): RunState {
@@ -187,6 +203,7 @@ export function applyRunEvent(state: RunState, event: QueryEvent): RunState {
       }
     case 'tool.progress':
       {
+        const now = Date.now()
         const detail = asSubAgentDetail(event.progress.detail)
         const withAgent = detail ? updateSubAgent(state, detail.agent, detail.budget) : state
         const activity = progressActivity(event.progress.phase, event.progress.message)
@@ -197,6 +214,7 @@ export function applyRunEvent(state: RunState, event: QueryEvent): RunState {
             ? {
                 ...item,
                 status: 'running',
+                executionStartedAt: item.executionStartedAt ?? now,
                 progress: event.progress.message ?? event.progress.phase,
                 progressDetail: event.progress.detail,
               }

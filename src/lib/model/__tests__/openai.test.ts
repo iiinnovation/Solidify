@@ -211,6 +211,31 @@ describe('OpenAIProvider', () => {
     })
   })
 
+  it('forwards an explicit generation-only tool choice', async () => {
+    let captured: unknown
+    async function* stream() {
+      yield { choices: [{ delta: { content: 'done' }, finish_reason: 'stop' }] }
+    }
+    Object.defineProperty(provider, 'client', {
+      value: {
+        chat: {
+          completions: {
+            create: async (params: unknown) => { captured = params; return stream() },
+          },
+        },
+      },
+    })
+
+    for await (const _event of provider.stream({
+      model: 'test-model',
+      messages: [{ role: 'user', content: 'generate now' }],
+      toolChoice: 'none',
+      stream: true,
+    })) { /* drain */ }
+
+    expect(captured).toMatchObject({ tool_choice: 'none' })
+  })
+
   it('maps finish_reason length to max_tokens', async () => {
     installStream(provider, [
       { choices: [{ delta: {}, finish_reason: 'length' }] },

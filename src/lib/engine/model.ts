@@ -86,6 +86,7 @@ export async function* streamModel(
     system,
     messages: unifiedMessages,
     tools: tools.length > 0 ? tools : undefined,
+    toolChoice: ctx.toolChoice,
     temperature: ctx.model.temperature,
     maxTokens: ctx.limits.maxOutputTokens,
     stream: true,

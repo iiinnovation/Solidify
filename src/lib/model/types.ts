@@ -49,6 +49,8 @@ export interface CompletionRequest {
   system?: string
   messages: UnifiedMessage[]
   tools?: ToolDefinition[]
+  /** Explicitly prevent stale historical tool calls during a generation-only recovery turn. */
+  toolChoice?: 'auto' | 'none'
   temperature?: number
   maxTokens?: number
   topP?: number

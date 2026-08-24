@@ -127,4 +127,24 @@ describe('AnthropicProvider', () => {
       tools: [{ cache_control: { type: 'ephemeral' } }],
     })
   })
+
+  it('forwards an explicit generation-only tool choice', async () => {
+    let captured: unknown
+    async function* response() {
+      yield { type: 'message_start', message: { usage: { input_tokens: 3, output_tokens: 0 } } }
+      yield { type: 'message_stop' }
+    }
+    Object.defineProperty(provider, 'client', {
+      value: { messages: { create: async (params: unknown) => { captured = params; return response() } } },
+    })
+
+    for await (const _event of provider.stream({
+      model: 'claude-test',
+      messages: [{ role: 'user', content: 'generate now' }],
+      toolChoice: 'none',
+      stream: true,
+    })) { /* drain */ }
+
+    expect(captured).toMatchObject({ tool_choice: { type: 'none' } })
+  })
 })

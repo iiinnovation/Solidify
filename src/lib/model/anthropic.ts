@@ -97,6 +97,7 @@ export class AnthropicProvider implements ModelProvider {
           system,
           messages,
           tools,
+          ...(request.toolChoice === 'none' ? { tool_choice: { type: 'none' as const } } : {}),
           max_tokens: request.maxTokens ?? this.metadata.defaultMaxTokens,
           temperature: request.temperature,
           top_p: request.topP,

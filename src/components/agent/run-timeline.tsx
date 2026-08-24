@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { ChevronDown, CircleAlert, CircleCheck, LoaderCircle, Play, Square, TimerReset, Zap, Gauge } from 'lucide-react'
 import { cn, formatDuration } from '@/lib/utils'
-import type { RunState } from '@/lib/engine/run-state'
+import { wasToolExecuted, type RunState } from '@/lib/engine/run-state'
 import { ToolCallCard } from './tool-call-card'
 import { LedgerPanel } from './ledger-panel'
 import { ParallelTimeline } from './parallel-timeline'
@@ -35,6 +35,8 @@ export function RunTimeline({ run, onStop }: { run: RunState | null; onStop?: ()
   const statusLabel = run.status === 'running' ? '运行中' : run.status === 'completed' ? '已完成' : run.status === 'aborted' ? '已停止' : run.status === 'exhausted' ? '已达上限' : run.status === 'failed' ? '失败' : '准备中'
   const hiddenToolCount = Math.max(0, run.tools.length - 2)
   const visibleTools = showAllTools ? run.tools : run.tools.slice(-2)
+  const executedToolCount = run.tools.filter(wasToolExecuted).length
+  const blockedToolCount = run.tools.filter((tool) => tool.status === 'completed' && !wasToolExecuted(tool)).length
 
   return (
     <section className={cn('overflow-hidden rounded-xl border border-border-light bg-surface shadow-xs', active ? 'mb-5' : 'mt-4')} aria-label="Agent 运行过程">
@@ -44,7 +46,9 @@ export function RunTimeline({ run, onStop }: { run: RunState | null; onStop?: ()
         {active && run.activity && (
           <span className="text-[11px] text-text-secondary" aria-live="polite">{run.activity.label}</span>
         )}
-        <span className="text-[11px] text-text-tertiary font-mono">{run.tools.length} 次工具调用</span>
+        <span className="text-[11px] text-text-tertiary font-mono">
+          {executedToolCount} 次工具执行{blockedToolCount > 0 ? ` · ${blockedToolCount} 次已拦截` : ''}
+        </span>
         {run.usage && (
           <span className="text-[11px] text-text-tertiary tabular-nums">
             {run.usage.totalTokens.toLocaleString()} tokens

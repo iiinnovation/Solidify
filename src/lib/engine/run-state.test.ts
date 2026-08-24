@@ -63,6 +63,36 @@ describe('run state reducer', () => {
     expect(state.firstTokenAt).toEqual(expect.any(Number))
   })
 
+  it('starts tool execution timing on progress instead of model request emission', () => {
+    const clock = vi.spyOn(Date, 'now')
+      .mockReturnValueOnce(1_000)
+      .mockReturnValueOnce(2_000)
+      .mockReturnValueOnce(10_000)
+      .mockReturnValueOnce(10_025)
+    let state = createRunState('run-tool-timing')
+    state = applyRunEvent(state, {
+      type: 'tool.requested',
+      call: { id: 'call-timing', name: 'search_attachments', input: {} },
+    })
+    state = applyRunEvent(state, {
+      type: 'tool.progress',
+      callId: 'call-timing',
+      progress: { phase: 'executing', current: 0 },
+    })
+    state = applyRunEvent(state, {
+      type: 'tool.completed',
+      callId: 'call-timing',
+      result: { success: true, content: 'done', metadata: { durationMs: 25 } },
+    })
+
+    expect(state.tools[0]).toMatchObject({
+      startedAt: 2_000,
+      executionStartedAt: 10_000,
+      completedAt: 10_025,
+    })
+    clock.mockRestore()
+  })
+
   it('shows aggregate reasoning progress without carrying deliberation text', () => {
     let state = createRunState('run-progress')
     state = applyRunEvent(state, { type: 'model.progress', phase: 'preparing' })

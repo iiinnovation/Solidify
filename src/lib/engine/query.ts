@@ -25,6 +25,12 @@ import { enablePptdPipeline } from './pptd-context'
  */
 const MAX_CONTINUATIONS = 4
 
+const DRAWIO_GENERATION_ONLY_CONTEXT = [
+  'Draw.io attachment retrieval is complete and the retrieval tools are intentionally unavailable.',
+  'Do not emit any tool call, including tools mentioned in earlier turns.',
+  'Use the evidence already present in the conversation and immediately return exactly one valid Draw.io Artifact.',
+].join(' ')
+
 /**
  * Drop the trailing assistant prefill so a resumed answer replaces it instead
  * of stacking a second assistant turn. Matched by content rather than assumed
@@ -182,12 +188,15 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       let exposedTools: readonly Tool[] = activeTools
       let firstChunkAt: string | undefined
       try {
+        const drawioGenerationOnly = activeSkill?.metadata.name === 'drawio-diagram'
+          && closedToolGroups.has('attachment-retrieval')
         const modelContext: QueryContext = closedToolGroups.size === 0
           ? { ...runCtx, skill: activeSkill, skillResources: activeSkillResources, tools: activeTools }
           : {
               ...runCtx,
               skill: activeSkill,
               skillResources: activeSkillResources,
+              ...(drawioGenerationOnly ? { toolChoice: 'none' as const } : {}),
               tools: activeTools.filter((tool) => {
                 if (tool.name === 'read_handle' && closedToolGroups.has('attachment-retrieval')) return false
                 return !tool.loopGroup || !closedToolGroups.has(tool.loopGroup)
@@ -197,7 +206,9 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
         response = yield* streamModelResponse({
           ...modelContext,
           messages: currentMessages,
-          harnessContext,
+          harnessContext: drawioGenerationOnly
+            ? [...harnessContext, DRAWIO_GENERATION_ONLY_CONTEXT]
+            : harnessContext,
           retrievedContext: isFirstTurn ? retrievedContext : undefined,
           inputMode: usingCompactInput ? 'compact_recovery' : 'standard',
         }, logger, {
@@ -212,6 +223,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
                 stream: request.stream,
                 messageCount: request.messages.length,
                 toolCount: request.tools?.length ?? 0,
+                toolChoice: request.toolChoice ?? 'auto',
                 promptCache: request.promptCache ?? null,
               },
               localGapMs: previousModelCompletedAt === undefined

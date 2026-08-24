@@ -97,6 +97,8 @@ export interface QueryContext {
   readonly limits: RunLimits
   readonly signal: AbortSignal
   readonly providerRegistry: ProviderRegistry  // Model provider registry
+  /** Provider-level tool policy for a turn; `none` is stronger than hiding schemas. */
+  readonly toolChoice?: 'auto' | 'none'
   /** M1-13: Optional snapshot store for crash recovery; absent = no snapshots */
   readonly snapshots?: SnapshotStore
   /** Resume an interrupted run from the latest turn snapshot. */

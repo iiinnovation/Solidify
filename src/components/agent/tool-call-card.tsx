@@ -1,13 +1,19 @@
 import { memo, useState } from 'react'
-import { Check, ChevronDown, CircleAlert, Clock3, LoaderCircle, Wrench } from 'lucide-react'
+import { Check, ChevronDown, CircleAlert, Clock3, LoaderCircle, ShieldCheck, Wrench } from 'lucide-react'
 import { cn, formatDuration } from '@/lib/utils'
 import type { RunToolItem } from '@/lib/engine/run-state'
 
 export const ToolCallCard = memo(function ToolCallCard({ item }: { item: RunToolItem }) {
   const [expanded, setExpanded] = useState(false)
-  const duration = item.completedAt ? Math.max(0, item.completedAt - item.startedAt) : undefined
-  const failed = item.result && !item.result.success
-  const Icon = item.status === 'completed' ? (failed ? CircleAlert : Check) : item.status === 'running' ? LoaderCircle : Clock3
+  const duration = item.result?.metadata?.durationMs
+    ?? (item.completedAt
+      ? Math.max(0, item.completedAt - (item.executionStartedAt ?? item.startedAt))
+      : undefined)
+  const blocked = item.result?.error?.kind === 'budget_exhausted'
+  const failed = item.result && !item.result.success && !blocked
+  const Icon = item.status === 'completed'
+    ? blocked ? ShieldCheck : failed ? CircleAlert : Check
+    : item.status === 'running' ? LoaderCircle : Clock3
 
   return (
     <div className={cn('border rounded-md bg-surface overflow-hidden', failed ? 'border-error/30' : 'border-border')}>
@@ -22,8 +28,10 @@ export const ToolCallCard = memo(function ToolCallCard({ item }: { item: RunTool
         <Icon size={14} className={cn(
           item.status === 'running' && 'animate-spin text-accent',
           item.status === 'requested' && 'text-text-tertiary',
-          item.status === 'completed' && (failed ? 'text-error' : 'text-success'),
+          item.status === 'completed' && blocked && 'text-text-secondary',
+          item.status === 'completed' && !blocked && (failed ? 'text-error' : 'text-success'),
         )} strokeWidth={1.9} />
+        {blocked && <span className="text-[11px] text-text-secondary">已拦截</span>}
         {duration !== undefined && <span className="text-[11px] text-text-tertiary tabular-nums">{formatDuration(duration)}</span>}
         <ChevronDown size={14} className={cn('text-text-tertiary transition-transform', expanded && 'rotate-180')} />
       </button>

@@ -341,6 +341,9 @@ describe('runQuery tool execution (M1-14/15)', () => {
     expect(executions).toBe(1)
     expect(requests.map((request) => request.tools?.map((tool) => tool.name) ?? []))
       .toEqual([['search_attachments'], [], []])
+    expect(requests[1].system).toContain('Do not emit any tool call')
+    expect(requests[1].system).toContain('exactly one valid Draw.io Artifact')
+    expect(requests[1].toolChoice).toBe('none')
     expect(events.find((event) => event.type === 'tool.completed' && event.callId === 'search-hidden-invalid'))
       .toMatchObject({ result: { error: { kind: 'budget_exhausted' } } })
     expect(events.at(-1)?.type).toBe('run.completed')
@@ -391,6 +394,8 @@ describe('runQuery tool execution (M1-14/15)', () => {
 
     expect(requests.map((request) => request.tools?.map((tool) => tool.name) ?? []))
       .toEqual([['prepare_attachment_evidence'], []])
+    expect(requests[1].system).toContain('Do not emit any tool call')
+    expect(requests[1].toolChoice).toBe('none')
   })
 
   it('keeps targeted retrieval available when an evidence pack was handleized', async () => {

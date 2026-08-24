@@ -70,6 +70,41 @@ describe('agent run UI', () => {
     expect(screen.getByText('正在分析任务…')).not.toBeNull()
   })
 
+  it('separates executed tools from blocked model requests and shows executor duration', () => {
+    render(<RunTimeline run={{
+      ...completedRun,
+      status: 'running',
+      completedAt: undefined,
+      tools: [
+        {
+          call: { id: 'executed', name: 'prepare_attachment_evidence', input: {} },
+          status: 'completed',
+          startedAt: 100,
+          executionStartedAt: 8_000,
+          completedAt: 8_025,
+          result: { success: true, content: 'evidence', metadata: { durationMs: 25 } },
+        },
+        {
+          call: { id: 'blocked', name: 'search_attachments', input: {} },
+          status: 'completed',
+          startedAt: 10_000,
+          completedAt: 18_000,
+          result: {
+            success: false,
+            content: '检索阶段已关闭',
+            error: { kind: 'budget_exhausted', message: '检索阶段已关闭', recoverable: true },
+            metadata: { durationMs: 0 },
+          },
+        },
+      ],
+    }} />)
+
+    expect(screen.getByText('1 次工具执行 · 1 次已拦截')).not.toBeNull()
+    expect(screen.getByText('已拦截')).not.toBeNull()
+    expect(screen.getByText('0.03s')).not.toBeNull()
+    expect(screen.getByText('0.00s')).not.toBeNull()
+  })
+
   it('keeps only the latest two tool calls visible until earlier calls are expanded', async () => {
     const tools = Array.from({ length: 4 }, (_, index) => ({
       call: { id: `call-${index + 1}`, name: `tool_${index + 1}`, input: {} },
