@@ -34,6 +34,8 @@ export const EMPTY_COMPOSER_DRAFT: ComposerDraft = {
   skill: null,
 }
 
+export type PreviewPanelKind = 'artifact' | 'document'
+export type WorkspaceInspectorTab = 'deliverables' | 'files' | 'changes' | 'preview'
 
 export function composerDraftKey(conversationId?: string): string {
   return conversationId ?? NEW_COMPOSER_DRAFT_KEY
@@ -43,11 +45,18 @@ interface UIState {
   sidebarOpen: boolean
   sidebarWidth: number
   chatPanelWidth: number
+  workspaceInspectorOpen: boolean
+  workspaceInspectorTab: WorkspaceInspectorTab
+  previewPanelKind: PreviewPanelKind | null
   pendingInput: string | null
   composerDrafts: Record<string, ComposerDraft>
   toggleSidebar: () => void
   setSidebarWidth: (width: number) => void
   setChatPanelWidth: (width: number) => void
+  openWorkspaceInspector: (tab?: WorkspaceInspectorTab) => void
+  setWorkspaceInspectorTab: (tab: WorkspaceInspectorTab) => void
+  openPreviewPanel: (kind: PreviewPanelKind) => void
+  closePreviewPanel: () => void
   setPendingInput: (input: string | null) => void
   setComposerDraft: (conversationId: string | undefined, draft: Partial<ComposerDraft> | ((prev: ComposerDraft) => Partial<ComposerDraft>)) => void
   clearComposerDraft: (conversationId?: string) => void
@@ -65,11 +74,27 @@ export const useUIStore = create<UIState>()(
       sidebarOpen: defaultSidebarOpen(),
       sidebarWidth: 260,
       chatPanelWidth: 440,
+      workspaceInspectorOpen: false,
+      workspaceInspectorTab: 'deliverables',
+      previewPanelKind: null,
       pendingInput: null,
       composerDrafts: {},
       toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
       setSidebarWidth: (width) => set({ sidebarWidth: width }),
       setChatPanelWidth: (width) => set({ chatPanelWidth: width }),
+      openWorkspaceInspector: (workspaceInspectorTab = 'deliverables') => set({
+        workspaceInspectorOpen: true,
+        workspaceInspectorTab,
+        ...(isNarrowViewport() ? { sidebarOpen: false } : {}),
+      }),
+      setWorkspaceInspectorTab: (workspaceInspectorTab) => set({ workspaceInspectorTab }),
+      openPreviewPanel: (previewPanelKind) => set({
+        workspaceInspectorOpen: true,
+        workspaceInspectorTab: 'preview',
+        previewPanelKind,
+        ...(isNarrowViewport() ? { sidebarOpen: false } : {}),
+      }),
+      closePreviewPanel: () => set({ workspaceInspectorOpen: false, previewPanelKind: null }),
       setPendingInput: (input) => set({ pendingInput: input }),
       setComposerDraft: (conversationId, draft) =>
         set((state) => {
@@ -138,3 +163,7 @@ export const useUIStore = create<UIState>()(
 
   ),
 )
+
+function isNarrowViewport(): boolean {
+  return typeof window !== 'undefined' && window.innerWidth < 768
+}

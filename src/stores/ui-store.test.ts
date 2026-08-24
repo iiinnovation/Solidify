@@ -4,7 +4,13 @@ import { composerDraftKey, EMPTY_COMPOSER_DRAFT, NEW_COMPOSER_DRAFT_KEY, useUISt
 describe('UI composer drafts', () => {
   beforeEach(() => {
     localStorage.clear()
-    useUIStore.setState({ composerDrafts: {}, pendingInput: null })
+    useUIStore.setState({
+      composerDrafts: {},
+      pendingInput: null,
+      workspaceInspectorOpen: false,
+      workspaceInspectorTab: 'deliverables',
+      previewPanelKind: null,
+    })
   })
 
   it('isolates drafts by conversation and keeps a separate new-chat draft', () => {
@@ -47,5 +53,44 @@ describe('UI composer drafts', () => {
     expect(attachment.mediaUrl).toBeUndefined()
     expect(attachment.mediaId).toBe('draft-media')
     expect(attachment.recoverable).toBe(true)
+  })
+
+  it('keeps preview visibility ephemeral', () => {
+    useUIStore.getState().openPreviewPanel('artifact')
+
+    expect(useUIStore.getState().previewPanelKind).toBe('artifact')
+    expect(useUIStore.getState().workspaceInspectorOpen).toBe(true)
+    expect(useUIStore.getState().workspaceInspectorTab).toBe('preview')
+    expect(JSON.parse(localStorage.getItem('solidify-ui') ?? '{}').state.previewPanelKind).toBeUndefined()
+    expect(JSON.parse(localStorage.getItem('solidify-ui') ?? '{}').state.workspaceInspectorOpen).toBeUndefined()
+
+    useUIStore.getState().closePreviewPanel()
+    expect(useUIStore.getState().previewPanelKind).toBeNull()
+    expect(useUIStore.getState().workspaceInspectorOpen).toBe(false)
+  })
+
+  it('opens the workspace inspector without requiring a selected preview', () => {
+    useUIStore.getState().openWorkspaceInspector('changes')
+
+    expect(useUIStore.getState()).toMatchObject({
+      workspaceInspectorOpen: true,
+      workspaceInspectorTab: 'changes',
+      previewPanelKind: null,
+    })
+  })
+
+  it('collapses the mobile navigation before opening the inspector', () => {
+    const previousWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 })
+    useUIStore.setState({ sidebarOpen: true })
+
+    useUIStore.getState().openWorkspaceInspector('files')
+
+    expect(useUIStore.getState()).toMatchObject({
+      workspaceInspectorOpen: true,
+      workspaceInspectorTab: 'files',
+      sidebarOpen: false,
+    })
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: previousWidth })
   })
 })

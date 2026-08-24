@@ -229,7 +229,9 @@ run.completed / run.failed / run.exhausted
 
 - payload 在写入时制作无损 JSON 快照，拒绝循环引用、函数、signal、resolver 和特殊原型；写入后视为冻结。
 - `tool.requested` 参数是 UI、执行与审计的共同权威值，落账后不可改写。
-- 模型实际看到的消息、工具结果与权限拒绝必须能从持久事实重建。
+- 模型请求在独立会话快照中恢复；运行账本只记录模型参数、上下文 token
+  分布、消息/工具数量与稳定前缀 fingerprint，不复制 system prompt、消息
+  正文或完整工具 schema。工具结果与权限拒绝仍由各自持久事实记录。
 - 恢复时若只有 `tool.requested` 而没有 `tool.completed`，标记为 `outcome_unknown`；只读或幂等工具可重试，副作用工具必须先核对外部状态或询问用户，不得盲目重试。
 
 ## 5. 可观测

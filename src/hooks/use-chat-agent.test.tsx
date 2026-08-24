@@ -63,7 +63,7 @@ describe('useChat agent loop switch', () => {
       }],
     })
     useKnowledgeEnhancementStore.setState({ enabled: false })
-    useWorkspaceStore.setState({ workspaceRoot: null })
+    useWorkspaceStore.setState({ workspaceRoot: null, project: null })
     useDocumentStore.setState({ documents: {}, activePath: null })
     useUIStore.setState({ composerDrafts: {}, pendingInput: null })
   })
@@ -128,6 +128,117 @@ describe('useChat agent loop switch', () => {
     expect(assistant?.runEvents).toHaveLength(3)
     expect(assistant?.runEvents?.some((event) => event.type === 'message.delta')).toBe(false)
     expect(assistant?.agentRun?.usage?.totalTokens).toBe(5)
+  })
+
+  it('binds a newly created task to the selected workspace', async () => {
+    useWorkspaceStore.setState({
+      workspaceRoot: '/workspace/project-a',
+      project: {
+        schemaVersion: 1,
+        id: 'project-a',
+        name: 'Project A',
+        createdAt: '2026-08-23T00:00:00Z',
+        stage: 'discovery',
+      },
+    })
+    mocks.runQuery.mockImplementation(async function* () {
+      yield { type: 'run.started', runId: 'run-workspace' }
+      yield { type: 'message.completed', content: 'done' }
+      yield {
+        type: 'run.completed',
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, turns: 1, toolCalls: 0 },
+      }
+    })
+    const { result } = renderHook(() => useChat(), { wrapper })
+
+    await act(async () => result.current.sendMessage('workspace task'))
+
+    expect(useChatStore.getState().conversations[0]).toMatchObject({
+      workspaceRoot: '/workspace/project-a',
+      projectId: 'project-a',
+    })
+    expect(useChatStore.getState().conversations[0].messages.at(-1)?.agentContext?.workspaceRoot)
+      .toBe('/workspace/project-a')
+  })
+
+  it('creates a current-workspace task when the route points to a missing conversation', async () => {
+    useWorkspaceStore.setState({ workspaceRoot: '/workspace/project-a' })
+    mocks.runQuery.mockImplementation(async function* () {
+      yield { type: 'run.started', runId: 'run-stale-route' }
+      yield { type: 'message.completed', content: 'done' }
+      yield {
+        type: 'run.completed',
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, turns: 1, toolCalls: 0 },
+      }
+    })
+    const { result } = renderHook(() => useChat('removed-conversation'), { wrapper })
+
+    await act(async () => result.current.sendMessage('new workspace task'))
+
+    const conversations = useChatStore.getState().conversations
+    expect(conversations).toHaveLength(1)
+    expect(conversations[0]).toMatchObject({ workspaceRoot: '/workspace/project-a' })
+    expect(conversations[0].id).not.toBe('removed-conversation')
+    expect(conversations[0].messages.map((message) => message.role)).toEqual(['user', 'assistant'])
+  })
+
+  it('drops the previous workspace history before sending from a stale route', async () => {
+    useWorkspaceStore.setState({ workspaceRoot: '/workspace/old' })
+    useChatStore.setState({
+      conversations: [{
+        id: 'shared-route', title: 'Old task', createdAt: 1, workspaceRoot: '/workspace/old',
+        messages: [
+          { id: 'old-user', role: 'user', content: 'PRIVATE OLD WORKSPACE CONTEXT' },
+          { id: 'old-assistant', role: 'assistant', content: 'old answer' },
+        ],
+      }],
+    })
+    mocks.runQuery.mockImplementation(async function* () {
+      yield { type: 'run.started', runId: 'run-after-switch' }
+      yield { type: 'message.completed', content: 'new answer' }
+      yield {
+        type: 'run.completed',
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, turns: 1, toolCalls: 0 },
+      }
+    })
+    const { result } = renderHook(() => useChat('shared-route'), { wrapper })
+    expect(result.current.messages.some((message) => message.content.includes('PRIVATE OLD'))).toBe(true)
+
+    act(() => {
+      useChatStore.setState({ conversations: [], artifacts: [] })
+      useWorkspaceStore.setState({ workspaceRoot: '/workspace/new' })
+    })
+    await waitFor(() => expect(result.current.messages).toEqual([]))
+    await act(async () => result.current.sendMessage('new workspace request'))
+
+    const context = mocks.runQuery.mock.calls[0][0]
+    expect(JSON.stringify(context.messages)).toContain('new workspace request')
+    expect(JSON.stringify(context.messages)).not.toContain('PRIVATE OLD WORKSPACE CONTEXT')
+    expect(useChatStore.getState().conversations[0]).toMatchObject({ workspaceRoot: '/workspace/new' })
+  })
+
+  it('reloads a conversation when the workspace projection is restored in place', async () => {
+    useWorkspaceStore.setState({ workspaceRoot: '/workspace/project-a' })
+    useChatStore.setState({
+      conversations: [{
+        id: 'restored-route', title: 'Cached', createdAt: 1, workspaceRoot: '/workspace/project-a',
+        messages: [{ id: 'cached', role: 'user', content: 'cached local copy' }],
+      }],
+    })
+    const { result } = renderHook(() => useChat('restored-route'), { wrapper })
+    expect(result.current.messages[0]?.content).toBe('cached local copy')
+
+    act(() => {
+      useChatStore.setState({
+        conversations: [{
+          id: 'restored-route', title: 'Disk', createdAt: 1, workspaceRoot: '/workspace/project-a',
+          messages: [{ id: 'disk', role: 'user', content: 'fresh disk projection' }],
+        }],
+      })
+      useWorkspaceStore.setState((state) => ({ projectionVersion: state.projectionVersion + 1 }))
+    })
+
+    await waitFor(() => expect(result.current.messages[0]?.content).toBe('fresh disk projection'))
   })
 
   it('flushes a trailing delta and materializes an artifact once', async () => {
@@ -454,11 +565,13 @@ describe('useChat agent loop switch', () => {
 
   it('resumes one persisted running Agent without duplicating messages', async () => {
     const startedAt = Date.now() - 1000
+    useWorkspaceStore.setState({ workspaceRoot: '/saved/workspace' })
     useChatStore.setState({
       conversations: [{
         id: 'conv-resume',
         title: 'Resume',
         createdAt: startedAt,
+        workspaceRoot: '/saved/workspace',
         messages: [
           { id: 'user-1', role: 'user', content: 'inspect files' },
           {
@@ -788,7 +901,7 @@ describe('useChat agent loop switch', () => {
     expect(useChatStore.getState().conversations[0].messages).toEqual([])
   })
 
-  it('regenerates once with the original assistant skill context', async () => {
+  it('regenerates without replaying a retired inline Skill prompt', async () => {
     useChatStore.setState({
       conversations: [{
         id: 'conv-regenerate-skill',
@@ -826,6 +939,11 @@ describe('useChat agent loop switch', () => {
 
     await waitFor(() => expect(mocks.runQuery).toHaveBeenCalledOnce())
     await waitFor(() => expect(result.current.isStreaming).toBe(false))
-    expect(mocks.runQuery.mock.calls[0][0].skill?.content).toContain('ORIGINAL REPORT INSTRUCTIONS')
+    expect(mocks.runQuery.mock.calls[0][0].skill).toBeUndefined()
+    expect(mocks.runQuery.mock.calls[0][0].messages).toEqual([
+      { role: 'user', content: 'create a report' },
+    ])
+    expect(useChatStore.getState().conversations[0].messages.filter((message) => message.role === 'user'))
+      .toHaveLength(1)
   })
 })

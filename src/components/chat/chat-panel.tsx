@@ -13,13 +13,14 @@ import { SkillPalette } from '@/components/chat/skill-palette'
 import { AttachmentPreview } from '@/components/chat/attachment-preview'
 import { TemplateVariableForm } from '@/components/templates/template-variable-form'
 import { toast } from '@/stores/toast-store'
-import { isTauri, openFileDialog, readBinaryFile, selectWorkspace } from '@/lib/tauri'
+import { isTauri, openFileDialog, readBinaryFile } from '@/lib/tauri'
 import { validateFileSize, validateFileType, formatFileSize } from '@/lib/file-extractor'
 import type { Template } from '@/lib/api/types'
 import { useIncrementTemplateUsage } from '@/hooks/use-templates'
 import { RunTimeline } from '@/components/agent/run-timeline'
 import { RunControls } from '@/components/agent/run-controls'
 import { useWorkspaceStore } from '@/stores/workspace-store'
+import { useDocumentStore } from '@/stores/document-store'
 import { isEnabled } from '@/lib/harness/flags'
 import { ConfirmDialog } from '@/components/agent/confirm-dialog'
 import { answerApproval, subscribeApprovals } from '@/lib/harness/approval-channel'
@@ -45,8 +46,9 @@ const typeLabels: Record<ArtifactType, string> = {
   drawio: 'Draw.io 流程图',
 }
 
-function ArtifactRefCard({ messageId }: { messageId: string }) {
+export function ArtifactRefCard({ messageId }: { messageId: string }) {
   const { artifacts, setActiveArtifact, activeArtifactId } = useChatStore()
+  const openPreviewPanel = useUIStore((state) => state.openPreviewPanel)
   const messageArtifacts = artifacts.filter((a) => a.messageId === messageId)
 
   if (messageArtifacts.length === 0) return null
@@ -61,7 +63,10 @@ function ArtifactRefCard({ messageId }: { messageId: string }) {
         return (
           <button
             key={artifact.id}
-            onClick={() => setActiveArtifact(artifact.id)}
+            onClick={() => {
+              setActiveArtifact(artifact.id)
+              openPreviewPanel('artifact')
+            }}
             className={cn(
               "mt-3 w-full flex items-center gap-3 px-4 py-3 rounded-lg border text-left transition-all",
               isActive
@@ -78,6 +83,42 @@ function ArtifactRefCard({ messageId }: { messageId: string }) {
             <div className="min-w-0">
               <p className="text-sm font-medium text-text-primary truncate">{artifact.title}</p>
               <p className="text-xs text-text-tertiary mt-0.5">{label}</p>
+            </div>
+          </button>
+        )
+      })}
+    </>
+  )
+}
+
+export function DocumentRefCard({ message }: { message: Message }) {
+  const setActivePath = useDocumentStore((state) => state.setActivePath)
+  const openPreviewPanel = useUIStore((state) => state.openPreviewPanel)
+  const documents = message.documents ?? []
+
+  if (documents.length === 0) return null
+
+  return (
+    <>
+      {documents.map((document) => {
+        const title = document.path.split('/').pop() ?? document.path
+        return (
+          <button
+            key={document.path}
+            type="button"
+            onClick={() => {
+              useWorkspaceStore.getState().selectPath(document.path)
+              setActivePath(document.path)
+              openPreviewPanel('document')
+            }}
+            className="mt-3 flex w-full min-w-0 items-center gap-3 rounded-lg border border-border bg-surface px-4 py-3 text-left transition-all hover:border-border-focus hover:shadow-xs"
+          >
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-background-secondary text-text-tertiary">
+              <FileText size={16} strokeWidth={1.75} />
+            </div>
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium text-text-primary">{title}</p>
+              <p className="mt-0.5 truncate text-xs text-text-tertiary" title={document.path}>{document.path}</p>
             </div>
           </button>
         )
@@ -241,7 +282,7 @@ function MessageActions({
       role === 'user' ? "justify-end" : "justify-between w-full"
     )}>
       {role === 'assistant' && !isStreaming && metrics && (
-        <div className="inline-flex items-center gap-2 text-[11px] text-text-tertiary tabular-nums pl-0.5">
+        <div className="hidden items-center gap-2 pl-0.5 text-[11px] tabular-nums text-text-tertiary sm:inline-flex">
           <span>{formatDuration(metrics.durationMs)}</span>
           {metrics.ttftMs !== undefined && (
             <span className="inline-flex items-center gap-0.5" title="首 Token 响应时间 (TTFT)">
@@ -319,8 +360,9 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
   const { enabled: knowledgeEnabled, setEnabled: setKnowledgeEnabled } = useKnowledgeEnhancementStore()
   const setPendingInput = useUIStore((s) => s.setPendingInput)
   const workspaceRoot = useWorkspaceStore((s) => s.workspaceRoot)
-  const setWorkspaceRoot = useWorkspaceStore((s) => s.setWorkspaceRoot)
+  const openWorkspace = useWorkspaceStore((s) => s.open)
   const workspaceToolsEnabled = isEnabled('agentLoop') && isEnabled('toolCalling')
+  const documentRefsEnabled = isEnabled('workbenchV2') && isEnabled('localWorkspace') && isTauri && Boolean(workspaceRoot)
 
   // 消费完 pendingInput 后同步到 composerDraft 并聚焦输入框
   useEffect(() => {
@@ -417,12 +459,9 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
   }
 
   const handleWorkspaceSelect = async () => {
-    try {
-      const selected = await selectWorkspace()
-      if (selected) setWorkspaceRoot(selected)
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : '无法授权 Agent 工作目录')
-    }
+    await openWorkspace()
+    const workspaceError = useWorkspaceStore.getState().error
+    if (workspaceError) toast.error(workspaceError)
   }
 
   const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -538,12 +577,15 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
       <ConfirmDialog request={approvalRequests} onAnswer={answerApproval} />
       {/* 消息列表 */}
       <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto">
-        <div className="max-w-2xl mx-auto px-6 py-6 space-y-6">
+        <div className="mx-auto w-full max-w-3xl space-y-8 px-5 py-8 sm:px-8 sm:py-10">
           {messages.length === 0 && !isStreaming && (
-            <div className="flex items-center justify-center h-64">
-              <div className="text-center space-y-3">
-                <p className="text-lg font-medium text-text-primary">有什么可以帮你的？</p>
-                <p className="text-sm text-text-tertiary">描述你的项目需求，我来帮你分析和生成方案</p>
+            <div className="flex min-h-[46vh] items-center justify-center">
+              <div className="max-w-sm space-y-3 text-center">
+                <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-xl bg-accent-subtle text-accent">
+                  <Sparkles size={20} strokeWidth={1.7} />
+                </div>
+                <p className="text-lg font-semibold text-text-primary">有什么可以帮你的？</p>
+                <p className="text-sm leading-relaxed text-text-tertiary">描述你的项目需求，我来帮你分析和生成方案</p>
               </div>
             </div>
           )}
@@ -552,15 +594,15 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
             <div
               key={msg.id}
               className={cn(
-                "group",
+                "group relative",
                 msg.role === 'user' ? 'flex flex-col items-end' : 'flex flex-col items-start'
               )}
             >
               <div
                 className={cn(
                   msg.role === 'user'
-                    ? 'bg-accent-light rounded-lg rounded-br-sm px-4 py-3 max-w-[85%]'
-                    : 'py-3 max-w-full w-full'
+                    ? 'max-w-[82%] rounded-2xl rounded-br-md bg-accent-light px-4 py-3 shadow-xs ring-1 ring-accent/5'
+                    : 'relative w-full max-w-full py-2 pl-10'
                 )}
               >
                 {msg.role === 'user' ? (
@@ -597,6 +639,7 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
                               }
                               useChatStore.getState().addArtifact(fileArtifact)
                               useChatStore.getState().setActiveArtifact(fileArtifact.id)
+                              useUIStore.getState().openPreviewPanel('artifact')
                             }}
                             className="flex min-w-0 w-full max-w-full items-center gap-2 text-xs text-text-secondary hover:text-text-primary transition-colors"
                           >
@@ -610,10 +653,13 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
                   </>
                 ) : (
                   <>
-                    {agentUiEnabled && msg.agentRun && (
+                    <div className="absolute left-0 top-3 flex h-7 w-7 items-center justify-center rounded-lg bg-accent-subtle text-accent" aria-hidden="true">
+                      <Sparkles size={14} strokeWidth={1.7} />
+                    </div>
+                    {agentUiEnabled && msg.agentRun?.status === 'running' && (
                       <RunTimeline
                         run={msg.agentRun}
-                        onStop={msg.agentRun.status === 'running' ? stopStreaming : undefined}
+                        onStop={stopStreaming}
                       />
                     )}
                     {msg.content ? (
@@ -625,13 +671,17 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
                         && <StreamingIndicator />
                     )}
                     <ArtifactRefCard messageId={msg.id} />
+                    {documentRefsEnabled && <DocumentRefCard message={msg} />}
                     {msg.knowledgeSources && msg.knowledgeSources.length > 0 && (
                       <KnowledgeSourcesCard sources={msg.knowledgeSources} />
+                    )}
+                    {agentUiEnabled && msg.agentRun && msg.agentRun.status !== 'running' && (
+                      <RunTimeline run={msg.agentRun} />
                     )}
                   </>
                 )}
               </div>
-              <div className="opacity-0 group-hover:opacity-100 transition-opacity w-full">
+              <div className="pointer-events-auto absolute -bottom-6 w-full opacity-100 transition-opacity sm:pointer-events-none sm:opacity-0 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100">
                 <MessageActions
                   message={msg}
                   isLast={index === messages.length - 1}
@@ -647,8 +697,8 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
 
       {/* 错误提示 */}
       {error && (
-        <div className="px-6">
-          <div className="max-w-2xl mx-auto bg-error-light border border-error/20 rounded-lg px-4 py-2 flex items-center justify-between gap-3">
+        <div className="px-5 sm:px-8">
+          <div className="mx-auto flex max-w-3xl items-center justify-between gap-3 rounded-xl border border-error/20 bg-error-light px-4 py-2.5">
             <p className="text-sm text-error min-w-0 whitespace-normal break-words">{error.message}</p>
             <button
               onClick={retry}
@@ -662,9 +712,9 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
       )}
 
       {/* 输入区 */}
-      <div className="shrink-0 px-6 pb-6 pt-2">
-        <div className="max-w-2xl mx-auto">
-          <div className="mb-1.5 pl-1 flex items-center justify-between">
+      <div className="shrink-0 border-t border-border-light/70 bg-background/95 px-5 pb-5 pt-3 sm:px-8 sm:pb-6">
+        <div className="mx-auto max-w-3xl">
+          <div className="mb-2 flex items-center justify-between px-1">
             <div className="flex min-w-0 items-center gap-2">
               <ModelSelector />
               {isTauri && workspaceToolsEnabled && (
@@ -759,9 +809,9 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
             rows={1}
             disabled={isStreaming}
             className={cn(
-              "w-full resize-none rounded-xl border border-border bg-surface px-4 py-3 text-sm text-text-primary placeholder:text-text-tertiary",
+              "w-full resize-none rounded-2xl border border-border bg-surface px-4 py-3.5 text-sm text-text-primary shadow-sm placeholder:text-text-tertiary",
               "focus:outline-none focus:border-border-focus focus:shadow-[0_0_0_3px_rgba(212,145,94,0.1)]",
-              "min-h-[48px] max-h-[200px]",
+              "min-h-[54px] max-h-[200px]",
               "disabled:opacity-60",
               attachments.length > 0 ? "pl-12 pr-12" : "pl-12 pr-12"
             )}

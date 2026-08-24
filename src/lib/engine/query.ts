@@ -203,7 +203,15 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
             const preparedAt = Date.now()
             harness.ledger.append('model.called', {
               turn,
-              request,
+              request: {
+                model: request.model,
+                temperature: request.temperature ?? null,
+                maxTokens: request.maxTokens ?? null,
+                stream: request.stream,
+                messageCount: request.messages.length,
+                toolCount: request.tools?.length ?? 0,
+                promptCache: request.promptCache ?? null,
+              },
               localGapMs: previousModelCompletedAt === undefined
                 ? null
                 : Math.max(0, preparedAt - previousModelCompletedAt),
@@ -224,8 +232,9 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       isFirstTurn = false
       harness?.ledger.append('model.completed', {
         turn,
-        text: response.text,
-        toolCalls: response.toolCalls,
+        textLength: response.text.length,
+        toolCallCount: response.toolCalls.length,
+        toolCallNames: response.toolCalls.map((call) => call.name),
         usage: response.usage,
         stopReason: response.stopReason,
         reasoningLength: response.reasoningLength,

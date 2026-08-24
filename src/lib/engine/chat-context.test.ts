@@ -59,6 +59,21 @@ describe('chat Agent workspace context', () => {
     featureFlags.skillV2 = false
   })
 
+  it('ignores retired inline Skill prompts even when an old conversation carries one', () => {
+    featureFlags.skillV2 = false
+    const context = createChatQueryContext({
+      runId: 'run-retired-inline',
+      conversationId: 'conversation-retired-inline',
+      messages: [{ role: 'user', content: 'hello' }],
+      provider,
+      signal: new AbortController().signal,
+      skillSystemPrompt: 'RETIRED INLINE INSTRUCTIONS',
+      skillSkipConfirmation: true,
+    })
+
+    expect(context.skill).toBeUndefined()
+  })
+
   it('keeps plain chat tool-free when subordinate tool flags are enabled independently', () => {
     featureFlags.agentLoop = false
     featureFlags.subAgents = true

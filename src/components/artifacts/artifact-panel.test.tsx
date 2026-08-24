@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { ArtifactPanel } from './artifact-panel'
 import { useChatStore } from '@/stores/chat-store'
@@ -30,6 +30,7 @@ pages:
   })
 
   it('closes the active artifact without removing it', () => {
+    const onClose = vi.fn()
     useChatStore.setState({
       artifacts: [{ id: 'artifact-1', title: '附件.md', type: 'document', content: '# 内容', messageId: 'message-1', version: 1 }],
       activeArtifactId: 'artifact-1',
@@ -37,11 +38,12 @@ pages:
       activeConversationId: 'conversation-1',
     })
 
-    render(<ArtifactPanel conversationId="conversation-1" />)
+    render(<ArtifactPanel conversationId="conversation-1" onClose={onClose} />)
     fireEvent.click(screen.getByRole('button', { name: '关闭预览' }))
 
     expect(useChatStore.getState().activeArtifactId).toBeNull()
     expect(useChatStore.getState().artifacts).toHaveLength(1)
+    expect(onClose).toHaveBeenCalledOnce()
     expect(screen.getByText('Artifacts 将在此处展示')).toBeTruthy()
   })
 })

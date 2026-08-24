@@ -28,6 +28,7 @@ function ElapsedTime({ startedAt, completedAt }: { startedAt: number; completedA
 
 export function RunTimeline({ run, onStop }: { run: RunState | null; onStop?: () => void }) {
   const [showAllTools, setShowAllTools] = useState(false)
+  const [detailsOpen, setDetailsOpen] = useState(false)
 
   if (!run) return null
   const active = run.status === 'running'
@@ -36,8 +37,8 @@ export function RunTimeline({ run, onStop }: { run: RunState | null; onStop?: ()
   const visibleTools = showAllTools ? run.tools : run.tools.slice(-2)
 
   return (
-    <section className="mb-4 border-y border-border-light bg-background-secondary/70" aria-label="Agent 运行过程">
-      <div className="py-2.5 flex flex-wrap items-center gap-2.5">
+    <section className={cn('overflow-hidden rounded-xl border border-border-light bg-surface shadow-xs', active ? 'mb-5' : 'mt-4')} aria-label="Agent 运行过程">
+      <div className="flex flex-wrap items-center gap-2.5 bg-background-secondary/55 px-4 py-3">
         {active ? <LoaderCircle size={14} className="text-accent animate-spin" /> : run.status === 'completed' ? <CircleCheck size={14} className="text-success" /> : run.status === 'aborted' ? <Square size={12} className="text-warning" /> : run.status === 'failed' ? <CircleAlert size={14} className="text-error" /> : <Play size={14} className="text-text-tertiary" />}
         <span className="text-xs font-medium text-text-primary">{statusLabel}</span>
         {active && run.activity && (
@@ -62,6 +63,17 @@ export function RunTimeline({ run, onStop }: { run: RunState | null; onStop?: ()
           </span>
         )}
         <span className="ml-auto inline-flex items-center gap-1 text-[11px] text-text-tertiary tabular-nums"><TimerReset size={12} /><ElapsedTime startedAt={run.startedAt} completedAt={run.completedAt} /></span>
+        {!active && (
+          <button
+            type="button"
+            onClick={() => setDetailsOpen((value) => !value)}
+            className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] text-text-secondary transition-colors hover:bg-surface-hover hover:text-text-primary"
+            aria-expanded={detailsOpen}
+          >
+            运行详情
+            <ChevronDown size={12} className={cn('transition-transform', detailsOpen && 'rotate-180')} />
+          </button>
+        )}
         {active && onStop && (
           <button type="button" onClick={onStop} className="ml-2 inline-flex items-center gap-1 px-2 py-1 rounded-sm text-[11px] text-error hover:bg-error-light" title="停止运行">
             <Square size={11} fill="currentColor" />停止
@@ -69,8 +81,8 @@ export function RunTimeline({ run, onStop }: { run: RunState | null; onStop?: ()
         )}
       </div>
 
-      {(run.subAgents?.length ?? 0) > 0 && (
-        <div className="border-t border-border-light py-3">
+      {(active || detailsOpen) && (run.subAgents?.length ?? 0) > 0 && (
+        <div className="border-t border-border-light px-4 py-3">
           <div className="flex flex-col gap-4 lg:flex-row">
             <ParallelTimeline agents={run.subAgents ?? []} />
             <TaskTree rootRunId={run.runId} agents={run.subAgents ?? []} />
@@ -78,8 +90,8 @@ export function RunTimeline({ run, onStop }: { run: RunState | null; onStop?: ()
           <BudgetMeter budget={run.taskBudget} />
         </div>
       )}
-      {(run.tools.length > 0 || run.error) && (
-        <div className="pb-3 space-y-2">
+      {(active || detailsOpen) && (run.tools.length > 0 || run.error) && (
+        <div className="space-y-2 border-t border-border-light px-4 pb-3 pt-2">
           {hiddenToolCount > 0 && (
             <button
               type="button"
@@ -95,7 +107,7 @@ export function RunTimeline({ run, onStop }: { run: RunState | null; onStop?: ()
           {run.error && <div className={cn('text-xs px-3 py-2 rounded-sm', run.status === 'failed' ? 'text-error bg-error-light' : 'text-text-secondary bg-surface')}>{run.error}</div>}
         </div>
       )}
-      <div className="pb-2"><LedgerPanel runId={run.runId} revision={run.tools.reduce((count, tool) => count + (tool.completedAt ? 2 : 1), 0) + (run.completedAt ? 1 : 0)} /></div>
+      {(active || detailsOpen) && <div className="px-4 pb-3"><LedgerPanel runId={run.runId} revision={run.tools.reduce((count, tool) => count + (tool.completedAt ? 2 : 1), 0) + (run.completedAt ? 1 : 0)} /></div>}
     </section>
   )
 }

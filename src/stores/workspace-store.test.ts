@@ -11,7 +11,10 @@ const mocks = vi.hoisted(() => {
   return {
     events,
     WorkspaceIndexer,
-    openLocalWorkspace: vi.fn(async () => ({ root: '/new', project: { schemaVersion: 1, id: 'new', name: 'New', createdAt: '2026-08-14T00:00:00Z', stage: 'discovery' } })),
+    openLocalWorkspace: vi.fn(async () => {
+      events.push('open-picker')
+      return { root: '/new', project: { schemaVersion: 1, id: 'new', name: 'New', createdAt: '2026-08-14T00:00:00Z', stage: 'discovery' } }
+    }),
     restoreLocalWorkspace: vi.fn(async (root: string) => ({ root, project: { schemaVersion: 1, id: root, name: root, createdAt: '2026-08-14T00:00:00Z', stage: 'discovery' } })),
     restoreWorkspaceConversations: vi.fn(async (root: string) => { events.push(`restore-conversations:${root}`) }),
     startWorkspaceConversationPersistence: vi.fn((root: string) => async () => { events.push(`stop-persistence:${root}`) }),
@@ -40,6 +43,7 @@ vi.mock('@/lib/harness/ledger', () => ({
 }))
 
 import { useWorkspaceStore } from './workspace-store'
+import { useDocumentStore } from './document-store'
 
 describe('M3 workspace switching', () => {
   beforeEach(() => {
@@ -51,6 +55,7 @@ describe('M3 workspace switching', () => {
       entries: [],
       selectedPath: null,
       indexStats: null,
+      projectionVersion: 0,
       status: 'idle',
       error: null,
     })
@@ -59,12 +64,25 @@ describe('M3 workspace switching', () => {
   it('stops old persistence before restoring the new workspace', async () => {
     await useWorkspaceStore.getState().initialize()
     mocks.events.length = 0
+    useWorkspaceStore.setState({ selectedPath: 'README.md' })
+    useDocumentStore.setState({
+      activePath: 'README.md',
+      documents: {
+        'README.md': {
+          path: 'README.md', title: 'README.md', type: 'document', content: 'old workspace', streaming: false, version: 1,
+        },
+      },
+    })
 
     await useWorkspaceStore.getState().open()
 
     expect(mocks.events).toContain('stop-persistence:/old')
     expect(mocks.events).toContain('restore-conversations:/new')
     expect(mocks.events.indexOf('stop-persistence:/old'))
+      .toBeLessThan(mocks.events.indexOf('open-picker'))
+    expect(mocks.events.indexOf('open-picker'))
       .toBeLessThan(mocks.events.indexOf('restore-conversations:/new'))
+    expect(useWorkspaceStore.getState().selectedPath).toBeNull()
+    expect(useDocumentStore.getState()).toMatchObject({ activePath: null, documents: {} })
   })
 })

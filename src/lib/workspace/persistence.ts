@@ -36,7 +36,13 @@ export async function loadWorkspaceConversations(root: string): Promise<Workspac
   }
   snapshots.sort((left, right) => sortKey(right.conversation) - sortKey(left.conversation))
   return {
-    conversations: snapshots.map((snapshot) => snapshot.conversation),
+    conversations: snapshots.map((snapshot) => ({
+      ...snapshot.conversation,
+      // The JSONL file lives inside this workspace and moves with it. The
+      // current canonical root is therefore authoritative over a stale
+      // absolute path persisted before the directory was moved or copied.
+      workspaceRoot: root,
+    })),
     artifacts: snapshots.flatMap((snapshot) => snapshot.artifacts),
   }
 }
@@ -45,15 +51,27 @@ export async function loadWorkspaceConversations(root: string): Promise<Workspac
  * Adopt a workspace's conversations into the chat store.
  *
  * A workspace that owns conversations is the source of truth for them. A
- * workspace that owns none must NOT clear the store: the chat store is
- * persisted to localStorage, so overwriting it with an empty set on the first
- * "open folder" would irreversibly destroy history the user accumulated in
- * cloud mode. In that case the existing conversations are carried over and the
- * persistence loop below writes them into the newly opened workspace.
+ * workspace that owns none adopts only legacy, unbound conversations from
+ * localStorage. Conversations already owned by another workspace must not stay
+ * in the active projection: route state could otherwise keep an old task open
+ * after switching folders, even though the rail correctly hides it.
  */
 export async function restoreWorkspaceConversations(root: string): Promise<void> {
   const { conversations, artifacts } = await loadWorkspaceConversations(root)
-  if (conversations.length === 0) return
+  if (conversations.length === 0) {
+    const state = useChatStore.getState()
+    const adoptable = state.conversations
+      .filter((conversation) => !conversation.workspaceRoot)
+      .map((conversation) => ({ ...conversation, workspaceRoot: root }))
+    const messageIds = new Set(adoptable.flatMap((conversation) => conversation.messages.map((message) => message.id)))
+    useChatStore.setState({
+      conversations: adoptable,
+      artifacts: state.artifacts.filter((artifact) => messageIds.has(artifact.messageId)),
+      activeConversationId: adoptable[0]?.id ?? null,
+      activeArtifactId: null,
+    })
+    return
+  }
   useChatStore.setState({
     conversations,
     artifacts,
@@ -69,7 +87,11 @@ function sortKey(conversation: Conversation): number {
 
 export function startWorkspaceConversationPersistence(root: string): () => Promise<void> {
   const lastSaved = new Map<string, string>()
-  let known: Set<string> | null = null
+  let known = new Set(
+    useChatStore.getState().conversations
+      .filter((conversation) => conversation.workspaceRoot === root)
+      .map((conversation) => conversation.id),
+  )
   let timer: ReturnType<typeof setTimeout> | null = null
   let stopped = false
   let inFlight = Promise.resolve()
@@ -77,9 +99,10 @@ export function startWorkspaceConversationPersistence(root: string): () => Promi
   const persist = async () => {
     timer = null
     const state = useChatStore.getState()
-    const present = new Set(state.conversations.map((conversation) => conversation.id))
+    const ownedConversations = state.conversations.filter((conversation) => conversation.workspaceRoot === root)
+    const present = new Set(ownedConversations.map((conversation) => conversation.id))
 
-    for (const conversation of state.conversations) {
+    for (const conversation of ownedConversations) {
       const messageIds = new Set(conversation.messages.map((message) => message.id))
       const artifacts = state.artifacts.filter((artifact) => messageIds.has(artifact.messageId))
       // `runEvents` is a per-run UI trace, not part of the conversation record.
@@ -100,14 +123,12 @@ export function startWorkspaceConversationPersistence(root: string): () => Promi
 
     // Tombstone removals. Without this a deleted conversation's file survived
     // and the conversation reappeared on the next workspace open.
-    if (known) {
-      for (const id of known) {
-        if (present.has(id)) continue
-        await appendWorkspaceRecord(root, 'conversations', `${safeId(id)}.chat`, {
-          type: 'conversation.deleted', ts: new Date().toISOString(), id,
-        })
-        lastSaved.delete(id)
-      }
+    for (const id of known) {
+      if (present.has(id)) continue
+      await appendWorkspaceRecord(root, 'conversations', `${safeId(id)}.chat`, {
+        type: 'conversation.deleted', ts: new Date().toISOString(), id,
+      })
+      lastSaved.delete(id)
     }
     known = present
   }

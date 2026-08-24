@@ -37,7 +37,7 @@ export function parseLedgerEvents(input: unknown, expectedRunId?: string): Ledge
       runId: event.runId,
       ts: event.ts,
       type: event.type as LedgerEventType,
-      payload: snapshotJson(event.payload),
+      payload: compactLedgerPayload(event.type as LedgerEventType, snapshotJson(event.payload)),
     })
   })
 }
@@ -84,7 +84,7 @@ export class RunLedger {
   constructor(runId: string, storageKey = `solidify-ledger:${runId}`) { this.runId = runId; this.storageKey = storageKey; this.restore() }
 
   append(type: LedgerEventType, payload: unknown, options: { requirePersistence?: boolean } = {}): LedgerEvent {
-    const event: LedgerEvent = Object.freeze({ seq: this.events_.length + 1, runId: this.runId, ts: new Date().toISOString(), type, payload: snapshotJson(payload) })
+    const event: LedgerEvent = Object.freeze({ seq: this.events_.length + 1, runId: this.runId, ts: new Date().toISOString(), type, payload: compactLedgerPayload(type, snapshotJson(payload)) })
     this.events_.push(event)
     try {
       this.persist()
@@ -113,9 +113,67 @@ export class RunLedger {
   }
   private restore(): void {
     if (typeof localStorage === 'undefined') return
-    try { this.events_ = parseLedgerEvents(JSON.parse(localStorage.getItem(this.storageKey) ?? '[]'), this.runId) }
+    try {
+      const raw: unknown = JSON.parse(localStorage.getItem(this.storageKey) ?? '[]')
+      this.events_ = parseLedgerEvents(raw, this.runId)
+      if (containsVerboseLegacyModelPayload(raw)) {
+        try { this.persist() }
+        catch (error) { console.warn('[ledger] Unable to compact a legacy model payload:', error) }
+      }
+    }
     catch { this.events_ = [] }
   }
+}
+
+/**
+ * Model prompts and answers belong to conversation snapshots, not telemetry.
+ * Keep this at the persistence boundary so old ledgers are compacted on read
+ * and a future caller cannot accidentally reintroduce full request bodies.
+ */
+function compactLedgerPayload(type: LedgerEventType, payload: JsonValue): JsonValue {
+  if (!isRecord(payload)) return payload
+  if (type === 'model.called' && isRecord(payload.request)) {
+    const request = payload.request
+    return snapshotJson({
+      ...payload,
+      request: {
+        model: request.model ?? null,
+        temperature: request.temperature ?? null,
+        maxTokens: request.maxTokens ?? null,
+        topP: request.topP ?? null,
+        stream: request.stream ?? null,
+        messageCount: Array.isArray(request.messages) ? request.messages.length : request.messageCount ?? 0,
+        toolCount: Array.isArray(request.tools) ? request.tools.length : request.toolCount ?? 0,
+        promptCache: request.promptCache ?? null,
+      },
+    })
+  }
+  if (type === 'model.completed') {
+    const legacyText = typeof payload.text === 'string' ? payload.text : undefined
+    const legacyToolCalls = Array.isArray(payload.toolCalls) ? payload.toolCalls : undefined
+    const { text: _text, toolCalls: _toolCalls, ...rest } = payload
+    return snapshotJson({
+      ...rest,
+      textLength: payload.textLength ?? legacyText?.length ?? 0,
+      toolCallCount: payload.toolCallCount ?? legacyToolCalls?.length ?? 0,
+      toolCallNames: payload.toolCallNames ?? legacyToolCalls?.map((call) => isRecord(call) && typeof call.name === 'string' ? call.name : 'unknown') ?? [],
+    })
+  }
+  return payload
+}
+
+function containsVerboseLegacyModelPayload(input: unknown): boolean {
+  if (!Array.isArray(input)) return false
+  return input.some((candidate) => {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return false
+    const event = candidate as Record<string, unknown>
+    if (!event.payload || typeof event.payload !== 'object' || Array.isArray(event.payload)) return false
+    const payload = event.payload as Record<string, unknown>
+    if (event.type === 'model.completed') return 'text' in payload || 'toolCalls' in payload
+    if (event.type !== 'model.called' || !payload.request || typeof payload.request !== 'object' || Array.isArray(payload.request)) return false
+    const request = payload.request as Record<string, unknown>
+    return 'system' in request || 'messages' in request || Array.isArray(request.tools)
+  })
 }
 
 /** Build a parent → child ledger tree from already loaded run ledgers. */

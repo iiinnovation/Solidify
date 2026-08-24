@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, type MouseEvent as ReactMouseEvent } from 'react'
 import { PanelLeftClose, PanelLeftOpen, Settings, LogOut, FileText, BarChart3, BookOpen, FolderTree, Sparkles } from 'lucide-react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useHotkeys } from 'react-hotkeys-hook'
@@ -12,6 +12,18 @@ import { isTauri } from '@/lib/tauri'
 import { HOTKEYS } from '@/lib/hotkeys'
 import { cn } from '@/lib/utils'
 import { isEnabled } from '@/lib/harness/flags'
+import { getCurrentWindow } from '@tauri-apps/api/window'
+
+const WINDOW_DRAG_EXCLUSION = 'button, input, textarea, select, a, [role="button"], [contenteditable="true"], [data-window-no-drag]'
+
+function startWindowDrag(event: ReactMouseEvent<HTMLElement>): void {
+  if (!isTauri || event.button !== 0) return
+  const target = event.target
+  if (target instanceof Element && target.closest(WINDOW_DRAG_EXCLUSION)) return
+  void getCurrentWindow().startDragging().catch((error) => {
+    console.warn('[window] Unable to start dragging:', error)
+  })
+}
 
 export function Header() {
   const { sidebarOpen, toggleSidebar } = useUIStore()
@@ -49,18 +61,11 @@ export function Header() {
 
   return (
     <header
-      className="relative flex h-12 shrink-0 items-center justify-between gap-2 border-b border-border-light bg-surface px-2 sm:px-4"
+      onMouseDown={startWindowDrag}
+      className="relative flex h-12 shrink-0 select-none items-center justify-between gap-2 border-b border-border-light bg-surface px-2 sm:px-4"
       style={isTauri ? { paddingLeft: '80px' } : undefined}
     >
-      {/* 可拖动区域 - 整个 header 背景 */}
-      {isTauri && (
-        <div
-          data-tauri-drag-region
-          className="absolute inset-0 z-0"
-        />
-      )}
-
-      <div className="relative z-10 flex shrink-0 items-center gap-2 sm:gap-3">
+      <div className="flex shrink-0 items-center gap-2 sm:gap-3">
         <Button variant="ghost" size="icon" onClick={toggleSidebar} aria-label="切换侧边栏">
           {sidebarOpen ? (
             <PanelLeftClose size={20} strokeWidth={1.75} />
@@ -72,7 +77,7 @@ export function Header() {
           Solidify
         </span>
       </div>
-      <div className="relative z-10 flex min-w-0 items-center gap-0.5 sm:gap-2">
+      <div className="flex min-w-0 items-center gap-0.5 sm:gap-2">
         {/* 导航按钮 */}
         {isEnabled('localWorkspace') && !isEnabled('workbenchV2') && (
           <Button variant="ghost" size="sm" onClick={() => navigate('/workspace')} className={cn(location.pathname === '/workspace' && 'bg-accent-light text-accent')} aria-label="工作区">
@@ -143,7 +148,7 @@ export function Header() {
 
         {/* 用户头像 + 退出 dropdown */}
         {supabaseConfigured && user && (
-          <div className="relative" ref={dropdownRef}>
+          <div className="relative" ref={dropdownRef} data-window-no-drag>
             <button
               onClick={() => setDropdownOpen(!dropdownOpen)}
               className="ml-1 flex h-7 w-7 items-center justify-center rounded-full bg-text-primary text-xs font-medium text-text-inverse transition-opacity hover:opacity-85"

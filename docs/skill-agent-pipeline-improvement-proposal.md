@@ -220,11 +220,11 @@ P0-5 此前的论证是“小附件不该多一次读取”。这条证据把结
 
 #### 取数方法（无需改代码）
 
-`harness` 开关因 `skillV2` 依赖默认开启（`flags.ts:148-153`），所以每次运行的账本都已写入 `localStorage['solidify-ledger:<runId>']`，含每轮 `model.called` / `model.completed` 的 ISO `ts`、完整 `request`、`usage`、`localGapMs` 与 `reasoningLength`。UI 上「运行账本」折叠区即可直接查看。
+`harness` 开关因 `skillV2` 依赖默认开启（`flags.ts:148-153`），所以每次运行的账本都已写入 `localStorage['solidify-ledger:<runId>']`。`model.called` 只保留模型参数、消息/工具数量、上下文 token 分布、稳定前缀 fingerprint 与 `localGapMs`；`model.completed` 保留 `usage`、首 chunk 时刻、停止原因和输出规模，不再复制完整请求、system prompt 或回答正文。UI 上「运行账本」折叠区可直接查看这些摘要。
 
 **最干净的探针**：只发工具调用、不产正文的轮次（`toolCalls.length > 0 && text === ''`）输出量接近 0，其轮次耗时几乎是纯粹的「固定延迟 + prefill」。上文的成因判定就用了这样一轮。要把固定延迟从区间估计变成实测，把这些轮次的 `inputTokens` 与 `model.completed.ts − model.called.ts` 作散点即可：**截距是每次调用的固定开销，斜率是每 token 的 prefill 成本**。§2.5 的假设预测斜率接近 0。
 
-注意账本是配额压力下的首选淘汰对象（`storage-quota.ts:3-6`），且 `model.called` 载荷含完整 request，大运行容易把旧账本挤掉，取数要及时。
+注意账本仍是配额压力下的首选淘汰对象（`storage-quota.ts:3-6`）；请求正文由会话与运行快照负责恢复，不应从账本取样。
 
 #### 仍然缺失的唯一埋点
 

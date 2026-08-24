@@ -12,7 +12,7 @@ import { providerBaseURL } from '@/lib/model/provider-url'
 import { toolRegistry } from '@/lib/tools'
 import { createSnapshotStore } from './snapshot'
 import { isTauri } from '@/lib/tauri'
-import { createModelProviderFetch, getSystemPrompt } from '@/lib/chat-api'
+import { createModelProviderFetch } from '@/lib/chat-api'
 import { InMemoryState, WorkspaceMemory } from '@/lib/memory'
 import { configureLedgerWorkspace } from '@/lib/harness/ledger'
 import type { WorkspaceHandle } from '@/lib/workspace'
@@ -67,9 +67,10 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
   const workspaceRoot = selectedRoot ? normalizeWorkspacePath(selectedRoot) : undefined
   const cwd = workspaceRoot || '/'
   const skillV2Enabled = isEnabled('skillV2')
-  const skill = options.loadedSkill ?? (skillV2Enabled
-    ? undefined
-    : createInlineSkill(getSystemPrompt(options.skillSystemPrompt, options.skillSkipConfirmation)))
+  // The directory Skill runtime is the sole source of prompt instructions.
+  // `skillSystemPrompt` remains on the persisted context type for migration
+  // compatibility, but old inline prompts are intentionally ignored.
+  const skill = options.loadedSkill
   const settings = createSettings(options.provider, cwd)
   const localWorkspaceEnabled = isEnabled('localWorkspace') && Boolean(workspaceRoot)
   configureLedgerWorkspace(localWorkspaceEnabled ? workspaceRoot ?? null : null)
@@ -307,19 +308,6 @@ function normalizeWorkspacePath(path: string): string {
   }
   const prefix = drive ? `${drive}/` : absolute ? '/' : ''
   return `${prefix}${parts.join('/')}`.replace(/\/$/, '') || '/'
-}
-
-function createInlineSkill(content?: string): LoadedSkill | undefined {
-  if (!content?.trim()) return undefined
-  return {
-    metadata: {
-      name: 'chat-skill',
-      version: '1.0.0',
-      description: 'Skill selected from the chat palette',
-    },
-    content,
-    path: 'chat://skill',
-  }
 }
 
 function createSettings(provider: ModelProvider, cwd: string): Settings {

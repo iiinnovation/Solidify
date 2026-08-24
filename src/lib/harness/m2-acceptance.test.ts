@@ -137,6 +137,48 @@ describe('M2 harness acceptance', () => {
     expect(loadRecentRunTelemetry()).toEqual([])
   })
 
+  it('恢复旧账本时移除模型请求和回答正文并回写摘要', () => {
+    const key = 'test-verbose-model-ledger'
+    const ts = new Date().toISOString()
+    localStorage.setItem(key, JSON.stringify([
+      {
+        seq: 1,
+        runId: 'verbose-model',
+        ts,
+        type: 'model.called',
+        payload: {
+          turn: 1,
+          request: {
+            model: 'test-model',
+            system: 'LONG SYSTEM PROMPT',
+            messages: [{ role: 'user', content: 'PRIVATE USER MESSAGE' }],
+            tools: [{ name: 'read_file', description: 'LONG TOOL SCHEMA' }],
+            maxTokens: 4096,
+            stream: true,
+          },
+        },
+      },
+      {
+        seq: 2,
+        runId: 'verbose-model',
+        ts,
+        type: 'model.completed',
+        payload: { turn: 1, text: 'PRIVATE MODEL ANSWER', toolCalls: [{ name: 'read_file' }] },
+      },
+    ]))
+
+    const restored = new RunLedger('verbose-model', key).events()
+    const serialized = JSON.stringify(restored)
+    expect(serialized).not.toContain('LONG SYSTEM PROMPT')
+    expect(serialized).not.toContain('PRIVATE USER MESSAGE')
+    expect(serialized).not.toContain('PRIVATE MODEL ANSWER')
+    expect(restored[0].payload).toMatchObject({
+      request: { model: 'test-model', messageCount: 1, toolCount: 1 },
+    })
+    expect(restored[1].payload).toMatchObject({ textLength: 20, toolCallCount: 1, toolCallNames: ['read_file'] })
+    expect(localStorage.getItem(key)).toBe(JSON.stringify(restored))
+  })
+
   it('解析失败诊断可持久化并回放', () => {
     const ledger = new RunLedger('parse-failed', 'test-parse-failed')
     ledger.clear()

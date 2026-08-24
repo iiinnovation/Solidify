@@ -7,6 +7,41 @@ describe('chat store truncation', () => {
     useChatStore.setState({ conversations: [], artifacts: [], activeArtifactId: null })
   })
 
+  it('does not activate a newly generated artifact', () => {
+    useChatStore.getState().addArtifact({
+      id: 'generated-artifact',
+      title: 'Generated',
+      type: 'document',
+      content: '# Generated',
+      messageId: 'assistant-message',
+      version: 1,
+    })
+
+    expect(useChatStore.getState().activeArtifactId).toBeNull()
+  })
+
+  it('binds a new conversation to its task workspace and does not silently rebind it', () => {
+    const id = useChatStore.getState().createConversation('Workspace task', {
+      workspaceRoot: '/workspace-a',
+      projectId: 'project-a',
+    })
+
+    expect(useChatStore.getState().conversations[0]).toMatchObject({
+      id,
+      workspaceRoot: '/workspace-a',
+      projectId: 'project-a',
+    })
+
+    useChatStore.getState().bindConversationToWorkspace(id, {
+      workspaceRoot: '/workspace-b',
+      projectId: 'project-b',
+    })
+    expect(useChatStore.getState().conversations[0]).toMatchObject({
+      workspaceRoot: '/workspace-a',
+      projectId: 'project-a',
+    })
+  })
+
   it('removes artifacts owned by truncated messages and clears the active artifact', () => {
     useChatStore.setState({
       conversations: [{

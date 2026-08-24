@@ -15,9 +15,10 @@ interface WorkspaceState {
   entries: WorkspaceEntry[]
   selectedPath: string | null
   indexStats: WorkspaceIndexStats | null
+  /** Changes only when the active workspace conversation projection is replaced. */
+  projectionVersion: number
   status: 'idle' | 'opening' | 'indexing' | 'ready' | 'error'
   error: string | null
-  setWorkspaceRoot: (root: string | null) => void
   initialize: () => Promise<void>
   open: () => Promise<void>
   create: (name: string) => Promise<void>
@@ -41,9 +42,9 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       entries: [],
       selectedPath: null,
       indexStats: null,
+      projectionVersion: 0,
       status: 'idle',
       error: null,
-      setWorkspaceRoot: (workspaceRoot) => set({ workspaceRoot }),
       initialize: async () => {
         if (initialization) return initialization
         const root = get().workspaceRoot
@@ -53,9 +54,17 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       },
       open: async () => {
         set({ status: 'opening', error: null })
+        const previousRoot = get().workspaceRoot
         try {
+          await activation
+          await detachActiveWorkspace()
+          clearWorkspaceProjection(set, get)
           const info = await openLocalWorkspace()
-          if (!info) { set({ status: get().workspaceRoot ? 'ready' : 'idle' }); return }
+          if (!info) {
+            if (previousRoot) await activate(previousRoot, restoreLocalWorkspace, set, get)
+            else set({ status: 'idle' })
+            return
+          }
           await activate(info.root, async () => info, set, get)
         } catch (error) {
           set({ status: 'error', error: errorMessage(error) })
@@ -63,25 +72,28 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       },
       create: async (name) => {
         set({ status: 'opening', error: null })
+        const previousRoot = get().workspaceRoot
         try {
+          await activation
+          await detachActiveWorkspace()
+          clearWorkspaceProjection(set, get)
           const info = await createLocalWorkspace(name)
-          if (!info) { set({ status: get().workspaceRoot ? 'ready' : 'idle' }); return }
+          if (!info) {
+            if (previousRoot) await activate(previousRoot, restoreLocalWorkspace, set, get)
+            else set({ status: 'idle' })
+            return
+          }
           await activate(info.root, async () => info, set, get)
         } catch (error) {
           set({ status: 'error', error: errorMessage(error) })
         }
       },
       close: async () => {
-        await activeIndexer?.stop()
-        activeIndexer = null
-        await stopConversationPersistence?.()
-        stopConversationPersistence = null
-        await flushWorkspaceLedger()
-        configureLedgerWorkspace(null)
+        await activation
+        await detachActiveWorkspace()
         await closeLocalWorkspace()
-        useChatStore.setState({ conversations: [], artifacts: [], activeConversationId: null, activeArtifactId: null })
-        useDocumentStore.getState().reset()
-        set({ workspaceRoot: null, project: null, entries: [], selectedPath: null, indexStats: null, status: 'idle', error: null })
+        clearWorkspaceProjection(set, get)
+        set({ status: 'idle', error: null })
       },
       refreshTree: async () => {
         const root = get().workspaceRoot
@@ -123,19 +135,19 @@ async function activate(
     await previous
     try {
       set({ status: 'indexing', error: null })
-      await activeIndexer?.stop()
-      activeIndexer = null
-      // Flush and detach the previous workspace BEFORE `load` reassigns the
-      // native workspace authorization — a flush afterwards would be rejected by
-      // the Rust side because it still targets the old root.
-      await stopConversationPersistence?.()
-      stopConversationPersistence = null
-      await flushWorkspaceLedger()
-      configureLedgerWorkspace(null)
+      await detachActiveWorkspace()
 
       const info = await load(root)
-      set({ workspaceRoot: info.root, project: info.project })
+      useDocumentStore.getState().reset()
       await restoreWorkspaceConversations(info.root)
+      set({
+        workspaceRoot: info.root,
+        project: info.project,
+        entries: [],
+        selectedPath: null,
+        indexStats: null,
+        projectionVersion: get().projectionVersion + 1,
+      })
       if (isEnabled('workbenchV2')) await migrateLegacyArtifactsToWorkspace(info.root)
       stopConversationPersistence = startWorkspaceConversationPersistence(info.root)
       const entries = await readWorkspaceTree(info.root)
@@ -151,6 +163,31 @@ async function activate(
     }
   })()
   return activation
+}
+
+async function detachActiveWorkspace(): Promise<void> {
+  await activeIndexer?.stop()
+  activeIndexer = null
+  await stopConversationPersistence?.()
+  stopConversationPersistence = null
+  await flushWorkspaceLedger()
+  configureLedgerWorkspace(null)
+}
+
+function clearWorkspaceProjection(
+  set: (partial: Partial<WorkspaceState>) => void,
+  get: () => WorkspaceState,
+): void {
+  useChatStore.setState({ conversations: [], artifacts: [], activeConversationId: null, activeArtifactId: null })
+  useDocumentStore.getState().reset()
+  set({
+    workspaceRoot: null,
+    project: null,
+    entries: [],
+    selectedPath: null,
+    indexStats: null,
+    projectionVersion: get().projectionVersion + 1,
+  })
 }
 
 function errorMessage(error: unknown): string {

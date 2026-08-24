@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { AlertTriangle, Copy, FileQuestion, History, LoaderCircle } from 'lucide-react'
+import { AlertTriangle, Copy, FileQuestion, History, LoaderCircle, X } from 'lucide-react'
 import { MarkdownRenderer } from '@/components/artifacts/markdown-renderer'
 import { MermaidRenderer } from '@/components/artifacts/mermaid-renderer'
 import { ChartRenderer } from '@/components/artifacts/chart-renderer'
@@ -19,7 +19,7 @@ import type { ArtifactType } from '@/stores/chat-store'
 
 type BinaryPreview = { kind: 'image' | 'pdf'; url: string } | { kind: 'unsupported' }
 
-export function DocumentViewer() {
+export function DocumentViewer({ onClose }: { onClose?: () => void }) {
   const workspaceRoot = useWorkspaceStore((state) => state.workspaceRoot)
   const selectedPath = useWorkspaceStore((state) => state.selectedPath)
   const entries = useWorkspaceStore((state) => state.entries)
@@ -93,6 +93,7 @@ export function DocumentViewer() {
           <button type="button" onClick={() => void navigator.clipboard.writeText(content).then(() => toast.success('已复制'))} aria-label="复制内容" title="复制内容" className="p-1.5 text-text-tertiary hover:text-text-primary"><Copy size={15} /></button>
           <ExportDropdown content={content} type={type} title={title} contentRef={contentRef} svgString={type === 'mermaid' ? mermaidSvg : undefined} chartRef={chartRef} />
           <button type="button" onClick={() => setHistoryOpen((value) => !value)} aria-label="版本历史" title="版本历史" className="p-1.5 text-text-tertiary hover:text-text-primary"><History size={15} /></button>
+          {onClose && <button type="button" onClick={onClose} aria-label="关闭预览" title="关闭预览" className="p-1.5 text-text-tertiary hover:text-text-primary"><X size={15} /></button>}
         </div>
         {document?.error && <div className="flex items-center gap-2 border-b border-error/20 bg-error-light px-3 py-2 text-xs text-error"><AlertTriangle size={14} />{document.error}</div>}
         <div className="min-h-0 flex-1" data-document-path={path} data-document-content>

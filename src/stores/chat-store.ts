@@ -69,6 +69,14 @@ export interface Conversation {
   title: string
   messages: Message[]
   createdAt: number
+  /** The task's durable workspace boundary. Once set, it is not silently rebound. */
+  workspaceRoot?: string
+  projectId?: string
+}
+
+export interface ConversationWorkspaceBinding {
+  workspaceRoot?: string
+  projectId?: string
 }
 
 /* ── Store 类型 ── */
@@ -84,7 +92,8 @@ interface ChatState {
   /* Conversation */
   conversations: Conversation[]
   activeConversationId: string | null
-  createConversation: (title: string) => string
+  createConversation: (title: string, workspace?: ConversationWorkspaceBinding) => string
+  bindConversationToWorkspace: (id: string, workspace: ConversationWorkspaceBinding) => void
   setActiveConversation: (id: string) => void
   renameConversation: (id: string, title: string) => void
   deleteConversation: (id: string) => void
@@ -118,7 +127,6 @@ export const useChatStore = create<ChatState>()(
       addArtifact: (artifact) =>
         set((state) => ({
           artifacts: [...state.artifacts, artifact],
-          activeArtifactId: artifact.id,
         })),
 
       updateArtifactContent: (id, content, streaming) =>
@@ -134,17 +142,37 @@ export const useChatStore = create<ChatState>()(
       conversations: [],
       activeConversationId: null,
 
-      createConversation: (title) => {
+      createConversation: (title, workspace) => {
         const id = genId('conv')
         set((state) => ({
           conversations: [
-            { id, title, messages: [], createdAt: Date.now() },
+            {
+              id,
+              title,
+              messages: [],
+              createdAt: Date.now(),
+              ...(workspace?.workspaceRoot ? { workspaceRoot: workspace.workspaceRoot } : {}),
+              ...(workspace?.projectId ? { projectId: workspace.projectId } : {}),
+            },
             ...state.conversations,
           ],
           activeConversationId: id,
         }))
         return id
       },
+
+      bindConversationToWorkspace: (id, workspace) =>
+        set((state) => ({
+          conversations: state.conversations.map((conversation) => {
+            if (conversation.id !== id) return conversation
+            if (conversation.workspaceRoot && conversation.workspaceRoot !== workspace.workspaceRoot) return conversation
+            return {
+              ...conversation,
+              ...(workspace.workspaceRoot ? { workspaceRoot: workspace.workspaceRoot } : {}),
+              ...(workspace.projectId ? { projectId: workspace.projectId } : {}),
+            }
+          }),
+        })),
 
       setActiveConversation: (id) => set({ activeConversationId: id }),
 
@@ -272,6 +300,16 @@ export const useChatStore = create<ChatState>()(
         // 清理孤儿 artifacts + 迁移旧类型
         return (state: ChatState | undefined) => {
           if (!state) return
+          let migratedConversationWorkspace = false
+          const conversations = state.conversations.map((conversation) => {
+            if (conversation.workspaceRoot) return conversation
+            const workspaceRoot = [...conversation.messages].reverse()
+              .find((message) => message.agentContext?.workspaceRoot)
+              ?.agentContext?.workspaceRoot
+            if (!workspaceRoot) return conversation
+            migratedConversationWorkspace = true
+            return { ...conversation, workspaceRoot }
+          })
           for (const conversation of state.conversations) {
             for (const message of conversation.messages) {
               for (const attachment of message.attachments ?? []) {
@@ -309,8 +347,9 @@ export const useChatStore = create<ChatState>()(
               // 迁移旧类型
               type: a.type === ('diagram' as ArtifactType) ? 'mermaid' : a.type,
             }))
-          if (cleaned.length !== state.artifacts.length || state.artifacts.some(a => a.type === ('diagram' as ArtifactType))) {
+          if (migratedConversationWorkspace || cleaned.length !== state.artifacts.length || state.artifacts.some(a => a.type === ('diagram' as ArtifactType))) {
             useChatStore.setState({
+              conversations,
               artifacts: cleaned,
               activeArtifactId:
                 state.activeArtifactId && cleaned.some((a) => a.id === state.activeArtifactId)

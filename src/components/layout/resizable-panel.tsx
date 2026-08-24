@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, type ReactNode } from 'react'
 interface ResizablePanelProps {
   left: ReactNode
   right: ReactNode
+  rightOpen?: boolean
   leftWidth: number
   onResize: (width: number) => void
   minLeft?: number
@@ -12,6 +13,7 @@ interface ResizablePanelProps {
 export function ResizablePanel({
   left,
   right,
+  rightOpen = true,
   leftWidth,
   onResize,
   minLeft = 360,
@@ -58,22 +60,28 @@ export function ResizablePanel({
   }, [maxLeft, minLeft, onResize])
 
   return (
-    <div ref={containerRef} className="flex h-full w-full overflow-hidden" style={{ '--left-w': `${leftWidth}px` } as React.CSSProperties}>
-      <div className="shrink-0 overflow-hidden" style={{ width: 'var(--left-w)' }}>
+    <div ref={containerRef} className="relative flex h-full w-full overflow-hidden" style={{ '--left-w': `${leftWidth}px` } as React.CSSProperties}>
+      <div
+        className={rightOpen ? 'min-w-0 flex-1 overflow-hidden md:flex-none md:shrink-0' : 'min-w-0 flex-1 overflow-hidden'}
+        style={rightOpen ? { width: 'var(--left-w)' } : undefined}
+      >
         {left}
       </div>
 
-      {/* 分隔线 */}
-      <div
-        className="shrink-0 w-px bg-border-light cursor-col-resize hover:bg-accent transition-colors relative group"
-        onMouseDown={handleMouseDown}
-      >
-        <div className="absolute inset-y-0 -left-1 -right-1" />
-      </div>
+      {rightOpen && <>
+        <div
+          role="separator"
+          aria-label="调整对话与预览宽度"
+          className="relative hidden w-px shrink-0 cursor-col-resize bg-border-light transition-colors hover:bg-accent md:block"
+          onMouseDown={handleMouseDown}
+        >
+          <div className="absolute inset-y-0 -left-1 -right-1" />
+        </div>
 
-      <div className="flex-1 min-w-0 overflow-hidden">
-        {right}
-      </div>
+        <div className="absolute inset-0 z-20 min-w-0 overflow-hidden bg-background md:static md:z-auto md:flex-1">
+          {right}
+        </div>
+      </>}
     </div>
   )
 }

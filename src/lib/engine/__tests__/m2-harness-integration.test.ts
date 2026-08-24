@@ -222,6 +222,8 @@ describe('M2 Harness query integration', () => {
         model: 'mock-model',
         maxTokens: 1000,
         stream: true,
+        messageCount: expect.any(Number),
+        toolCount: expect.any(Number),
       },
       contextStats: {
         slots: {
@@ -234,7 +236,10 @@ describe('M2 Harness query integration', () => {
         fixedPrefixFingerprint: expect.stringMatching(/^ctx-/),
       },
     })
+    expect(JSON.stringify(ledger.find('model.called')[0].payload)).not.toContain('run the tools')
+    expect(JSON.stringify(ledger.find('model.called')[0].payload)).not.toContain('Run read_item')
     expect(ledger.find('model.completed')).toHaveLength(2)
+    expect(JSON.stringify(ledger.find('model.completed')[0].payload)).not.toContain('done')
     expect(ledger.find('model.completed').every((event) => {
       const value = (event.payload as { firstChunkAt?: unknown }).firstChunkAt
       return typeof value === 'string' && !Number.isNaN(Date.parse(value))

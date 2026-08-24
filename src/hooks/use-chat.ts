@@ -161,6 +161,8 @@ export function isDiscardableEmptyAssistant(message: Message, hasArtifact = fals
 /* ── Hook ── */
 
 export function useChat(conversationId?: string) {
+  const workspaceRoot = useWorkspaceStore((state) => state.workspaceRoot)
+  const workspaceProjectionVersion = useWorkspaceStore((state) => state.projectionVersion)
   const [messages, setMessages] = useState<Message[]>([])
   const [isStreaming, setIsStreaming] = useState(false)
   const [error, setError] = useState<Error | null>(null)
@@ -169,13 +171,16 @@ export function useChat(conversationId?: string) {
   const requestSequenceRef = useRef(0)
   const activeRequestConversationRef = useRef<string | undefined>(conversationId)
   const streamConversationRef = useRef<string | undefined>(conversationId)
+  const streamWorkspaceRef = useRef<string | null>(workspaceRoot)
   const messagesOwnerRef = useRef<string | undefined>(conversationId)
+  const messagesWorkspaceRef = useRef<string | null>(workspaceRoot)
   const resumedConversationsRef = useRef(new Set<string>())
   const navigate = useNavigate()
 
   const addArtifact = useChatStore((s) => s.addArtifact)
   const updateArtifactContent = useChatStore((s) => s.updateArtifactContent)
   const createConversation = useChatStore((s) => s.createConversation)
+  const bindConversationToWorkspace = useChatStore((s) => s.bindConversationToWorkspace)
   const addMessageToConversation = useChatStore((s) => s.addMessageToConversation)
   const patchMessageInConversation = useChatStore((s) => s.patchMessageInConversation)
   const removeMessageFromConversation = useChatStore((s) => s.removeMessageFromConversation)
@@ -191,7 +196,8 @@ export function useChat(conversationId?: string) {
     // The provider may resolve one more chunk after abort, so the sequence
     // token below also prevents stale callbacks from painting into this chat.
     const activeConversation = activeRequestConversationRef.current
-    if (activeConversation !== undefined && activeConversation !== conversationId) {
+    const workspaceChanged = messagesWorkspaceRef.current !== workspaceRoot
+    if (activeConversation !== undefined && (activeConversation !== conversationId || workspaceChanged)) {
       const store = useChatStore.getState()
       const oldConversation = store.conversations.find((item) => item.id === activeConversation)
       const runningAssistant = [...(oldConversation?.messages ?? [])].reverse()
@@ -214,9 +220,12 @@ export function useChat(conversationId?: string) {
       setIsStreaming(false)
     }
     messagesOwnerRef.current = conversationId
+    messagesWorkspaceRef.current = workspaceRoot
     if (conversationId) {
       const store = useChatStore.getState()
-      const conv = store.conversations.find((c) => c.id === conversationId)
+      const conv = store.conversations.find((c) =>
+        c.id === conversationId && conversationBelongsToWorkspace(c, workspaceRoot),
+      )
       if (conv) {
         const cleanedMessages = conv.messages.filter((message) => !isDiscardableEmptyAssistant(
           message,
@@ -235,7 +244,7 @@ export function useChat(conversationId?: string) {
       setMessages([])
     }
     setError(null)
-  }, [conversationId])
+  }, [conversationId, workspaceRoot, workspaceProjectionVersion])
 
   // 组件卸载时中止正在进行的流，防止资源泄漏
   useEffect(() => {
@@ -318,15 +327,58 @@ export function useChat(conversationId?: string) {
 
       // 确定对话 ID —— 没有则新建
       let currentConvId = resume?.conversationId ?? convIdRef.current
+      const selectedRoot = useWorkspaceStore.getState().workspaceRoot
+      let storedConversation = currentConvId
+        ? useChatStore.getState().conversations.find((item) =>
+            item.id === currentConvId && conversationBelongsToWorkspace(item, selectedRoot),
+          )
+        : undefined
       let createdConversation = false
-      if (!currentConvId) {
+      // A workspace switch can leave the URL pointing at a task that is no
+      // longer in the active workspace projection. Treat that stale route as a
+      // new task so the optimistic turn is not written to a nonexistent ID.
+      if (!currentConvId || (!resume && !storedConversation)) {
         const title = content.slice(0, 20) + (content.length > 20 ? '…' : '')
-        currentConvId = createConversation(title)
+        const workspace = useWorkspaceStore.getState()
+        currentConvId = createConversation(title, {
+          workspaceRoot: workspace.workspaceRoot ?? undefined,
+          projectId: workspace.project?.id,
+        })
         createdConversation = true
         convIdRef.current = currentConvId
+        storedConversation = useChatStore.getState().conversations.find((item) => item.id === currentConvId)
+      }
+      const selectedWorkspace = useWorkspaceStore.getState()
+      const resumeWorkspaceRoot = resume?.assistantMessage.agentContext?.workspaceRoot
+      if (resume && (
+        !storedConversation
+        || storedConversation.workspaceRoot !== (selectedWorkspace.workspaceRoot ?? undefined)
+        || resumeWorkspaceRoot !== (selectedWorkspace.workspaceRoot ?? undefined)
+      )) {
+        if (isCurrentRequest()) {
+          setError(new Error('无法恢复 Agent：会话已不在当前工作区'))
+          isStreamingRef.current = false
+          activeRequestConversationRef.current = undefined
+        }
+        return
+      }
+      const taskWorkspaceRoot = resume?.assistantMessage.agentContext?.workspaceRoot
+        ?? storedConversation?.workspaceRoot
+        ?? selectedWorkspace.workspaceRoot
+        ?? undefined
+      const currentProjectId = selectedWorkspace.workspaceRoot === taskWorkspaceRoot
+        ? selectedWorkspace.project?.id
+        : undefined
+      if (taskWorkspaceRoot && (!storedConversation?.workspaceRoot || (!storedConversation.projectId && currentProjectId))) {
+        bindConversationToWorkspace(currentConvId, {
+          workspaceRoot: taskWorkspaceRoot,
+          projectId: currentProjectId,
+        })
       }
       activeRequestConversationRef.current = currentConvId
       streamConversationRef.current = currentConvId
+      streamWorkspaceRef.current = selectedWorkspace.workspaceRoot
+      const requestHistory = historyOverride ?? storedConversation?.messages ?? []
 
       const skillObj = skillId
         ? {
@@ -396,15 +448,15 @@ export function useChat(conversationId?: string) {
       const savedAgentContext = resume?.assistantMessage.agentContext
       const preloadWorkspaceRoot = savedAgentContext
         ? savedAgentContext.workspaceRoot
-        : useWorkspaceStore.getState().workspaceRoot
+        : taskWorkspaceRoot
       const preloadSkillId = savedAgentContext ? savedAgentContext.skillId : skillId
       const skillRuntimePromise = isEnabled('skillV2')
         ? loadChatSkillRuntime({
             workspaceRoot: preloadWorkspaceRoot,
             skillName: preloadSkillId,
           }).catch((error) => {
-            // The legacy inline prompt remains usable if a local Skill root is
-            // temporarily unavailable; surface the failure for diagnosis.
+            // Inline prompts are retired. Continue without a Skill if the
+            // directory runtime is unavailable and surface the failure.
             console.warn('[skills] Failed to load Skill registry:', error)
             return undefined
           })
@@ -645,7 +697,7 @@ ${result.content}
         ))
         patchMessageInConversation(currentConvId, userMsg.id, userPatch)
       }
-      const historicalAttachmentIds = messages.flatMap((message) =>
+      const historicalAttachmentIds = requestHistory.flatMap((message) =>
         message.attachments?.map((attachment) => attachment.attachmentId).filter((id): id is string => Boolean(id)) ?? [],
       )
       const historicalResources = await loadAttachmentResources(historicalAttachmentIds)
@@ -661,7 +713,7 @@ ${result.content}
         resources: attachmentResources,
         userContent: content,
         contextWindow: activeProvider.contextWindow,
-        reservedTokens: Math.ceil(messages.reduce((sum, message) => {
+        reservedTokens: Math.ceil(requestHistory.reduce((sum, message) => {
           return sum + message.content.length / 3
         }, 0)) + 4_000,
       })
@@ -708,7 +760,7 @@ ${result.content}
       const pendingMaterializations: Promise<void>[] = []
       const documentRefs: Array<{ path: string; messageId: string; version: number }> = []
       const materializeRunId = assistantMsg.agentRun?.runId ?? newId('run')
-      const workspaceRoot = useWorkspaceStore.getState().workspaceRoot
+      const workspaceRoot = taskWorkspaceRoot
       const useFileDocuments = isEnabled('workbenchV2') && isEnabled('localWorkspace') && isTauri && Boolean(workspaceRoot)
       let observedAssistantOutput = false
       let completedArtifactCount = resume
@@ -873,7 +925,7 @@ ${result.content}
             .find((conversation) => conversation.id === resume.conversationId)
             ?.messages
           : undefined
-        const resumeMessages = persistedResumeMessages ?? messages
+        const resumeMessages = persistedResumeMessages ?? requestHistory
         const resumedAssistantIndex = resume
           ? resumeMessages.findIndex((message) => message.id === resume.assistantMessage.id)
           : -1
@@ -881,7 +933,7 @@ ${result.content}
           ? resumedAssistantIndex >= 0
             ? resumeMessages.slice(0, resumedAssistantIndex)
             : resumeMessages.filter((message) => message.id !== resume.assistantMessage.id)
-          : historyOverride ?? messages
+          : requestHistory
         const currentArtifacts = useChatStore.getState().artifacts
         const baseMessages = unfilteredBaseMessages.filter((message) => !isDiscardableEmptyAssistant(
           message,
@@ -924,7 +976,7 @@ ${result.content}
           const runEvents: QueryEvent[] = [...(assistantMsg.runEvents ?? [])]
           const agentContext = resume?.assistantMessage.agentContext ?? {
             providerId: activeProvider.id,
-            workspaceRoot: useWorkspaceStore.getState().workspaceRoot ?? undefined,
+            workspaceRoot: taskWorkspaceRoot,
             skillSystemPrompt,
             skillSkipConfirmation,
             skillId: effectiveSkillId,
@@ -1067,9 +1119,10 @@ ${result.content}
               ) {
                 const data = event.result.data as { path?: unknown } | undefined
                 if (typeof data?.path === 'string') {
-                  useWorkspaceStore.getState().selectPath(data.path)
+                  const workspace = useWorkspaceStore.getState()
+                  workspace.selectPath(data.path)
                   useDocumentStore.getState().setActivePath(data.path)
-                  void useWorkspaceStore.getState().refreshTree()
+                  if (workspace.workspaceRoot === workspaceRoot) void workspace.refreshTree()
                 }
               }
               if (event.type === 'message.completed') {
@@ -1148,23 +1201,25 @@ ${result.content}
         }
       }
     },
-    [messages, addArtifact, updateArtifactContent, createConversation, addMessageToConversation, patchMessageInConversation, removeMessageFromConversation, removeLastMessageFromConversation, navigate, getActiveProvider],
+    [addArtifact, updateArtifactContent, createConversation, bindConversationToWorkspace, addMessageToConversation, patchMessageInConversation, removeMessageFromConversation, removeLastMessageFromConversation, navigate, getActiveProvider],
   )
 
   useEffect(() => {
     if (
       !conversationId
       || isStreaming
-      || resumedConversationsRef.current.has(conversationId)
     ) return
 
-    const conversation = useChatStore.getState().conversations
-      .find((item) => item.id === conversationId)
+    const conversation = useChatStore.getState().conversations.find((item) =>
+      item.id === conversationId && conversationBelongsToWorkspace(item, workspaceRoot),
+    )
     const assistantMessage = [...(conversation?.messages ?? [])].reverse()
       .find((message) => message.role === 'assistant' && message.agentRun?.status === 'running')
     if (!assistantMessage) return
 
-    resumedConversationsRef.current.add(conversationId)
+    const resumeKey = `${workspaceRoot ?? ''}:${conversationId}`
+    if (resumedConversationsRef.current.has(resumeKey)) return
+    resumedConversationsRef.current.add(resumeKey)
     void sendMessage(
       '',
       undefined,
@@ -1172,7 +1227,7 @@ ${result.content}
       assistantMessage.agentContext?.skillSkipConfirmation,
       { conversationId, assistantMessage },
     )
-  }, [conversationId, isStreaming, sendMessage])
+  }, [conversationId, workspaceRoot, workspaceProjectionVersion, isStreaming, sendMessage])
 
   const stopStreaming = useCallback(() => {
     abortRef.current?.abort()
@@ -1299,14 +1354,16 @@ ${result.content}
     }
     const requestContext = lastUserMsg.requestContext ?? previousAssistant?.agentContext
 
-    // 从 store 中移除最后一条 assistant 消息
+    // Replace the final turn as one unit. Keeping the original user message and
+    // asking sendMessage to append it again produced two consecutive copies in
+    // both persistence and the model context.
+    const retainedMessages = messages.slice(0, lastUserMsgIndex)
     const currentConvId = convIdRef.current
     if (currentConvId) {
-      removeLastMessageFromConversation(currentConvId)
+      truncateMessagesFrom(currentConvId, lastUserMsg.id)
     }
 
-    // 更新本地 state
-    setMessages((prev) => prev.slice(0, -1))
+    setMessages(retainedMessages)
 
     // 重新发送
     void sendMessage(
@@ -1315,11 +1372,11 @@ ${result.content}
       requestContext?.skillSystemPrompt,
       requestContext?.skillSkipConfirmation,
       undefined,
-      undefined,
+      retainedMessages,
       requestContext?.skillId ?? lastUserMsg.skill?.id,
       lastUserMsg.skill?.name,
     )
-  }, [messages, isStreaming, sendMessage, removeLastMessageFromConversation])
+  }, [messages, isStreaming, sendMessage, truncateMessagesFrom])
 
   const retry = useCallback(() => {
     if (isStreaming || messages.length === 0) return
@@ -1367,12 +1424,16 @@ ${result.content}
   // loading effect runs. Hide the previous conversation's local state in that
   // frame, and never expose its stream status to the new composer.
   const visibleMessages = messagesOwnerRef.current === conversationId
+    && messagesWorkspaceRef.current === workspaceRoot
     ? messages.filter((message) => !isDiscardableEmptyAssistant(
         message,
         artifacts.some((artifact) => artifact.messageId === message.id),
       ))
     : []
-  const visibleStreaming = streamConversationRef.current === conversationId ? isStreaming : false
+  const visibleStreaming = streamConversationRef.current === conversationId
+    && streamWorkspaceRef.current === workspaceRoot
+    ? isStreaming
+    : false
   return {
     messages: visibleMessages,
     isStreaming: visibleStreaming,
@@ -1383,6 +1444,15 @@ ${result.content}
     regenerate,
     retry,
   }
+}
+
+function conversationBelongsToWorkspace(
+  conversation: { workspaceRoot?: string },
+  workspaceRoot: string | null,
+): boolean {
+  return workspaceRoot
+    ? conversation.workspaceRoot === workspaceRoot
+    : conversation.workspaceRoot === undefined
 }
 
 

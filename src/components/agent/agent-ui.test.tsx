@@ -25,7 +25,7 @@ const completedRun: RunState = {
 }
 
 describe('agent run UI', () => {
-  it('shows parallel child runs and the shared budget', () => {
+  it('shows parallel child runs and the shared budget on demand', async () => {
     render(<RunTimeline run={{
       ...completedRun,
       subAgents: [{
@@ -39,6 +39,8 @@ describe('agent run UI', () => {
       }],
       taskBudget: { limit: 100, used: 6, remaining: 94, exhausted: false, byRun: { 'run-1:research': 6 } },
     }} />)
+    expect(screen.queryByLabelText('并行执行线')).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: /运行详情/ }))
     expect(screen.getByLabelText('并行执行线')).not.toBeNull()
     expect(screen.getByText('researcher')).not.toBeNull()
     expect(screen.getByLabelText('任务树')).not.toBeNull()
@@ -49,7 +51,9 @@ describe('agent run UI', () => {
     render(<RunTimeline run={completedRun} />)
     expect(screen.getByText('15 tokens')).not.toBeNull()
     expect(screen.getByText('0.04s')).not.toBeNull()
+    expect(screen.queryByRole('button', { name: /read_file/ })).toBeNull()
 
+    await userEvent.click(screen.getByRole('button', { name: /运行详情/ }))
     await userEvent.click(screen.getByRole('button', { name: /read_file/ }))
     expect(screen.getByText('file contents')).not.toBeNull()
     expect(screen.getByText(/notes.md/)).not.toBeNull()
@@ -79,6 +83,10 @@ describe('agent run UI', () => {
 
     expect(screen.queryByText('tool_1')).toBeNull()
     expect(screen.queryByText('tool_2')).toBeNull()
+    expect(screen.queryByText('tool_3')).toBeNull()
+    expect(screen.queryByText('tool_4')).toBeNull()
+
+    await userEvent.click(screen.getByRole('button', { name: /运行详情/ }))
     expect(screen.getByText('tool_3')).not.toBeNull()
     expect(screen.getByText('tool_4')).not.toBeNull()
 
@@ -154,6 +162,7 @@ describe('agent run UI', () => {
     ledger.append('run.completed', completedRun.usage)
 
     render(<RunTimeline run={completedRun} />)
+    await userEvent.click(screen.getByRole('button', { name: /运行详情/ }))
     await userEvent.click(screen.getByRole('button', { name: /运行账本/ }))
     expect(screen.getByText('run.started')).not.toBeNull()
     expect(screen.getByText('tool.requested')).not.toBeNull()

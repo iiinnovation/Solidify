@@ -6,22 +6,6 @@
   100% { transform: translateX(350%); }
 }
 
-/* ===== Tauri Window Drag Region ===== */
-/* 确保 Tauri 窗口可以拖动 */
-[data-tauri-drag-region] {
-  -webkit-app-region: drag;
-  user-select: none;
-  -webkit-user-select: none;
-}
-
-/* 拖动区域内的交互元素不可拖动 */
-[data-tauri-drag-region] button,
-[data-tauri-drag-region] input,
-[data-tauri-drag-region] a,
-[data-tauri-drag-region] [role="button"] {
-  -webkit-app-region: no-drag;
-}
-
 /* ===== Solidify Design Tokens ===== */
 
 :root {

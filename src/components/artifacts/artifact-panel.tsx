@@ -172,7 +172,7 @@ function EmptyState() {
   )
 }
 
-export function ArtifactPanel({ conversationId }: { conversationId?: string }) {
+export function ArtifactPanel({ conversationId, onClose, embedded = false }: { conversationId?: string; onClose?: () => void; embedded?: boolean }) {
   const { artifacts, activeArtifactId, setActiveArtifact } = useChatStore()
   const conversations = useChatStore((s) => s.conversations)
   const contentRef = useRef<HTMLDivElement>(null)
@@ -232,15 +232,20 @@ export function ArtifactPanel({ conversationId }: { conversationId?: string }) {
           svgString={activeArtifact.type === 'mermaid' ? mermaidSvg : undefined}
           chartRef={chartContainerRef}
         />
-        <button
-          type="button"
-          onClick={() => setActiveArtifact(null)}
-          aria-label="关闭预览"
-          title="关闭预览"
-          className="shrink-0 p-1.5 rounded-md text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors"
-        >
-          <X size={15} strokeWidth={1.75} />
-        </button>
+        {!embedded && (
+          <button
+            type="button"
+            onClick={() => {
+              setActiveArtifact(null)
+              onClose?.()
+            }}
+            aria-label="关闭预览"
+            title="关闭预览"
+            className="shrink-0 p-1.5 rounded-md text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors"
+          >
+            <X size={15} strokeWidth={1.75} />
+          </button>
+        )}
       </div>
 
       {/* 内容区 */}
