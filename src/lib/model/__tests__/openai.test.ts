@@ -290,25 +290,6 @@ describe('OpenAIProvider', () => {
     expect(captured).toMatchObject({ prompt_cache_key: 'ctx-test' })
   })
 
-  it('disables hybrid thinking for a Qwen direct-output request', async () => {
-    let captured: unknown
-    async function* response() {
-      yield { choices: [{ delta: { content: 'artifact' }, finish_reason: 'stop' }] }
-    }
-    Object.defineProperty(provider, 'client', {
-      value: { chat: { completions: { create: async (params: unknown) => { captured = params; return response() } } } },
-    })
-
-    for await (const _event of provider.stream({
-      model: 'qwen3.8',
-      messages: [{ role: 'user', content: 'generate now' }],
-      stream: true,
-      reasoningMode: 'disabled',
-    })) { /* drain */ }
-
-    expect(captured).toMatchObject({ enable_thinking: false })
-  })
-
   it('emits tool_call_end even if finish_reason is stop or missing', async () => {
     installStream(provider, [
       {

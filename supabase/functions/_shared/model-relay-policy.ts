@@ -23,7 +23,6 @@ const NATIVE_BODY_KEYS: Record<RelayApiFormat, readonly string[]> = {
     'stream_options',
     'tool_choice',
     'prompt_cache_key',
-    'enable_thinking',
   ],
   anthropic: [
     'system',
@@ -94,10 +93,6 @@ export function buildNativeRequestBody(
   if (nativeBody.stream !== undefined && typeof nativeBody.stream !== 'boolean') {
     throw new Error('模型请求的 stream 必须是布尔值')
   }
-  if (nativeBody.enable_thinking !== undefined && typeof nativeBody.enable_thinking !== 'boolean') {
-    throw new Error('模型请求的 enable_thinking 必须是布尔值')
-  }
-
   const body: Record<string, unknown> = {}
   for (const key of NATIVE_BODY_KEYS[format]) {
     if (Object.hasOwn(nativeBody, key)) body[key] = nativeBody[key]

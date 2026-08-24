@@ -80,7 +80,6 @@ describe('native provider request policy', () => {
       stream_options: { include_usage: true },
       tool_choice: 'none',
       prompt_cache_key: 'conversation-123',
-      enable_thinking: false,
       arbitrary_url: 'https://internal.example',
       metadata: { admin: true },
     }, 'server-model', 'openai')
@@ -94,7 +93,6 @@ describe('native provider request policy', () => {
       stream_options: { include_usage: true },
       tool_choice: 'none',
       prompt_cache_key: 'conversation-123',
-      enable_thinking: false,
       model: 'server-model',
     })
     expect(body).not.toHaveProperty('arbitrary_url')
@@ -123,7 +121,6 @@ describe('native provider request policy', () => {
     [{ messages: [] }, 'openai', '非空 messages 数组'],
     [{ messages, tools: {} }, 'openai', 'tools 必须是数组'],
     [{ messages, stream: 'true' }, 'openai', 'stream 必须是布尔值'],
-    [{ messages, enable_thinking: 'false' }, 'openai', 'enable_thinking 必须是布尔值'],
   ])('rejects malformed native body %#', (body, format, message) => {
     expect(() => buildNativeRequestBody(body, 'model', format as RelayApiFormat)).toThrow(message)
   })

@@ -21,8 +21,3 @@ export function modelContextWindow(modelId: string, explicit?: number): number {
   if (id.includes('qwen') || id.includes('glm') || id.includes('moonshot')) return 128_000
   return 32_000
 }
-
-/** Qwen/GLM hybrid models accept `enable_thinking: false` on direct-output turns. */
-export function modelSupportsReasoningToggle(modelId: string): boolean {
-  return /(?:qwen|glm)/i.test(modelId)
-}

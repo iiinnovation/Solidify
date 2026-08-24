@@ -18,7 +18,6 @@ import { ToolLoopGuard } from './tool-loop-guard'
 import { toolRegistry } from '../tools'
 import { enablePptdPipeline } from './pptd-context'
 import { newId } from '../id'
-import { modelSupportsReasoningToggle } from '../model/capabilities'
 
 /**
  * How many times a single answer may be resumed after hitting the model's
@@ -208,7 +207,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
           || closedToolGroups.has('attachment-retrieval')
         )
       try {
-        const scopedModelContext: QueryContext = drawioGenerationOnly
+        const modelContext: QueryContext = drawioGenerationOnly
           ? {
               ...runCtx,
               skill: activeSkill,
@@ -231,9 +230,6 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
                 return !tool.loopGroup || !closedToolGroups.has(tool.loopGroup)
               }),
             }
-        const modelContext: QueryContext = drawioRun && modelSupportsReasoningToggle(runCtx.model.model)
-          ? { ...scopedModelContext, reasoningMode: 'disabled' }
-          : scopedModelContext
         exposedTools = modelContext.tools
         response = yield* streamModelResponse({
           ...modelContext,
@@ -256,7 +252,6 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
                 messageCount: request.messages.length,
                 toolCount: request.tools?.length ?? 0,
                 toolChoice: request.toolChoice ?? 'auto',
-                reasoningMode: request.reasoningMode ?? 'default',
                 promptCache: request.promptCache ?? null,
               },
               localGapMs: previousModelCompletedAt === undefined

@@ -60,6 +60,7 @@ M6 后的候选方向与触发条件见 [05-post-m6-evaluation.md](05-post-m6-ev
 
 - [Skill / Agent 请求链路改进建议](skill-agent-pipeline-improvement-proposal.md) — Skill 路由、上下文、附件、工具、Prompt Cache、旧代码退役与分阶段验收方案
 - [ADR-0014 Skill/Agent 请求链路改进](adr/0014-skill-agent-pipeline.md) — 当前运行时激活、上下文编译、缓存和迁移边界
+- [Agent Runtime 分阶段工作流重构方案](agent-runtime-staged-workflow-refactor-proposal.md) — 混合运行模式、阶段性能力租约、交付合约、迁移计划、测试门槛与规模评估
 
 ---
 
