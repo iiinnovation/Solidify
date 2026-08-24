@@ -208,7 +208,7 @@ function buildBaseSystemPrompt(ctx: QueryContext): string {
 
 ${ctx.tools.length > 0
     ? "You have access to tools that let you interact with the user's system. Use them when appropriate to complete tasks."
-    : 'No tools are available for this provider; answer using the conversation context only.'}
+    : 'No tools are active for this run; answer using the conversation context only.'}
 
 Current working directory: ${ctx.cwd}
 All relative file paths are resolved inside this workspace boundary.`

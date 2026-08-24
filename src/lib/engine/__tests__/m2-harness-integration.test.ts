@@ -106,14 +106,14 @@ afterEach(() => {
 })
 
 describe('M2 Harness query integration', () => {
-  it('prepares workspace memory and the Skill index concurrently', async () => {
+  it('prepares workspace memory and the Skill index concurrently for an activation-capable run', async () => {
     let memoryStarted = false
     let skillsStarted = false
     let releaseMemory!: () => void
     let releaseSkills!: () => void
     const memoryGate = new Promise<void>((resolve) => { releaseMemory = resolve })
     const skillsGate = new Promise<void>((resolve) => { releaseSkills = resolve })
-    const base = makeContext('m2-parallel-context', scriptedProvider([finalTurn]), [])
+    const base = makeContext('m2-parallel-context', scriptedProvider([finalTurn]), [activateSkillTool as Tool])
     const context: QueryContext = {
       ...base,
       memory: {
@@ -151,6 +151,25 @@ describe('M2 Harness query integration', () => {
     releaseSkills()
     await pending
     expect(startedTogether).toBe(true)
+  })
+
+  it('does not scan or inject the Skill index into a tool-free chat', async () => {
+    const context = makeContext('m2-tool-free-context', scriptedProvider([finalTurn]), [])
+    const list = vi.fn(async () => [{ name: 'demo', version: '1.0.0', description: 'demo' }])
+    const runtime = createHarnessRuntime(context, {
+      skillRegistry: {
+        load: async () => { throw new Error('not used') },
+        resolve: async () => null,
+        list,
+      },
+    })
+
+    const result = await runtime.hooks.waterfall('before_query', { messages: context.messages }, {
+      type: 'before_query', runId: context.runId, signal: context.signal,
+    })
+
+    expect(list).not.toHaveBeenCalled()
+    expect(JSON.stringify(result)).not.toContain('可用的 Skill')
   })
 
   it('uses the de-duplicated progress budget instead of cumulative prompt telemetry', async () => {

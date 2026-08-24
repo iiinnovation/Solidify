@@ -343,6 +343,12 @@ export function useChat(conversationId?: string) {
         : (skillSystemPrompt ? { id: 'custom', name: '自定义技能' } : undefined)
 
       const userMessageId = genId()
+      const autoRouteRequested = !resume
+        && !skillId
+        && !skillSystemPrompt
+        && Boolean(content.trim())
+        && isEnabled('skillV2')
+        && isSkillAutoRouteEnabled()
       // Full attachment text stays in the local resource plane. The model only
       // receives a bounded manifest and reads content through attachment tools.
       const userMsg: Message = {
@@ -369,7 +375,7 @@ export function useChat(conversationId?: string) {
       const initialRunId = resume?.assistantMessage.agentRun?.runId ?? newId('run')
       const initialPhase: QueryEvent = {
         type: 'run.phase',
-        phase: composerAttachments?.length ? 'preparing_attachments' : (!skillId && isEnabled('skillV2') ? 'selecting_skill' : 'generating'),
+        phase: composerAttachments?.length ? 'preparing_attachments' : (autoRouteRequested ? 'selecting_skill' : 'generating'),
       }
       const assistantMsg: Message = resume?.assistantMessage
         ?? {
@@ -428,7 +434,7 @@ export function useChat(conversationId?: string) {
         ? savedAgentContext.workspaceRoot
         : taskWorkspaceRoot
       const preloadSkillId = savedAgentContext ? savedAgentContext.skillId : skillId
-      const skillRuntimePromise = isEnabled('skillV2')
+      const skillRuntimePromise = isEnabled('skillV2') && (Boolean(preloadSkillId) || autoRouteRequested)
         ? loadChatSkillRuntime({
             workspaceRoot: preloadWorkspaceRoot,
             skillName: preloadSkillId,
@@ -448,13 +454,7 @@ export function useChat(conversationId?: string) {
       // built once before the loop starts. Classifying here is what lets a
       // Skill activate without the user picking it from the composer palette;
       // a resumed run already recorded its choice in agentContext.
-      const shouldAutoRoute = !resume
-        && !skillId
-        && !skillSystemPrompt
-        && Boolean(content.trim())
-        && isEnabled('skillV2')
-        && isSkillAutoRouteEnabled()
-      const skillRoutePromise: Promise<SkillMetadata | undefined> = shouldAutoRoute
+      const skillRoutePromise: Promise<SkillMetadata | undefined> = autoRouteRequested
         ? (async () => {
             try {
               // Registry loads are cached per workspace, so this shares the
@@ -965,17 +965,18 @@ ${result.content}
           patchAssistantMessage({ agentRun: run, runEvents, agentContext })
 
           const selectedSkillId = agentContext.skillId ?? effectiveSkillId
-          const skillRuntime = isEnabled('skillV2')
-            && selectedSkillId === preloadSkillId
-            && agentContext.workspaceRoot === (preloadWorkspaceRoot ?? undefined)
-            ? preloadedSkillRuntime
-            : await loadChatSkillRuntime({
-                workspaceRoot: agentContext.workspaceRoot,
-                skillName: selectedSkillId,
-              }).catch((error) => {
-                console.warn('[skills] Failed to load Skill registry:', error)
-                return undefined
-              })
+          const skillRuntime = !isEnabled('skillV2') || !selectedSkillId
+            ? undefined
+            : selectedSkillId === preloadSkillId
+              && agentContext.workspaceRoot === (preloadWorkspaceRoot ?? undefined)
+              ? preloadedSkillRuntime
+              : await loadChatSkillRuntime({
+                  workspaceRoot: agentContext.workspaceRoot,
+                  skillName: selectedSkillId,
+                }).catch((error) => {
+                  console.warn('[skills] Failed to load Skill registry:', error)
+                  return undefined
+                })
 
           if (!isCurrentRequest()) return
 

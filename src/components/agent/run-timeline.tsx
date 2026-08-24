@@ -46,9 +46,11 @@ export function RunTimeline({ run, onStop }: { run: RunState | null; onStop?: ()
         {active && run.activity && (
           <span className="text-[11px] text-text-secondary" aria-live="polite">{run.activity.label}</span>
         )}
-        <span className="text-[11px] text-text-tertiary font-mono">
-          {executedToolCount} 次工具执行{blockedToolCount > 0 ? ` · ${blockedToolCount} 次已拦截` : ''}
-        </span>
+        {(executedToolCount > 0 || blockedToolCount > 0) && (
+          <span className="text-[11px] text-text-tertiary font-mono">
+            {executedToolCount} 次工具执行{blockedToolCount > 0 ? ` · ${blockedToolCount} 次已拦截` : ''}
+          </span>
+        )}
         {run.usage && (
           <span className="text-[11px] text-text-tertiary tabular-nums">
             {run.usage.totalTokens.toLocaleString()} tokens

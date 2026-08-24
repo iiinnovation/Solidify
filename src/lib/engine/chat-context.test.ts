@@ -96,14 +96,14 @@ describe('chat Agent workspace context', () => {
     expect(context.taskTree).toBeUndefined()
   })
 
-  it('does not expose desktop file tools without an explicitly selected root', () => {
+  it('keeps ordinary chat tool-free without an active capability', () => {
     const context = create()
     expect(context.cwd).toBe('/')
-    expect(context.tools.map((tool) => tool.name)).toEqual(['capture_preview', 'read_handle'])
+    expect(context.tools).toEqual([])
     expect(context.workspace).toBeUndefined()
   })
 
-  it('keeps an unselected canonical run on discovery tools until Skill activation', () => {
+  it('does not inject discovery tools into an unselected canonical run', () => {
     featureFlags.skillV2 = true
     const context = createChatQueryContext({
       runId: 'run-discovery',
@@ -115,15 +115,26 @@ describe('chat Agent workspace context', () => {
       skillRegistry: { list: async () => [], resolve: async () => null } as never,
     })
     const names = context.tools.map((tool) => tool.name)
-    expect(names).toContain('activate_skill')
-    expect(names).toContain('read_file')
-    expect(names).not.toContain('write_file')
-    expect(names).not.toContain('generate_pptd')
-    expect(names).not.toContain('capture_preview')
+    expect(names).toEqual([])
   })
 
-  it('binds desktop tools, snapshots and path checks to the selected root', () => {
-    const context = create('/Users/test/workspace/')
+  it("binds a selected Skill's tools, snapshots and path checks to the selected root", () => {
+    const context = createChatQueryContext({
+      runId: 'run-workspace-skill',
+      conversationId: 'conversation-workspace-skill',
+      messages: [{ role: 'user', content: 'write a solution' }],
+      provider,
+      signal: new AbortController().signal,
+      workspaceRoot: '/Users/test/workspace/',
+      loadedSkill: {
+        metadata: {
+          name: 'solution-design', version: '1.0.0', description: 'solution',
+          allowedTools: ['list_dir', 'read_file', 'write_file', 'search_files'],
+        },
+        content: 'Create a solution.',
+        path: 'builtin://solution-design/SKILL.md',
+      },
+    })
     const names = context.tools.map((tool) => tool.name)
 
     expect(context.cwd).toBe('/Users/test/workspace')
@@ -146,10 +157,15 @@ describe('chat Agent workspace context', () => {
       provider: { ...provider, supportsTools: false },
       signal: new AbortController().signal,
       workspaceRoot: '/Users/test/workspace',
+      loadedSkill: {
+        metadata: { name: 'solution-design', version: '1.0.0', description: 'solution', allowedTools: ['read_file'] },
+        content: 'Create a solution.',
+        path: 'builtin://solution-design/SKILL.md',
+      },
     })
 
     expect(context.providerRegistry.get('openai').metadata.supportsTools).toBe(false)
-    expect(context.tools.length).toBeGreaterThan(0)
+    expect(context.tools).toEqual([])
   })
 
   it('passes uploaded PPTD media through the per-run QueryContext', () => {
@@ -202,7 +218,7 @@ describe('chat Agent workspace context', () => {
     expect(names).not.toContain('prepare_attachment_evidence')
   })
 
-  it('exposes runtime Skill activation only when a trusted registry is available', () => {
+  it('keeps runtime Skill activation out of an unselected chat', () => {
     featureFlags.skillV2 = true
     const context = createChatQueryContext({
       runId: 'run-skill-activation', conversationId: 'conversation',
@@ -210,7 +226,26 @@ describe('chat Agent workspace context', () => {
       signal: new AbortController().signal,
       skillRegistry: { load: async () => { throw new Error('not used') }, list: async () => [], resolve: async () => null },
     })
-    expect(context.tools.map((tool) => tool.name)).toContain('activate_skill')
+    expect(context.tools).toEqual([])
+  })
+
+  it('limits an unskilled retrieval attachment run to attachment readers', () => {
+    featureFlags.skillV2 = true
+    featureFlags.subAgents = true
+    const context = createChatQueryContext({
+      runId: 'run-attachment-only', conversationId: 'conversation',
+      messages: [{ role: 'user', content: '总结这个附件' }], provider,
+      signal: new AbortController().signal,
+      workspaceRoot: '/Users/test/workspace',
+      attachments: [{ id: 'att-1', name: 'brief.md', size: 9_000, text: '正文' }],
+      attachmentMode: 'retrieval',
+    })
+
+    expect(context.tools.map((tool) => tool.name).sort()).toEqual([
+      'prepare_attachment_evidence',
+      'read_attachment',
+      'search_attachments',
+    ])
   })
 
   it('hides attachment readers when full text is already inline', () => {

@@ -48,7 +48,8 @@ export function createHarnessRuntime(ctx: QueryContext, options: HarnessRuntimeO
       console.warn('[harness] Workspace memory prefetch failed, continuing without it:', error)
       return null
     })
-    const skillIndexPromise = ctx.skill
+    const canActivateSkill = ctx.tools.some((tool) => tool.name === 'activate_skill')
+    const skillIndexPromise = ctx.skill || !canActivateSkill
       ? Promise.resolve('')
       : options.skillRegistry
         ? options.skillRegistry.list().then((skills) => formatSkillIndex(skills, undefined, { includePaths: false }))

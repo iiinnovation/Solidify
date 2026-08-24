@@ -70,6 +70,13 @@ describe('agent run UI', () => {
     expect(screen.getByText('正在分析任务…')).not.toBeNull()
   })
 
+  it('does not advertise tool execution for a tool-free chat', () => {
+    render(<RunTimeline run={{ ...completedRun, tools: [] }} />)
+
+    expect(screen.queryByText(/工具执行/)).toBeNull()
+    expect(screen.queryByText(/已拦截/)).toBeNull()
+  })
+
   it('separates executed tools from blocked model requests and shows executor duration', () => {
     render(<RunTimeline run={{
       ...completedRun,
