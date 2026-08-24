@@ -8,6 +8,7 @@ import { configureLedgerWorkspace, flushWorkspaceLedger } from '@/lib/harness/le
 import { migrateLegacyArtifactsToWorkspace } from '@/lib/migration'
 import { isEnabled } from '@/lib/harness/flags'
 import { useDocumentStore } from '@/stores/document-store'
+import { cancelChatRunsForWorkspace } from '@/lib/chat-run-registry'
 
 interface WorkspaceState {
   workspaceRoot: string | null
@@ -166,6 +167,10 @@ async function activate(
 }
 
 async function detachActiveWorkspace(): Promise<void> {
+  // Conversation navigation is harmless, but a workspace projection is global.
+  // Invalidate its runs before flushing and replacing stores so late tool or
+  // document callbacks cannot write workspace A state into workspace B.
+  cancelChatRunsForWorkspace(useWorkspaceStore.getState().workspaceRoot)
   await activeIndexer?.stop()
   activeIndexer = null
   await stopConversationPersistence?.()

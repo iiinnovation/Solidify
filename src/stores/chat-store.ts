@@ -5,6 +5,7 @@ import type { RunState, ExecutionMetrics } from '@/lib/engine/run-state'
 import { createQuotaResilientStateStorage } from '@/lib/storage-quota'
 import { createAttachmentResourceId, type AttachmentResource } from '@/lib/attachments/types'
 import { saveAttachmentResource } from '@/lib/attachments/store'
+import { cancelChatRun } from '@/lib/chat-run-registry'
 
 /* ── 共享类型 ── */
 
@@ -183,7 +184,8 @@ export const useChatStore = create<ChatState>()(
           ),
         })),
 
-      deleteConversation: (id) =>
+      deleteConversation: (id) => {
+        cancelChatRun(id)
         set((state) => {
           const filtered = state.conversations.filter((c) => c.id !== id)
           return {
@@ -200,7 +202,8 @@ export const useChatStore = create<ChatState>()(
                   ?.messages.some((m) => m.id === a.messageId),
             ),
           }
-        }),
+        })
+      },
 
       addMessageToConversation: (convId, message) =>
         set((state) => ({

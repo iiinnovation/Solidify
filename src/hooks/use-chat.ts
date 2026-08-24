@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from 'react'
+import { useState, useCallback, useRef, useEffect, useSyncExternalStore } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useChatStore, type ArtifactType, type Message, type MessageAttachment } from '@/stores/chat-store'
 import { useModelStore } from '@/stores/model-store'
@@ -23,6 +23,17 @@ import { deriveArtifactPath, materializeArtifact, normalizeArtifactPath, normali
 import { isTauri } from '@/lib/tauri'
 import { buildAttachmentEvidencePack, chooseAttachmentContextMode, createAttachmentResourceId, formatAttachmentManifest, formatInlineAttachments, type AttachmentResource } from '@/lib/attachments/types'
 import { loadAttachmentResource, loadAttachmentResources, saveAttachmentResource } from '@/lib/attachments/store'
+import {
+  abortChatRun,
+  cancelChatRun,
+  finishChatRun,
+  getActiveChatRun,
+  getChatRunsRevision,
+  isCurrentChatRun,
+  startChatRun,
+  subscribeChatRuns,
+  updateChatRunMessages,
+} from '@/lib/chat-run-registry'
 
 function genId() {
   return newId('msg')
@@ -164,14 +175,9 @@ export function useChat(conversationId?: string) {
   const workspaceRoot = useWorkspaceStore((state) => state.workspaceRoot)
   const workspaceProjectionVersion = useWorkspaceStore((state) => state.projectionVersion)
   const [messages, setMessages] = useState<Message[]>([])
-  const [isStreaming, setIsStreaming] = useState(false)
   const [error, setError] = useState<Error | null>(null)
-  const abortRef = useRef<AbortController | null>(null)
-  const isStreamingRef = useRef(false)
-  const requestSequenceRef = useRef(0)
-  const activeRequestConversationRef = useRef<string | undefined>(conversationId)
-  const streamConversationRef = useRef<string | undefined>(conversationId)
-  const streamWorkspaceRef = useRef<string | null>(workspaceRoot)
+  useSyncExternalStore(subscribeChatRuns, getChatRunsRevision, getChatRunsRevision)
+  const isStreaming = Boolean(getActiveChatRun(conversationId))
   const messagesOwnerRef = useRef<string | undefined>(conversationId)
   const messagesWorkspaceRef = useRef<string | null>(workspaceRoot)
   const resumedConversationsRef = useRef(new Set<string>())
@@ -192,33 +198,9 @@ export function useChat(conversationId?: string) {
 
   // 从 store 加载已有对话
   useEffect(() => {
-    // A route change must detach the old stream before loading the new view.
-    // The provider may resolve one more chunk after abort, so the sequence
-    // token below also prevents stale callbacks from painting into this chat.
-    const activeConversation = activeRequestConversationRef.current
-    const workspaceChanged = messagesWorkspaceRef.current !== workspaceRoot
-    if (activeConversation !== undefined && (activeConversation !== conversationId || workspaceChanged)) {
-      const store = useChatStore.getState()
-      const oldConversation = store.conversations.find((item) => item.id === activeConversation)
-      const runningAssistant = [...(oldConversation?.messages ?? [])].reverse()
-        .find((message) => message.role === 'assistant' && message.agentRun?.status === 'running')
-      if (runningAssistant?.agentRun) {
-        const stoppedEvent: QueryEvent = {
-          type: 'run.failed',
-          error: { kind: 'aborted', message: '已切换到其他对话' },
-        }
-        store.patchMessageInConversation(activeConversation, runningAssistant.id, {
-          agentRun: applyRunEvent(runningAssistant.agentRun, stoppedEvent),
-          runEvents: [...(runningAssistant.runEvents ?? []), stoppedEvent],
-        })
-      }
-      requestSequenceRef.current += 1
-      abortRef.current?.abort()
-      abortRef.current = null
-      activeRequestConversationRef.current = undefined
-      isStreamingRef.current = false
-      setIsStreaming(false)
-    }
+    // Runs are conversation-owned and continue in the background when the user
+    // navigates. A workspace switch is also only a view change: the run keeps
+    // the workspace captured in its query context.
     messagesOwnerRef.current = conversationId
     messagesWorkspaceRef.current = workspaceRoot
     if (conversationId) {
@@ -227,7 +209,8 @@ export function useChat(conversationId?: string) {
         c.id === conversationId && conversationBelongsToWorkspace(c, workspaceRoot),
       )
       if (conv) {
-        const cleanedMessages = conv.messages.filter((message) => !isDiscardableEmptyAssistant(
+        const runtimeMessages = getActiveChatRun(conversationId)?.messages ?? conv.messages
+        const cleanedMessages = runtimeMessages.filter((message) => !isDiscardableEmptyAssistant(
           message,
           store.artifacts.some((artifact) => artifact.messageId === message.id),
         ))
@@ -246,19 +229,6 @@ export function useChat(conversationId?: string) {
     setError(null)
   }, [conversationId, workspaceRoot, workspaceProjectionVersion])
 
-  // 组件卸载时中止正在进行的流，防止资源泄漏
-  useEffect(() => {
-    return () => {
-      requestSequenceRef.current += 1
-      if (abortRef.current) {
-        abortRef.current.abort()
-        abortRef.current = null
-      }
-      activeRequestConversationRef.current = undefined
-      isStreamingRef.current = false
-    }
-  }, [])
-
   // 跟踪当前 conversationId（sendMessage 闭包中需要最新值）
   const convIdRef = useRef(conversationId)
   convIdRef.current = conversationId
@@ -274,19 +244,15 @@ export function useChat(conversationId?: string) {
       skillId?: string,
       skillName?: string,
     ) => {
-      if ((!content.trim() && !resume) || isStreamingRef.current) return
+      if (!content.trim() && !resume) return
+      const requestedConversationId = resume?.conversationId ?? convIdRef.current
+      if (getActiveChatRun(requestedConversationId)) return
       const unrecoverableAttachment = composerAttachments?.find((att) => !isComposerAttachmentRecoverable(att))
       if (unrecoverableAttachment) {
         setError(new Error(`附件「${unrecoverableAttachment.name}」已无法恢复，请重新选择文件`))
         return
       }
       const requestStartedAt = Date.now()
-      // React state updates are asynchronous. Use a synchronous guard so two
-      // events in the same render cannot start duplicate model runs.
-      isStreamingRef.current = true
-      const requestToken = ++requestSequenceRef.current
-      const isCurrentRequest = () => requestSequenceRef.current === requestToken
-
       setError(null)
 
       const savedProviderId = resume?.assistantMessage.agentContext?.providerId
@@ -297,7 +263,7 @@ export function useChat(conversationId?: string) {
         const providerError = new Error(savedProviderId
           ? '无法恢复 Agent：原 Provider 已被删除'
           : '请先在设置中配置 AI 模型')
-        if (isCurrentRequest()) setError(providerError)
+        setError(providerError)
         if (resume?.assistantMessage.agentRun) {
           const failureEvent: QueryEvent = {
             type: 'run.failed',
@@ -305,22 +271,16 @@ export function useChat(conversationId?: string) {
           }
           const failedRun = applyRunEvent(resume.assistantMessage.agentRun, failureEvent)
           const runEvents = [...(resume.assistantMessage.runEvents ?? []), failureEvent]
-          if (isCurrentRequest()) {
-            setMessages((prev) => prev.map((message) =>
-              message.id === resume.assistantMessage.id
-                ? { ...message, agentRun: failedRun, runEvents }
-                : message,
-            ))
-            patchMessageInConversation(
-              resume.conversationId,
-              resume.assistantMessage.id,
-              { agentRun: failedRun, runEvents },
-            )
-          }
-        }
-        if (isCurrentRequest()) {
-          isStreamingRef.current = false
-          activeRequestConversationRef.current = undefined
+          setMessages((prev) => prev.map((message) =>
+            message.id === resume.assistantMessage.id
+              ? { ...message, agentRun: failedRun, runEvents }
+              : message,
+          ))
+          patchMessageInConversation(
+            resume.conversationId,
+            resume.assistantMessage.id,
+            { agentRun: failedRun, runEvents },
+          )
         }
         return
       }
@@ -355,11 +315,7 @@ export function useChat(conversationId?: string) {
         || storedConversation.workspaceRoot !== (selectedWorkspace.workspaceRoot ?? undefined)
         || resumeWorkspaceRoot !== (selectedWorkspace.workspaceRoot ?? undefined)
       )) {
-        if (isCurrentRequest()) {
-          setError(new Error('无法恢复 Agent：会话已不在当前工作区'))
-          isStreamingRef.current = false
-          activeRequestConversationRef.current = undefined
-        }
+        setError(new Error('无法恢复 Agent：会话已不在当前工作区'))
         return
       }
       const taskWorkspaceRoot = resume?.assistantMessage.agentContext?.workspaceRoot
@@ -375,9 +331,6 @@ export function useChat(conversationId?: string) {
           projectId: currentProjectId,
         })
       }
-      activeRequestConversationRef.current = currentConvId
-      streamConversationRef.current = currentConvId
-      streamWorkspaceRef.current = selectedWorkspace.workspaceRoot
       const requestHistory = historyOverride ?? storedConversation?.messages ?? []
 
       const skillObj = skillId
@@ -423,9 +376,26 @@ export function useChat(conversationId?: string) {
           id: genId(), role: 'assistant', content: '',
           ...(isEnabled('agentLoop') ? { agentRun: applyRunEvent(createRunState(initialRunId), initialPhase) } : {}),
         }
-      setIsStreaming(true)
       const abortController = new AbortController()
-      abortRef.current = abortController
+      const initialMessages = resume ? requestHistory : [...requestHistory, userMsg, assistantMsg]
+      const requestToken = startChatRun({
+        conversationId: currentConvId,
+        workspaceRoot: selectedWorkspace.workspaceRoot,
+        controller: abortController,
+        messages: initialMessages,
+      })
+      if (!requestToken) return
+      const isCurrentRequest = () => isCurrentChatRun(currentConvId, requestToken)
+      const ownsRunView = () => (
+        (messagesOwnerRef.current === currentConvId
+          || (createdConversation && messagesOwnerRef.current === undefined))
+        && messagesWorkspaceRef.current === selectedWorkspace.workspaceRoot
+      )
+      const updateRunMessages = (update: (current: Message[]) => Message[]) => {
+        const next = updateChatRunMessages(currentConvId, requestToken, update)
+        if (next && ownsRunView()) setMessages(next)
+        return next
+      }
 
       // Publish the turn before attachment extraction, knowledge lookup, and
       // automatic Skill routing. Those preparation tasks may take seconds, but
@@ -433,16 +403,24 @@ export function useChat(conversationId?: string) {
       // before navigating also lets /chat/:id hydrate the turn immediately if
       // React remounts the route.
       if (!resume) {
-        setMessages((previous) => [...previous, userMsg, assistantMsg])
+        updateRunMessages(() => initialMessages)
         addMessageToConversation(currentConvId, userMsg)
         addMessageToConversation(currentConvId, assistantMsg)
         if (createdConversation) navigate(`/chat/${currentConvId}`, { replace: true })
       }
 
       const removeOptimisticAssistant = () => {
-        if (resume) return
-        setMessages((previous) => previous.filter((message) => message.id !== assistantMsg.id))
+        if (resume || !isCurrentRequest()) return
+        updateRunMessages((previous) => previous.filter((message) => message.id !== assistantMsg.id))
         removeMessageFromConversation(currentConvId, assistantMsg.id)
+      }
+      const failPreparation = (reason: unknown) => {
+        if (!isCurrentRequest()) return
+        removeOptimisticAssistant()
+        if (ownsRunView()) {
+          setError(reason instanceof Error ? reason : new Error(String(reason)))
+        }
+        finishChatRun(currentConvId, requestToken)
       }
 
       const savedAgentContext = resume?.assistantMessage.agentContext
@@ -658,12 +636,17 @@ ${result.content}
         return { context: '', sources: [] }
       })()
 
-      const [attachmentResult, knowledgeResult, preloadedSkillRuntime, routedSkill] = await Promise.all([
+      const prepared = await Promise.all([
         attachmentPromise,
         knowledgePromise,
         skillRuntimePromise,
         skillRoutePromise,
-      ])
+      ]).catch((error) => {
+        failPreparation(error)
+        return null
+      })
+      if (!prepared) return
+      const [attachmentResult, knowledgeResult, preloadedSkillRuntime, routedSkill] = prepared
       if (!isCurrentRequest()) {
         removeOptimisticAssistant()
         return
@@ -676,14 +659,7 @@ ${result.content}
         userMsg.requestContext = { ...userMsg.requestContext, skillId: routedSkill.name }
       }
       if (attachmentResult.error) {
-        removeOptimisticAssistant()
-        if (isCurrentRequest()) {
-          setError(attachmentResult.error)
-          isStreamingRef.current = false
-          setIsStreaming(false)
-          abortRef.current = null
-          activeRequestConversationRef.current = undefined
-        }
+        failPreparation(attachmentResult.error)
         return
       }
       if (!resume) {
@@ -692,7 +668,7 @@ ${result.content}
           requestContext: userMsg.requestContext,
           attachments: userMsg.attachments,
         }
-        setMessages((previous) => previous.map((message) =>
+        updateRunMessages((previous) => previous.map((message) =>
           message.id === userMsg.id ? { ...message, ...userPatch } : message,
         ))
         patchMessageInConversation(currentConvId, userMsg.id, userPatch)
@@ -700,11 +676,19 @@ ${result.content}
       const historicalAttachmentIds = requestHistory.flatMap((message) =>
         message.attachments?.map((attachment) => attachment.attachmentId).filter((id): id is string => Boolean(id)) ?? [],
       )
-      const historicalResources = await loadAttachmentResources(historicalAttachmentIds)
-      const attachmentResources = [...new Map(
-        [...historicalResources, ...attachmentResult.attachmentResources].map((resource) => [resource.id, resource]),
-      ).values()]
-      const pptdMedia = await rebuildPptdAttachmentMedia(attachmentResources, attachmentResult.pptdMedia)
+      const recoveredResources = await (async () => {
+        const historicalResources = await loadAttachmentResources(historicalAttachmentIds)
+        const attachmentResources = [...new Map(
+          [...historicalResources, ...attachmentResult.attachmentResources].map((resource) => [resource.id, resource]),
+        ).values()]
+        const pptdMedia = await rebuildPptdAttachmentMedia(attachmentResources, attachmentResult.pptdMedia)
+        return { attachmentResources, pptdMedia }
+      })().catch((error) => {
+        failPreparation(error)
+        return null
+      })
+      if (!recoveredResources) return
+      const { attachmentResources, pptdMedia } = recoveredResources
       const knowledgeSources = knowledgeResult.sources
       const canReadAttachments = isEnabled('agentLoop')
         && isEnabled('toolCalling')
@@ -746,10 +730,7 @@ ${result.content}
       }
       if (abortController.signal.aborted) {
         removeOptimisticAssistant()
-        isStreamingRef.current = false
-        setIsStreaming(false)
-        abortRef.current = null
-        activeRequestConversationRef.current = undefined
+        finishChatRun(currentConvId, requestToken)
         return
       }
 
@@ -780,7 +761,7 @@ ${result.content}
           || store.artifacts.some((artifact) => artifact.messageId === assistantMsg.id),
         )
         if (hasPersistedOutput) return false
-        setMessages((previous) => previous.filter((message) => message.id !== assistantMsg.id))
+        updateRunMessages((previous) => previous.filter((message) => message.id !== assistantMsg.id))
         removeMessageFromConversation(currentConvId, assistantMsg.id)
         return true
       }
@@ -793,7 +774,7 @@ ${result.content}
        */
       const patchAssistantMessage = (patch: Partial<Message>, persist = true) => {
         if (!isCurrentRequest()) return
-        setMessages((prev) => prev.map((message) =>
+        updateRunMessages((prev) => prev.map((message) =>
           message.id === assistantMsg.id ? { ...message, ...patch } : message,
         ))
         if (persist) patchMessageInConversation(currentConvId, assistantMsg.id, patch)
@@ -1138,7 +1119,9 @@ ${result.content}
               }, isDurableFact)
             }
           } finally {
-            if (frameTimer !== undefined) {
+            if (isCurrentRequest()) {
+              flushStreamFrame()
+            } else if (frameTimer !== undefined) {
               clearTimeout(frameTimer)
               frameTimer = undefined
             }
@@ -1165,16 +1148,39 @@ ${result.content}
         }
 
       } catch (err) {
-        if (abortController.signal.aborted || !isCurrentRequest()) {
-          if (isCurrentRequest()) discardAssistantPlaceholder()
+        if (!isCurrentRequest()) return
+        const currentAssistant = () => getActiveChatRun(currentConvId)?.messages
+          .find((message) => message.id === assistantMsg.id)
+        const settleInterruptedRun = async (event: QueryEvent) => {
+          const before = currentAssistant()
+          if (!before?.agentRun) return
+          const content = consumeArtifactContent(before.agentRun.text, true)
+          await flushMaterializations()
+          const latest = currentAssistant() ?? before
+          patchAssistantMessage({
+            content: content || latest.content,
+            agentRun: applyRunEvent(latest.agentRun ?? before.agentRun, event),
+            runEvents: [...(latest.runEvents ?? []), event],
+          })
+        }
+        if (abortController.signal.aborted) {
+          await settleInterruptedRun({
+            type: 'run.failed',
+            error: { kind: 'aborted', message: '用户已停止运行' },
+          })
+          discardAssistantPlaceholder()
           return
         }
         const error = err instanceof Error ? err : new Error('未知错误')
-        setError(error)
+        await settleInterruptedRun({
+          type: 'run.failed',
+          error: { kind: 'internal', message: error.message },
+        })
+        if (ownsRunView()) setError(error)
         // New requests discard an empty placeholder. A resumed run retains
         // its persisted assistant message so the user can retry recovery.
         if (resume) return
-        setMessages((prev) => {
+        updateRunMessages((prev) => {
           const last = prev[prev.length - 1]
           if (last?.role === 'assistant' && !last.content) {
             return prev.slice(0, -1)
@@ -1190,10 +1196,7 @@ ${result.content}
         }
       } finally {
         if (isCurrentRequest()) {
-          isStreamingRef.current = false
-          setIsStreaming(false)
-          abortRef.current = null
-          activeRequestConversationRef.current = undefined
+          finishChatRun(currentConvId, requestToken)
         }
         // 窗口不在前台时发送系统通知
         if (document.hidden) {
@@ -1207,7 +1210,7 @@ ${result.content}
   useEffect(() => {
     if (
       !conversationId
-      || isStreaming
+      || Boolean(getActiveChatRun(conversationId))
     ) return
 
     const conversation = useChatStore.getState().conversations.find((item) =>
@@ -1227,11 +1230,11 @@ ${result.content}
       assistantMessage.agentContext?.skillSkipConfirmation,
       { conversationId, assistantMessage },
     )
-  }, [conversationId, workspaceRoot, workspaceProjectionVersion, isStreaming, sendMessage])
+  }, [conversationId, workspaceRoot, workspaceProjectionVersion, sendMessage])
 
   const stopStreaming = useCallback(() => {
-    abortRef.current?.abort()
-  }, [])
+    abortChatRun(conversationId)
+  }, [conversationId])
 
   const recallMessage = useCallback((messageId?: string) => {
     const currentConvId = convIdRef.current
@@ -1257,15 +1260,7 @@ ${result.content}
     const targetUserMsg = conv.messages[targetUserIndex]
 
     // 先使旧请求失效，再停止流式输出，避免 abort 后到达的 chunk 写回撤回内容。
-    requestSequenceRef.current += 1
-    if (isStreamingRef.current) {
-      abortRef.current?.abort()
-      abortRef.current = null
-      isStreamingRef.current = false
-      setIsStreaming(false)
-    }
-    activeRequestConversationRef.current = undefined
-    streamConversationRef.current = undefined
+    cancelChatRun(currentConvId)
 
     const removedMessages = conv.messages.slice(targetUserIndex)
     const removedMessageIds = new Set(removedMessages.map((message) => message.id))
@@ -1430,12 +1425,11 @@ ${result.content}
         artifacts.some((artifact) => artifact.messageId === message.id),
       ))
     : []
-  const visibleStreaming = streamConversationRef.current === conversationId
-    && streamWorkspaceRef.current === workspaceRoot
-    ? isStreaming
-    : false
+  const activeRun = getActiveChatRun(conversationId)
+  const visibleStreaming = activeRun?.workspaceRoot === workspaceRoot
+  const runtimeMessages = visibleStreaming ? activeRun.messages : undefined
   return {
-    messages: visibleMessages,
+    messages: runtimeMessages ?? visibleMessages,
     isStreaming: visibleStreaming,
     error,
     sendMessage,

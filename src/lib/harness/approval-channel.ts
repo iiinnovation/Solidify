@@ -55,6 +55,11 @@ export function answerApproval(requestId: string, answer: ApprovalAnswer): boole
   return settle(requestId, answer)
 }
 
+export function approvalsForRun(requests: readonly ApprovalRequest[], runId: string | undefined): ApprovalRequest[] {
+  if (!runId) return []
+  return requests.filter((request) => request.runId === runId || request.runId.startsWith(`${runId}:`))
+}
+
 /** Backward-compatible single-request subscription used by non-M6 callers. */
 export function subscribeApproval(listener: Listener): () => void {
   listeners.add(listener)

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { FileText, FolderOpen, LogOut, MessageSquare, PanelRightOpen, Plus, Search, Trash2, X } from 'lucide-react'
+import { FileText, FolderOpen, LoaderCircle, LogOut, MessageSquare, PanelRightOpen, Plus, Search, Trash2, X } from 'lucide-react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { FileTree } from '@/components/workspace/file-tree'
 import { Button } from '@/components/ui/button'
@@ -97,7 +97,10 @@ function RailContent({ initialTab = 'files', onClose }: { initialTab?: 'files' |
           : <FileTree entries={entries} selectedPath={selectedPath} onSelect={choosePath} />}</div>
       </> : <>
         <div className="border-b border-border-light p-2"><Button variant="secondary" size="sm" className="w-full justify-start" onClick={() => { navigate('/chat'); onClose?.() }}><Plus size={14} />新建对话</Button></div>
-        <div className="min-h-0 flex-1 overflow-auto p-2">{workspaceConversations.map((conversation) => <div key={conversation.id} className="group relative"><button type="button" onClick={() => { navigate(`/chat/${conversation.id}`); onClose?.() }} className={cn('flex h-8 w-full items-center gap-2 rounded-md px-2 pr-8 text-left text-xs text-text-secondary hover:bg-surface-hover', conversation.id === conversationId && 'bg-accent-light text-text-primary')}><MessageSquare size={13} className="shrink-0" /><span className="truncate">{conversation.title}</span></button><button type="button" onClick={() => { deleteConversation(conversation.id); if (conversation.id === conversationId) navigate('/chat') }} aria-label={`删除 ${conversation.title}`} className="absolute right-1 top-1.5 hidden p-0.5 text-text-tertiary hover:text-error group-hover:block"><Trash2 size={12} /></button></div>)}{workspaceConversations.length === 0 && <p className="py-8 text-center text-xs text-text-tertiary">还没有对话</p>}</div>
+        <div className="min-h-0 flex-1 overflow-auto p-2">{workspaceConversations.map((conversation) => {
+          const running = conversation.messages.some((message) => message.agentRun?.status === 'running')
+          return <div key={conversation.id} className="group relative"><button type="button" onClick={() => { navigate(`/chat/${conversation.id}`); onClose?.() }} className={cn('flex h-8 w-full items-center gap-2 rounded-md px-2 pr-8 text-left text-xs text-text-secondary hover:bg-surface-hover', conversation.id === conversationId && 'bg-accent-light text-text-primary')}><MessageSquare size={13} className="shrink-0" /><span className="min-w-0 flex-1 truncate">{conversation.title}</span>{running && <LoaderCircle size={12} aria-label="运行中" className="shrink-0 animate-spin text-accent group-hover:hidden" />}</button><button type="button" onClick={() => { deleteConversation(conversation.id); if (conversation.id === conversationId) navigate('/chat') }} aria-label={`删除 ${conversation.title}`} className="absolute right-1 top-1.5 hidden p-0.5 text-text-tertiary hover:text-error group-hover:block"><Trash2 size={12} /></button></div>
+        })}{workspaceConversations.length === 0 && <p className="py-8 text-center text-xs text-text-tertiary">还没有对话</p>}</div>
       </>}
     </div>
   )

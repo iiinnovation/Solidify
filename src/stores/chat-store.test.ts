@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { useChatStore } from './chat-store'
+import { getActiveChatRun, resetChatRunsForTests, startChatRun } from '@/lib/chat-run-registry'
 
 describe('chat store truncation', () => {
   beforeEach(() => {
+    resetChatRunsForTests()
     localStorage.clear()
     useChatStore.setState({ conversations: [], artifacts: [], activeArtifactId: null })
   })
@@ -18,6 +20,25 @@ describe('chat store truncation', () => {
     })
 
     expect(useChatStore.getState().activeArtifactId).toBeNull()
+  })
+
+  it('cancels an active run before deleting its conversation', () => {
+    const controller = new AbortController()
+    useChatStore.setState({
+      conversations: [{ id: 'running-conversation', title: 'Running', createdAt: 1, messages: [] }],
+    })
+    startChatRun({
+      conversationId: 'running-conversation',
+      workspaceRoot: null,
+      controller,
+      messages: [],
+    })
+
+    useChatStore.getState().deleteConversation('running-conversation')
+
+    expect(controller.signal.aborted).toBe(true)
+    expect(getActiveChatRun('running-conversation')).toBeUndefined()
+    expect(useChatStore.getState().conversations).toEqual([])
   })
 
   it('binds a new conversation to its task workspace and does not silently rebind it', () => {

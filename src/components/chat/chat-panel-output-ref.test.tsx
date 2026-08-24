@@ -5,6 +5,8 @@ import { useChatStore, type Message } from '@/stores/chat-store'
 import { useDocumentStore } from '@/stores/document-store'
 import { useUIStore } from '@/stores/ui-store'
 import { useWorkspaceStore } from '@/stores/workspace-store'
+import type { ApprovalRequest } from '@/lib/harness/approval'
+import { approvalsForRun } from '@/lib/harness/approval-channel'
 
 describe('chat output references', () => {
   beforeEach(() => {
@@ -51,5 +53,25 @@ describe('chat output references', () => {
     expect(useWorkspaceStore.getState().selectedPath).toBe('03-交付物/方案.md')
     expect(useDocumentStore.getState().activePath).toBe('03-交付物/方案.md')
     expect(useUIStore.getState().previewPanelKind).toBe('document')
+  })
+
+  it('shows approvals only for the visible root run and its sub-agents', () => {
+    const request = (requestId: string, runId: string): ApprovalRequest => ({
+      requestId,
+      runId,
+      callId: `call-${requestId}`,
+      toolName: 'write_file',
+      reason: 'protected write',
+      prompt: { title: requestId, detail: requestId, options: [] },
+      signal: new AbortController().signal,
+    })
+    const visible = approvalsForRun([
+      request('root', 'run-a'),
+      request('child', 'run-a:researcher'),
+      request('background', 'run-b'),
+    ], 'run-a')
+
+    expect(visible.map((item) => item.requestId)).toEqual(['root', 'child'])
+    expect(approvalsForRun(visible, undefined)).toEqual([])
   })
 })

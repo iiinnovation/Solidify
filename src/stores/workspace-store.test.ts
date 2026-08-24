@@ -44,9 +44,11 @@ vi.mock('@/lib/harness/ledger', () => ({
 
 import { useWorkspaceStore } from './workspace-store'
 import { useDocumentStore } from './document-store'
+import { getActiveChatRun, resetChatRunsForTests, startChatRun } from '@/lib/chat-run-registry'
 
 describe('M3 workspace switching', () => {
   beforeEach(() => {
+    resetChatRunsForTests()
     localStorage.clear()
     mocks.events.length = 0
     useWorkspaceStore.setState({
@@ -73,6 +75,13 @@ describe('M3 workspace switching', () => {
         },
       },
     })
+    const controller = new AbortController()
+    startChatRun({
+      conversationId: 'old-running-conversation',
+      workspaceRoot: '/old',
+      controller,
+      messages: [],
+    })
 
     await useWorkspaceStore.getState().open()
 
@@ -84,5 +93,7 @@ describe('M3 workspace switching', () => {
       .toBeLessThan(mocks.events.indexOf('restore-conversations:/new'))
     expect(useWorkspaceStore.getState().selectedPath).toBeNull()
     expect(useDocumentStore.getState()).toMatchObject({ activePath: null, documents: {} })
+    expect(controller.signal.aborted).toBe(true)
+    expect(getActiveChatRun('old-running-conversation')).toBeUndefined()
   })
 })

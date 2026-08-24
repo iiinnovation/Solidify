@@ -23,7 +23,7 @@ import { useWorkspaceStore } from '@/stores/workspace-store'
 import { useDocumentStore } from '@/stores/document-store'
 import { isEnabled } from '@/lib/harness/flags'
 import { ConfirmDialog } from '@/components/agent/confirm-dialog'
-import { answerApproval, subscribeApprovals } from '@/lib/harness/approval-channel'
+import { answerApproval, approvalsForRun, subscribeApprovals } from '@/lib/harness/approval-channel'
 import type { ApprovalRequest } from '@/lib/harness/approval'
 import { loadAttachmentResource } from '@/lib/attachments/store'
 
@@ -349,6 +349,7 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
   const activeRun = agentUiEnabled
     ? [...messages].reverse().find((message) => message.agentRun?.status === 'running')?.agentRun ?? null
     : null
+  const visibleApprovalRequests = approvalsForRun(approvalRequests, activeRun?.runId)
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -574,7 +575,7 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
 
   return (
     <div className="h-full flex flex-col bg-background">
-      <ConfirmDialog request={approvalRequests} onAnswer={answerApproval} />
+      <ConfirmDialog request={visibleApprovalRequests} onAnswer={answerApproval} />
       {/* 消息列表 */}
       <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-3xl space-y-8 px-5 py-8 sm:px-8 sm:py-10">

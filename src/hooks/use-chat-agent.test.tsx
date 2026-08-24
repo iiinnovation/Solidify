@@ -10,6 +10,8 @@ import { useWorkspaceStore } from '@/stores/workspace-store'
 import { useDocumentStore } from '@/stores/document-store'
 import { composerDraftKey, useUIStore } from '@/stores/ui-store'
 import { saveAttachmentMedia } from '@/lib/attachment-media'
+import { cancelChatRun, resetChatRunsForTests } from '@/lib/chat-run-registry'
+import * as attachmentStore from '@/lib/attachments/store'
 
 const mocks = vi.hoisted(() => ({
   agentLoop: true,
@@ -46,6 +48,7 @@ function strictWrapper({ children }: PropsWithChildren) {
 
 describe('useChat agent loop switch', () => {
   beforeEach(() => {
+    resetChatRunsForTests()
     mocks.agentLoop = true
     mocks.runQuery.mockReset()
     localStorage.clear()
@@ -103,6 +106,74 @@ describe('useChat agent loop switch', () => {
     releaseRun?.()
     await act(async () => { await request })
     expect(result.current.messages.at(-1)?.content).toBe('ready')
+  })
+
+  it('releases the conversation run when attachment history recovery fails', async () => {
+    useChatStore.setState({
+      conversations: [{
+        id: 'conv-resource-failure', title: 'Resources', createdAt: 1,
+        messages: [{
+          id: 'old-user', role: 'user', content: 'old attachment',
+          attachments: [{ attachmentId: 'missing-resource', name: 'old.pdf', size: 10 }],
+        }],
+      }],
+      artifacts: [],
+      activeArtifactId: null,
+    })
+    const load = vi.spyOn(attachmentStore, 'loadAttachmentResources')
+      .mockRejectedValueOnce(new Error('resource database unavailable'))
+    const { result } = renderHook(() => useChat('conv-resource-failure'), { wrapper })
+
+    try {
+      await act(async () => result.current.sendMessage('continue'))
+      expect(result.current.isStreaming).toBe(false)
+      expect(result.current.error?.message).toBe('resource database unavailable')
+      expect(useChatStore.getState().conversations[0].messages.at(-1)?.role).toBe('user')
+    } finally {
+      load.mockRestore()
+    }
+  })
+
+  it('does not mutate a replacement projection after a run is invalidated', async () => {
+    useChatStore.setState({
+      conversations: [{
+        id: 'copied-conversation', title: 'Old projection', createdAt: 1,
+        messages: [{
+          id: 'old-user', role: 'user', content: 'old attachment',
+          attachments: [{ attachmentId: 'slow-resource', name: 'old.pdf', size: 10 }],
+        }],
+      }],
+      artifacts: [],
+      activeArtifactId: null,
+    })
+    let releaseRecovery: ((resources: []) => void) | undefined
+    const recovery = new Promise<[]>((resolve) => { releaseRecovery = resolve })
+    const load = vi.spyOn(attachmentStore, 'loadAttachmentResources').mockReturnValueOnce(recovery)
+    const { result } = renderHook(() => useChat('copied-conversation'), { wrapper })
+    let request: Promise<void> | undefined
+
+    try {
+      await act(async () => {
+        request = result.current.sendMessage('continue')
+        await Promise.resolve()
+      })
+      await waitFor(() => expect(load).toHaveBeenCalled())
+      const oldAssistant = useChatStore.getState().conversations[0].messages.at(-1)!
+      cancelChatRun('copied-conversation')
+      useChatStore.setState({
+        conversations: [{
+          id: 'copied-conversation', title: 'Replacement projection', createdAt: 2,
+          messages: [{ ...oldAssistant, content: 'replacement content' }],
+        }],
+      })
+      releaseRecovery?.([])
+      await act(async () => { await request })
+
+      expect(useChatStore.getState().conversations[0].messages)
+        .toEqual([{ ...oldAssistant, content: 'replacement content' }])
+    } finally {
+      load.mockRestore()
+    }
   })
 
   it('consumes runQuery events and saves them on the assistant message', async () => {
@@ -392,7 +463,7 @@ describe('useChat agent loop switch', () => {
     expect(result.current.messages).toHaveLength(2)
   })
 
-  it('detaches a running stream when switching to a different conversation', async () => {
+  it('keeps a running stream alive when switching to a different conversation', async () => {
     useChatStore.setState({
       conversations: [
         { id: 'conv-a', title: 'A', createdAt: 1, messages: [] },
@@ -432,8 +503,97 @@ describe('useChat agent loop switch', () => {
 
     expect(result.current.messages).toEqual([])
     expect(useChatStore.getState().conversations.find((conversation) => conversation.id === 'conv-b')?.messages).toEqual([])
-    expect(useChatStore.getState().conversations.find((conversation) => conversation.id === 'conv-a')?.messages.at(-1)?.agentRun)
-      .toMatchObject({ status: 'aborted', error: '已切换到其他对话' })
+    expect(useChatStore.getState().conversations.find((conversation) => conversation.id === 'conv-a')?.messages.at(-1))
+      .toMatchObject({ content: 'late old reply', agentRun: { status: 'completed' } })
+  })
+
+  it('runs two conversations independently after navigation', async () => {
+    useChatStore.setState({
+      conversations: [
+        { id: 'conv-a', title: 'A', createdAt: 1, messages: [] },
+        { id: 'conv-b', title: 'B', createdAt: 2, messages: [] },
+      ],
+      artifacts: [],
+      activeArtifactId: null,
+    })
+    let releaseA: (() => void) | undefined
+    let releaseB: (() => void) | undefined
+    const gateA = new Promise<void>((resolve) => { releaseA = resolve })
+    const gateB = new Promise<void>((resolve) => { releaseB = resolve })
+    let call = 0
+    mocks.runQuery.mockImplementation(async function* () {
+      const index = call++
+      yield { type: 'run.started', runId: `run-concurrent-${index}` }
+      await (index === 0 ? gateA : gateB)
+      const text = index === 0 ? 'reply A' : 'reply B'
+      yield { type: 'message.delta', text }
+      yield { type: 'message.completed', content: text }
+      yield {
+        type: 'run.completed',
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, turns: 1, toolCalls: 0 },
+      }
+    })
+
+    const { result, rerender } = renderHook(({ id }: { id: string }) => useChat(id), {
+      initialProps: { id: 'conv-a' },
+      wrapper,
+    })
+    let requestA: Promise<void> | undefined
+    let requestB: Promise<void> | undefined
+    await act(async () => {
+      requestA = result.current.sendMessage('prompt A')
+      await Promise.resolve()
+    })
+    rerender({ id: 'conv-b' })
+    await act(async () => {
+      requestB = result.current.sendMessage('prompt B')
+      await Promise.resolve()
+    })
+    expect(mocks.runQuery).toHaveBeenCalledTimes(2)
+    expect(result.current.isStreaming).toBe(true)
+
+    releaseB?.()
+    await act(async () => { await requestB })
+    expect(result.current.messages.at(-1)).toMatchObject({ content: 'reply B' })
+
+    rerender({ id: 'conv-a' })
+    expect(result.current.isStreaming).toBe(true)
+    releaseA?.()
+    await act(async () => { await requestA })
+    expect(result.current.messages.at(-1)).toMatchObject({ content: 'reply A' })
+  })
+
+  it('lets a conversation finish after its chat view unmounts', async () => {
+    useChatStore.setState({
+      conversations: [{ id: 'conv-background', title: 'Background', createdAt: 1, messages: [] }],
+      artifacts: [],
+      activeArtifactId: null,
+    })
+    let releaseRun: (() => void) | undefined
+    const gate = new Promise<void>((resolve) => { releaseRun = resolve })
+    mocks.runQuery.mockImplementation(async function* () {
+      yield { type: 'run.started', runId: 'run-background' }
+      await gate
+      yield { type: 'message.delta', text: 'background reply' }
+      yield { type: 'message.completed', content: 'background reply' }
+      yield {
+        type: 'run.completed',
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, turns: 1, toolCalls: 0 },
+      }
+    })
+
+    const { result, unmount } = renderHook(() => useChat('conv-background'), { wrapper })
+    let request: Promise<void> | undefined
+    await act(async () => {
+      request = result.current.sendMessage('keep working')
+      await Promise.resolve()
+    })
+    unmount()
+    releaseRun?.()
+    await request
+
+    expect(useChatStore.getState().conversations[0].messages.at(-1))
+      .toMatchObject({ content: 'background reply', agentRun: { status: 'completed' } })
   })
 
   it('removes an empty aborted assistant before starting the next request', async () => {
@@ -492,6 +652,41 @@ describe('useChat agent loop switch', () => {
     await act(async () => { await secondRequest })
     await waitFor(() => expect(result.current.isStreaming).toBe(false))
     expect(result.current.messages.at(-1)).toMatchObject({ role: 'assistant', content: 'second reply' })
+  })
+
+  it('keeps buffered partial text and settles the run when abort throws', async () => {
+    useChatStore.setState({
+      conversations: [{ id: 'conv-abort-throw', title: 'Abort', createdAt: 1, messages: [] }],
+      artifacts: [],
+      activeArtifactId: null,
+    })
+    mocks.runQuery.mockImplementation(async function* (context: { signal: AbortSignal }) {
+      yield { type: 'run.started', runId: 'run-abort-throw' }
+      yield { type: 'message.delta', text: 'partial answer' }
+      await new Promise<void>((resolve) => {
+        if (context.signal.aborted) resolve()
+        else context.signal.addEventListener('abort', () => resolve(), { once: true })
+      })
+      throw new DOMException('aborted', 'AbortError')
+    })
+
+    const { result } = renderHook(() => useChat('conv-abort-throw'), { wrapper })
+    let request: Promise<void> | undefined
+    await act(async () => {
+      request = result.current.sendMessage('start')
+      await Promise.resolve()
+    })
+    await waitFor(() => expect(result.current.isStreaming).toBe(true))
+    act(() => result.current.stopStreaming())
+    await act(async () => { await request })
+
+    expect(result.current.messages.at(-1)).toMatchObject({
+      role: 'assistant',
+      content: 'partial answer',
+      agentRun: { status: 'aborted', error: '用户已停止运行' },
+    })
+    expect(useChatStore.getState().conversations[0].messages.at(-1))
+      .toMatchObject({ content: 'partial answer', agentRun: { status: 'aborted' } })
   })
 
   it('keeps using the unified query runtime when Agent tools are switched off', async () => {
