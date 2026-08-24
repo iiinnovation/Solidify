@@ -182,9 +182,9 @@ describe('chat Agent workspace context', () => {
     expect(context.pptdMedia).toBe(media)
   })
 
-  it('exposes attachment readers to a Skill whose allowed-tools omits them', () => {
-    // Reproduces the drawio-diagram run: no workspace, one attached document,
-    // and a Skill that only declares [read_file, write_file].
+  it('keeps a preloaded Draw.io evidence run completely tool-free', () => {
+    // Diagram evidence is assembled before createChatQueryContext. Neither
+    // attachment readers nor unrelated Skill/runtime tools belong in turn 1.
     const context = createChatQueryContext({
       runId: 'run-attachment', conversationId: 'conversation', messages: [{ role: 'user', content: '根据文档绘制架构图' }],
       provider, signal: new AbortController().signal,
@@ -194,11 +194,11 @@ describe('chat Agent workspace context', () => {
         path: 'builtin://drawio-diagram/SKILL.md',
       },
       attachments: [{ id: 'att-1', name: '技术服务项目.docx', size: 77_600, text: '总体技术架构……' }],
+      attachmentMode: 'evidence',
     })
 
-    expect(context.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining([
-      'search_attachments', 'read_attachment', 'prepare_attachment_evidence',
-    ]))
+    expect(context.attachmentMode).toBe('evidence')
+    expect(context.tools).toEqual([])
   })
 
   it('hides attachment readers when the run has no attachments', () => {
@@ -213,6 +213,7 @@ describe('chat Agent workspace context', () => {
     })
 
     const names = context.tools.map((tool) => tool.name)
+    expect(names).toEqual([])
     expect(names).not.toContain('search_attachments')
     expect(names).not.toContain('read_attachment')
     expect(names).not.toContain('prepare_attachment_evidence')

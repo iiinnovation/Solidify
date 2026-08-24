@@ -21,7 +21,7 @@ import { attachmentMediaPath, loadAttachmentMedia, saveAttachmentMedia } from '@
 import { useSkillStore } from '@/stores/skill-store'
 import { deriveArtifactPath, materializeArtifact, normalizeArtifactPath, normalizeArtifactType } from '@/lib/workspace/materialize'
 import { isTauri } from '@/lib/tauri'
-import { buildAttachmentEvidencePack, chooseAttachmentContextMode, createAttachmentResourceId, formatAttachmentManifest, formatInlineAttachments, type AttachmentResource } from '@/lib/attachments/types'
+import { buildAttachmentEvidencePack, buildDiagramAttachmentEvidencePack, chooseAttachmentContextMode, createAttachmentResourceId, formatAttachmentManifest, formatInlineAttachments, type AttachmentContextMode, type AttachmentResource } from '@/lib/attachments/types'
 import { loadAttachmentResource, loadAttachmentResources, saveAttachmentResource } from '@/lib/attachments/store'
 import {
   abortChatRun,
@@ -693,7 +693,7 @@ ${result.content}
       const canReadAttachments = isEnabled('agentLoop')
         && isEnabled('toolCalling')
         && activeProvider.supportsTools !== false
-      const attachmentMode = chooseAttachmentContextMode({
+      const routedAttachmentMode = chooseAttachmentContextMode({
         resources: attachmentResources,
         userContent: content,
         contextWindow: activeProvider.contextWindow,
@@ -701,21 +701,29 @@ ${result.content}
           return sum + message.content.length / 3
         }, 0)) + 4_000,
       })
+      const diagramEvidencePack = effectiveSkillId === 'drawio-diagram'
+        ? buildDiagramAttachmentEvidencePack(attachmentResources, content, 24_000)
+        : undefined
+      const attachmentMode: AttachmentContextMode = diagramEvidencePack
+        ? 'evidence'
+        : routedAttachmentMode
       const shouldPrepareEvidence = attachmentMode === 'retrieval'
         && canReadAttachments
         && /(?:全文|完整阅读|通读|全部内容|基于全文|阅读附件)/i.test(content)
         && !/(?:多轮|分步骤|分阶段|多个交付物|分别|逐个|持续)/i.test(content)
-      const evidencePack = shouldPrepareEvidence
+      const evidencePack = diagramEvidencePack ?? (shouldPrepareEvidence
         ? buildAttachmentEvidencePack(attachmentResources, undefined, 16_000)
-        : undefined
+        : undefined)
       const attachmentContext = attachmentResources.length > 0
         ? attachmentMode === 'inline'
           ? formatInlineAttachments(attachmentResources)
           : `\n\n${formatAttachmentManifest(attachmentResources, evidencePack ? { includePreview: false } : undefined)}${evidencePack
             ? `\n\n<attachment_evidence_pack>\n${evidencePack.content}\n</attachment_evidence_pack>`
-            : ''}\n\n${canReadAttachments
-            ? '附件正文不会自动展开；完整阅读时优先使用 prepare_attachment_evidence，一次准备证据包；需要时再用 search_attachments 和 read_attachment 定位缺口。'
-            : '当前为兼容聊天模式，只提供附件的有限预览；如需分段读取，请启用 Agent 模式。'}`
+            : ''}\n\n${attachmentMode === 'evidence'
+            ? '已在模型调用前准备好本次绘图所需的有界证据包；本次不提供附件检索工具。请直接依据证据生成最终 Draw.io Artifact，不要请求、模拟或输出任何工具调用。'
+            : canReadAttachments
+              ? '附件正文不会自动展开；完整阅读时优先使用 prepare_attachment_evidence，一次准备证据包；需要时再用 search_attachments 和 read_attachment 定位缺口。'
+              : '当前为兼容聊天模式，只提供附件的有限预览；如需分段读取，请启用 Agent 模式。'}`
         : ''
       let enrichedContent = `${content}${attachmentContext}`
 

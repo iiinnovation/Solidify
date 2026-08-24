@@ -28,7 +28,7 @@ const MAX_CONTINUATIONS = 4
 const MAX_DRAWIO_DELIVERY_RETRIES = 1
 
 const DRAWIO_GENERATION_ONLY_CONTEXT = [
-  'Draw.io attachment retrieval is complete and the retrieval tools are intentionally unavailable.',
+  'Draw.io evidence is already present in the conversation and all tools are intentionally unavailable.',
   'Do not emit any tool call, including tools mentioned in earlier turns.',
   'Use the evidence already present in the conversation and immediately return exactly one valid Draw.io Artifact.',
 ].join(' ')
@@ -199,15 +199,31 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       let firstChunkAt: string | undefined
       const drawioRun = activeSkill?.metadata.name === 'drawio-diagram'
       const drawioGenerationOnly = drawioRun
-        && closedToolGroups.has('attachment-retrieval')
+        && (
+          runCtx.attachmentMode === 'inline'
+          || runCtx.attachmentMode === 'evidence'
+          || (!runCtx.attachments?.length && activeTools.length === 0)
+          || closedToolGroups.has('attachment-retrieval')
+        )
       try {
-        const modelContext: QueryContext = closedToolGroups.size === 0
-          ? { ...runCtx, skill: activeSkill, skillResources: activeSkillResources, tools: activeTools }
+        const modelContext: QueryContext = drawioGenerationOnly
+          ? {
+              ...runCtx,
+              skill: activeSkill,
+              skillResources: activeSkillResources,
+              model: {
+                ...runCtx.model,
+                temperature: Math.min(runCtx.model.temperature ?? 0.2, 0.2),
+              },
+              toolChoice: 'none' as const,
+              tools: [],
+            }
+          : closedToolGroups.size === 0
+            ? { ...runCtx, skill: activeSkill, skillResources: activeSkillResources, tools: activeTools }
           : {
               ...runCtx,
               skill: activeSkill,
               skillResources: activeSkillResources,
-              ...(drawioGenerationOnly ? { toolChoice: 'none' as const } : {}),
               tools: activeTools.filter((tool) => {
                 if (tool.name === 'read_handle' && closedToolGroups.has('attachment-retrieval')) return false
                 return !tool.loopGroup || !closedToolGroups.has(tool.loopGroup)
@@ -1520,7 +1536,7 @@ function preparationRunPhase(
   activeSkill: QueryContext['skill'],
   turn: number,
 ): Extract<QueryEvent, { type: 'run.phase' }>['phase'] {
-  if (turn === 1 && ctx.attachments?.length && ctx.attachmentMode !== 'inline') return 'reading_sources'
+  if (turn === 1 && ctx.attachments?.length && ctx.attachmentMode === 'retrieval') return 'reading_sources'
   if (turn === 1 && !activeSkill && ctx.skillRegistry) return 'selecting_skill'
   return 'generating'
 }

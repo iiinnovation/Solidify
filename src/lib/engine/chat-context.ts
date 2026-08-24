@@ -79,6 +79,8 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
     && isEnabled('toolCalling')
     && options.provider.supportsTools !== false
   const attachmentRetrievalActive = hasAttachments && options.attachmentMode === 'retrieval'
+  const deterministicDrawio = skill?.metadata.name === 'drawio-diagram'
+    && (!hasAttachments || options.attachmentMode === 'inline' || options.attachmentMode === 'evidence')
   // Feature flags describe what the installation supports, not what every
   // conversation should receive. A run earns a tool surface only through an
   // explicitly selected/pre-routed Skill or a retrieval-mode attachment.
@@ -101,8 +103,8 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
   const scopedTools = !skill && attachmentRetrievalActive
     ? resolvedTools.filter((tool) => ATTACHMENT_TOOL_NAMES.has(tool.name))
     : resolvedTools
-  const tools = scopedTools.filter((tool) =>
-    (!['search_attachments', 'read_attachment', 'prepare_attachment_evidence'].includes(tool.name)) || (hasAttachments && options.attachmentMode !== 'inline'),
+  const tools = (deterministicDrawio ? [] : scopedTools).filter((tool) =>
+    !ATTACHMENT_TOOL_NAMES.has(tool.name) || attachmentRetrievalActive,
   ).filter((tool) =>
     tool.name !== 'activate_skill' || (skillV2Enabled && Boolean(options.skillRegistry) && !skill),
   )
@@ -156,10 +158,10 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
   // Delegation is a Skill capability, not an ambient chat capability. In
   // particular, an attachment-only run must not gain dispatch_agent in
   // addition to its narrowly scoped readers.
-  const withSubAgents = runToolsActive && Boolean(skill) && isEnabled('subAgents')
+  const withSubAgents = runToolsActive && Boolean(skill) && !deterministicDrawio && isEnabled('subAgents')
     ? enableSubAgents(context)
     : context
-  return runToolsActive ? enablePptdPipeline(withSubAgents) : withSubAgents
+  return runToolsActive && !deterministicDrawio ? enablePptdPipeline(withSubAgents) : withSubAgents
 }
 
 const ATTACHMENT_TOOL_NAMES: ReadonlySet<string> = new Set([

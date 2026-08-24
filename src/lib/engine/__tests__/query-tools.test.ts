@@ -288,6 +288,39 @@ describe('runQuery tool execution (M1-14/15)', () => {
     expect(events.at(-1)).toMatchObject({ type: 'run.exhausted', reason: 'tool_loop' })
   })
 
+  it('generates Draw.io from preloaded evidence on the first zero-tool turn', async () => {
+    const requests: CompletionRequest[] = []
+    const provider = makeMockProvider([drawioFinalTurn], requests)
+    const unrelatedTool: Tool = {
+      name: 'dispatch_agent', description: 'unrelated runtime tool', inputSchema: { type: 'object' },
+      readOnly: true, concurrencySafe: true, destructive: false, requiresConfirmation: false,
+      availability: 'always', permissions: [],
+      async execute(): Promise<ToolResult> { return { success: true, content: 'not used' } },
+      renderCall: () => 'dispatch',
+    }
+    const base = makeCtx(provider, [unrelatedTool])
+    const events: QueryEvent[] = []
+    for await (const event of runQuery({
+      ...base,
+      attachmentMode: 'evidence',
+      attachments: [{ id: 'att-a', name: 'brief.md', size: 100, text: 'architecture evidence' }],
+      messages: [{ role: 'user', content: 'Draw the architecture.\n<attachment_evidence_pack>architecture evidence</attachment_evidence_pack>' }],
+      skill: {
+        metadata: { name: 'drawio-diagram', version: '2.1.0', description: 'draw diagram' },
+        content: 'Generate the diagram from attachment evidence.',
+        path: 'builtin://drawio-diagram/SKILL.md',
+      },
+    })) events.push(event)
+
+    expect(requests).toHaveLength(1)
+    expect(requests[0].tools ?? []).toEqual([])
+    expect(requests[0].toolChoice).toBe('none')
+    expect(requests[0].temperature).toBe(0.2)
+    expect(requests[0].system).toContain('all tools are intentionally unavailable')
+    expect(events.some((event) => event.type === 'tool.requested')).toBe(false)
+    expect(events.at(-1)?.type).toBe('run.completed')
+  })
+
   it('keeps Draw.io retrieval closed after a hidden invalid call instead of reopening it', async () => {
     const requests: CompletionRequest[] = []
     const provider = makeMockProvider([

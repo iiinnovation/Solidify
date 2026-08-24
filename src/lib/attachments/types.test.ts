@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { attachmentSections, buildAttachmentEvidencePack, chooseAttachmentContextMode, formatAttachmentManifest, formatInlineAttachments, readAttachmentRange, searchAttachmentResources } from './types'
+import { attachmentSections, buildAttachmentEvidencePack, buildDiagramAttachmentEvidencePack, chooseAttachmentContextMode, formatAttachmentManifest, formatInlineAttachments, readAttachmentRange, searchAttachmentResources } from './types'
 
 describe('attachment resources', () => {
   const resource = { id: 'att-1', name: '材料.md', size: 20, text: '# 结论\n第一条证据。\n第二条证据。' }
@@ -63,5 +63,25 @@ describe('attachment resources', () => {
     expect(pack?.entries[0]).toMatchObject({ attachmentId: 'att-1', sectionId: 'section-01', offset: 0 })
     expect(pack?.content.length).toBeLessThanOrEqual(1_050)
     expect(pack?.truncated).toBe(true)
+  })
+
+  it('prepares bounded diagram evidence from both the overview and later architecture sections', () => {
+    const text = [
+      '项目概述：建设统一审计平台。',
+      '背景。'.repeat(4_000),
+      '总体技术架构：业务应用层、AI能力层、模型服务层、数据支撑层。',
+      '安全治理与集成运维体系纵向贯穿所有层级。',
+    ].join('\n')
+    const pack = buildDiagramAttachmentEvidencePack(
+      [{ id: 'att-arch', name: '技术方案.md', size: text.length, text }],
+      '根据文档生成系统架构图',
+      12_000,
+    )
+
+    expect(pack?.content).toContain('项目概述')
+    expect(pack?.content).toContain('总体技术架构')
+    expect(pack?.content).toContain('AI能力层')
+    expect(pack?.entries.some((entry) => entry.offset > 8_000)).toBe(true)
+    expect(pack?.content.length).toBeLessThanOrEqual(12_100)
   })
 })
