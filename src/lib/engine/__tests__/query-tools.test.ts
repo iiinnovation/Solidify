@@ -94,6 +94,16 @@ const finalTurn: CompletionChunk[] = [
   },
 ]
 
+const drawioArtifact = '<solidify-artifact type="drawio" title="Architecture"><mxfile><diagram><mxGraphModel><root /></mxGraphModel></diagram></mxfile></solidify-artifact>'
+const drawioFinalTurn: CompletionChunk[] = [
+  { type: 'content_delta', delta: drawioArtifact },
+  {
+    type: 'message_end',
+    usage: { inputTokens: 20, outputTokens: 20, totalTokens: 40 },
+    stopReason: 'end_turn',
+  },
+]
+
 describe('runQuery tool execution (M1-14/15)', () => {
   beforeEach(() => {
     setFlagOverride('skillV2', false)
@@ -293,7 +303,7 @@ describe('runQuery tool execution (M1-14/15)', () => {
         { type: 'tool_call_end', id: 'search-hidden-invalid', input: { query: 'model layer', limit: '6' } },
         { type: 'message_end', stopReason: 'tool_use' },
       ],
-      finalTurn,
+      drawioFinalTurn,
     ], requests)
     let executions = 0
     const searchTool: Tool = {
@@ -357,7 +367,7 @@ describe('runQuery tool execution (M1-14/15)', () => {
         { type: 'tool_call_end', id: 'prepare-inline', input: { attachmentIds: ['att-a'], maxChars: 8_000 } },
         { type: 'message_end', stopReason: 'tool_use' },
       ],
-      finalTurn,
+      drawioFinalTurn,
     ], requests)
     const evidenceTool: Tool = {
       name: 'prepare_attachment_evidence',
@@ -398,6 +408,111 @@ describe('runQuery tool execution (M1-14/15)', () => {
     expect(requests[1].toolChoice).toBe('none')
   })
 
+  it('recovers a tagged Qwen tool call, then rejects leaked tool text after retrieval closes', async () => {
+    const requests: CompletionRequest[] = []
+    const taggedRead = [
+      'I need one bounded section.',
+      '<tool_call> <function=read_attachment>',
+      '<parameter=attachmentId> att-a </parameter>',
+      '<parameter=offset> 10 </parameter>',
+      '<parameter=limit> 760 </parameter>',
+      '</function> </tool_call>',
+    ].join('\n')
+    const leakedClosedCall = '<tool_call> <function=read_attachment> <parameter=attachmentId> att-a </parameter> <parameter=offset> 6149 </parameter> <parameter=limit> 760 </parameter> </function> </tool_call>'
+    const provider = makeMockProvider([
+      [{ type: 'content_delta', delta: taggedRead }, { type: 'message_end', stopReason: 'end_turn' }],
+      [{ type: 'content_delta', delta: leakedClosedCall }, { type: 'message_end', stopReason: 'end_turn' }],
+      drawioFinalTurn,
+    ], requests)
+    let executions = 0
+    const readTool: Tool = {
+      name: 'read_attachment',
+      description: 'read attachment',
+      inputSchema: {
+        type: 'object',
+        required: ['attachmentId'],
+        properties: {
+          attachmentId: { type: 'string' },
+          offset: { type: 'integer' },
+          limit: { type: 'integer' },
+        },
+        additionalProperties: false,
+      },
+      readOnly: true,
+      concurrencySafe: true,
+      destructive: false,
+      requiresConfirmation: false,
+      availability: 'always',
+      permissions: [],
+      loopGroup: 'attachment-retrieval',
+      loopKey: 'read',
+      replaySafe: true,
+      async execute(input): Promise<ToolResult> {
+        executions++
+        expect(input).toEqual({ attachmentId: 'att-a', offset: 10, limit: 760 })
+        return {
+          success: true,
+          content: '[attachment:att-a offset:10]\nmodel layer evidence',
+          data: { attachmentId: 'att-a', offset: 10, total: 7_000 },
+        }
+      },
+      renderCall: () => 'read attachment',
+    }
+    const base = makeCtx(provider, [readTool])
+    const events: QueryEvent[] = []
+    for await (const event of runQuery({
+      ...base,
+      attachments: [{ id: 'att-a', name: 'brief.md', size: 7_000, text: 'model layer evidence' }],
+      skill: {
+        metadata: { name: 'drawio-diagram', version: '2.1.0', description: 'draw diagram' },
+        content: 'Generate the diagram from attachment evidence.',
+        path: 'builtin://drawio-diagram/SKILL.md',
+      },
+    })) events.push(event)
+
+    expect(executions).toBe(1)
+    expect(requests.map((request) => request.tools?.map((tool) => tool.name) ?? []))
+      .toEqual([['read_attachment'], [], []])
+    expect(requests[1].toolChoice).toBe('none')
+    expect(requests[2].toolChoice).toBe('none')
+    expect(events.filter((event) => event.type === 'tool.requested')).toHaveLength(1)
+    const streamed = events.filter((event): event is Extract<QueryEvent, { type: 'message.delta' }> => event.type === 'message.delta')
+      .map((event) => event.text).join('')
+    expect(streamed).toBe(drawioArtifact)
+    expect(streamed).not.toContain('<tool_call>')
+    expect(events.find((event) => event.type === 'message.completed')).toEqual({
+      type: 'message.completed',
+      content: drawioArtifact,
+    })
+    expect(events.at(-1)?.type).toBe('run.completed')
+  })
+
+  it('fails instead of completing when Draw.io delivery remains invalid after repair', async () => {
+    const invalid = '<tool_call> <function=read_attachment> <parameter=attachmentId> att-a </parameter> </function> </tool_call>'
+    const provider = makeMockProvider([
+      [{ type: 'content_delta', delta: invalid }, { type: 'message_end', stopReason: 'end_turn' }],
+      [{ type: 'content_delta', delta: 'Still not an artifact.' }, { type: 'message_end', stopReason: 'end_turn' }],
+    ])
+    const base = makeCtx(provider, [])
+    const events: QueryEvent[] = []
+    for await (const event of runQuery({
+      ...base,
+      skill: {
+        metadata: { name: 'drawio-diagram', version: '2.1.0', description: 'draw diagram' },
+        content: 'Generate one Draw.io artifact.',
+        path: 'builtin://drawio-diagram/SKILL.md',
+      },
+    })) events.push(event)
+
+    expect(events.some((event) => event.type === 'message.delta')).toBe(false)
+    expect(events.some((event) => event.type === 'message.completed')).toBe(false)
+    expect(events.some((event) => event.type === 'run.completed')).toBe(false)
+    expect(events.at(-1)).toMatchObject({
+      type: 'run.failed',
+      error: { message: expect.stringContaining('未生成有效的 Draw.io') },
+    })
+  })
+
   it('keeps targeted retrieval available when an evidence pack was handleized', async () => {
     const requests: CompletionRequest[] = []
     const provider = makeMockProvider([
@@ -406,7 +521,7 @@ describe('runQuery tool execution (M1-14/15)', () => {
         { type: 'tool_call_end', id: 'prepare-handle', input: { attachmentIds: ['att-a'], maxChars: 48_000 } },
         { type: 'message_end', stopReason: 'tool_use' },
       ],
-      finalTurn,
+      drawioFinalTurn,
     ], requests)
     const evidenceTool: Tool = {
       name: 'prepare_attachment_evidence',

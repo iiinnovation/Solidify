@@ -17,6 +17,7 @@ import { snapshotJson } from '../harness/ledger'
 import { ToolLoopGuard } from './tool-loop-guard'
 import { toolRegistry } from '../tools'
 import { enablePptdPipeline } from './pptd-context'
+import { newId } from '../id'
 
 /**
  * How many times a single answer may be resumed after hitting the model's
@@ -24,11 +25,19 @@ import { enablePptdPipeline } from './pptd-context'
  * spin, but high enough that a full deck fits.
  */
 const MAX_CONTINUATIONS = 4
+const MAX_DRAWIO_DELIVERY_RETRIES = 1
 
 const DRAWIO_GENERATION_ONLY_CONTEXT = [
   'Draw.io attachment retrieval is complete and the retrieval tools are intentionally unavailable.',
   'Do not emit any tool call, including tools mentioned in earlier turns.',
   'Use the evidence already present in the conversation and immediately return exactly one valid Draw.io Artifact.',
+].join(' ')
+
+const DRAWIO_DELIVERY_REPAIR_CONTEXT = [
+  'Your previous response was rejected because it was not a valid Draw.io Artifact.',
+  'There are no tools available now. Text such as <tool_call> is invalid output and will not execute.',
+  'Return only one <solidify-artifact type="drawio" title="..."> element containing one complete <mxfile>...</mxfile>, then close </solidify-artifact>.',
+  'Do not include commentary, Markdown fences, plans, or tool syntax.',
 ].join(' ')
 
 /**
@@ -55,6 +64,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
   let prefill = ''
   let compactNextTurn = ctx.inputMode === 'compact_recovery'
   let reasoningRecoveryUsed = ctx.inputMode === 'compact_recovery'
+  let drawioDeliveryRetries = 0
   // `usage.totalTokens` remains the provider-reported cost for telemetry. The
   // run budget deliberately does not charge the same history input again on
   // every turn: only the first input plus all generated output counts toward
@@ -187,9 +197,10 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       let response: { text: string; toolCalls: ToolCall[]; usage?: UsageStats; stopReason?: string; reasoningLength: number }
       let exposedTools: readonly Tool[] = activeTools
       let firstChunkAt: string | undefined
+      const drawioRun = activeSkill?.metadata.name === 'drawio-diagram'
+      const drawioGenerationOnly = drawioRun
+        && closedToolGroups.has('attachment-retrieval')
       try {
-        const drawioGenerationOnly = activeSkill?.metadata.name === 'drawio-diagram'
-          && closedToolGroups.has('attachment-retrieval')
         const modelContext: QueryContext = closedToolGroups.size === 0
           ? { ...runCtx, skill: activeSkill, skillResources: activeSkillResources, tools: activeTools }
           : {
@@ -236,6 +247,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
             firstChunkAt = timestamp
           },
           onToolRequested: harness ? (call) => recordToolRequested(harness, call) : undefined,
+          emitText: !drawioRun,
         })
       } catch (error) {
         harness?.ledger.append('model.failed', { turn, message: error instanceof Error ? error.message : String(error) })
@@ -360,9 +372,55 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
 
       // If no tool calls, we're done (stop_reason: end_turn)
       if (response.toolCalls.length === 0) {
-        yield { type: 'message.completed', content: response.text }
+        const completedText = prefill + response.text
+        if (drawioRun) {
+          const validation = validateDrawioDelivery(completedText)
+          if (!validation.valid) {
+            harness?.ledger.append('artifact.parse_failed', {
+              artifactId: null,
+              kind: 'drawio_delivery',
+              reason: validation.reason,
+              textLength: completedText.length,
+            })
+            if (drawioDeliveryRetries < MAX_DRAWIO_DELIVERY_RETRIES && turn < ctx.limits.maxTurns) {
+              drawioDeliveryRetries++
+              harness?.ledger.append('model.retrying', {
+                turn,
+                reason: 'invalid_drawio_delivery',
+                detail: validation.reason,
+                strategy: 'generation_only_repair',
+              })
+              logger.warn('model.retrying', {
+                reason: 'invalid_drawio_delivery',
+                detail: validation.reason,
+                strategy: 'generation_only_repair',
+              })
+              toolLoopGuard.closeGroup('attachment-retrieval')
+              closedToolGroups.add('attachment-retrieval')
+              currentMessages = [
+                ...dropPrefill(currentMessages, prefill),
+                { role: 'assistant', content: '[Invalid Draw.io delivery omitted.]' },
+                { role: 'user', content: DRAWIO_DELIVERY_REPAIR_CONTEXT },
+              ]
+              prefill = ''
+              yield { type: 'run.phase', phase: 'repairing', detail: '正在修复 Draw.io 交付格式' }
+              continue
+            }
+
+            const error: RunError = {
+              kind: 'internal',
+              message: `模型未生成有效的 Draw.io 交付物：${validation.reason}`,
+            }
+            appendTerminalFact(harness, logger, 'run.failed', { ...error, usage })
+            yield { type: 'run.failed', error, usage: { ...usage } }
+            logger.error('run.failed', error)
+            return
+          }
+          if (completedText) yield { type: 'message.delta', text: completedText }
+        }
+        yield { type: 'message.completed', content: completedText }
         logger.log('message.completed', {
-          textLength: response.text.length,
+          textLength: completedText.length,
           stopReason: response.stopReason || 'end_turn'
         })
         completed = true
@@ -758,6 +816,8 @@ async function* streamModelResponse(
     onModelPrepared?: Parameters<typeof streamModel>[1]
     onFirstChunk?: (timestamp: string) => void
     onToolRequested?: (call: ToolCall) => void | Promise<void>
+    /** Buffer specialized artifact output until its terminal contract validates. */
+    emitText?: boolean
   } = {},
 ): AsyncGenerator<QueryEvent, {
   text: string
@@ -795,7 +855,7 @@ async function* streamModelResponse(
             yield { type: 'model.progress', phase: 'generating' }
           }
           accumulatedText += chunk.delta
-          yield { type: 'message.delta', text: chunk.delta }
+          if (callbacks.emitText !== false) yield { type: 'message.delta', text: chunk.delta }
           break
 
         case 'reasoning_delta':
@@ -906,12 +966,100 @@ async function* streamModelResponse(
       }
     }
 
+    // Some OpenAI-compatible reasoning models occasionally serialize their
+    // tool protocol into assistant text instead of returning native
+    // `tool_calls`. Draw.io output is buffered, so an exact trailing protocol
+    // block can be recovered without ever leaking it into the chat. Recovery
+    // is limited to a currently exposed tool and still passes through the
+    // normal schema, permission and loop guards.
+    if (
+      toolCalls.length === 0
+      && callbacks.emitText === false
+      && ctx.skill?.metadata.name === 'drawio-diagram'
+    ) {
+      const tagged = parseTaggedToolCall(accumulatedText, ctx.tools)
+      if (tagged) {
+        accumulatedText = tagged.prefix
+        toolCalls.push(tagged.call)
+        stopReason = 'tool_use'
+        await callbacks.onToolRequested?.(tagged.call)
+        yield { type: 'run.phase', ...toolRunPhase(tagged.call.name) }
+        yield { type: 'tool.requested', call: tagged.call }
+        logger.warn('tool_call.text_protocol_recovered', {
+          callId: tagged.call.id,
+          name: tagged.call.name,
+        })
+      }
+    }
+
     return { text: accumulatedText, toolCalls, usage, stopReason, reasoningLength }
 
   } catch (error) {
     logger.error('stream.failed', error)
     throw error
   }
+}
+
+function parseTaggedToolCall(text: string, tools: readonly Tool[]): { prefix: string; call: ToolCall } | undefined {
+  const match = /<tool_call>\s*<function=([A-Za-z_][\w.-]*)>\s*([\s\S]*?)<\/function>\s*<\/tool_call>\s*$/i.exec(text)
+  if (!match) return undefined
+  const tool = tools.find((candidate) => candidate.name === match[1])
+  if (!tool) return undefined
+
+  const input: Record<string, unknown> = {}
+  const parameterPattern = /<parameter=([A-Za-z_][\w.-]*)>\s*([\s\S]*?)\s*<\/parameter>/gi
+  let parameterMatch: RegExpExecArray | null
+  let remainder = match[2]
+  while ((parameterMatch = parameterPattern.exec(match[2])) !== null) {
+    const name = parameterMatch[1]
+    if (Object.hasOwn(input, name)) return undefined
+    const schema = tool.inputSchema.properties?.[name]
+    if (!schema) return undefined
+    const value = coerceTaggedToolValue(parameterMatch[2].trim(), schema.type)
+    if (value === INVALID_TAGGED_TOOL_VALUE) return undefined
+    input[name] = value
+    remainder = remainder.replace(parameterMatch[0], '')
+  }
+  if (remainder.trim()) return undefined
+
+  return {
+    prefix: text.slice(0, match.index).trimEnd(),
+    call: { id: newId('compat-tool'), name: tool.name, input },
+  }
+}
+
+const INVALID_TAGGED_TOOL_VALUE = Symbol('invalid-tagged-tool-value')
+
+function coerceTaggedToolValue(
+  value: string,
+  type: NonNullable<Tool['inputSchema']['properties']>[string]['type'],
+): unknown | typeof INVALID_TAGGED_TOOL_VALUE {
+  if (type === 'integer') return /^-?\d+$/.test(value) ? Number.parseInt(value, 10) : INVALID_TAGGED_TOOL_VALUE
+  if (type === 'number') return /^-?(?:\d+\.?\d*|\.\d+)$/.test(value) ? Number(value) : INVALID_TAGGED_TOOL_VALUE
+  if (type === 'boolean') return value === 'true' ? true : value === 'false' ? false : INVALID_TAGGED_TOOL_VALUE
+  if (type === 'array' || type === 'object') {
+    try {
+      const parsed: unknown = JSON.parse(value)
+      if (type === 'array' ? Array.isArray(parsed) : Boolean(parsed) && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed
+      return INVALID_TAGGED_TOOL_VALUE
+    } catch {
+      return INVALID_TAGGED_TOOL_VALUE
+    }
+  }
+  if (type === 'null') return value === 'null' ? null : INVALID_TAGGED_TOOL_VALUE
+  return value
+}
+
+function validateDrawioDelivery(text: string): { valid: true } | { valid: false; reason: string } {
+  const matches = [...text.matchAll(/<solidify-artifact\b([^>]*)>([\s\S]*?)<\/solidify-artifact>/gi)]
+  if (matches.length !== 1) return { valid: false, reason: `需要且只能包含一个 Artifact，实际为 ${matches.length} 个` }
+  const match = matches[0]
+  const prefix = text.slice(0, match.index).trim()
+  const suffix = text.slice((match.index ?? 0) + match[0].length).trim()
+  if (prefix || suffix) return { valid: false, reason: 'Artifact 前后不能包含说明文字或工具调用标签' }
+  if (!/\btype\s*=\s*(?:"drawio"|'drawio')/i.test(match[1])) return { valid: false, reason: 'Artifact type 必须为 drawio' }
+  if (!/<mxfile\b[\s\S]*<\/mxfile\s*>/i.test(match[2])) return { valid: false, reason: 'Artifact 内缺少完整的 mxfile XML' }
+  return { valid: true }
 }
 
 /**
