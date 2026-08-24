@@ -32,7 +32,6 @@ export type ClaudeContent =
  */
 interface SystemPromptParts {
   base: string
-  harness?: string
   skill?: string
 }
 
@@ -73,7 +72,7 @@ export async function buildMessages(ctx: QueryContext): Promise<{
 }
 
 function measureSkillContext(ctx: QueryContext): SkillContextTokenStats {
-  const index = (ctx.harnessContext ?? []).find((part) => part.startsWith('可用的 Skill') || part.startsWith('Available skills')) ?? ''
+  const index = (ctx.harnessContext ?? []).find(isSkillIndexContext) ?? ''
   const body = ctx.skill ? skillCoreContent(ctx, ctx.skill) : ''
   const indexTokens = estimateTokens(index)
   const bodyTokens = estimateTokens(body)
@@ -105,9 +104,7 @@ function buildSystemPrompt(ctx: QueryContext): { system: string; fixedSystem: st
     base: buildBaseSystemPrompt(ctx),
   }
 
-  if (ctx.harnessContext?.length) {
-    parts.harness = ctx.harnessContext.join('\n\n')
-  }
+  const harnessContext = ctx.harnessContext ?? []
 
   if (ctx.skill?.content.trim()) {
     parts.skill = buildSkillSection(ctx)
@@ -119,9 +116,19 @@ function buildSystemPrompt(ctx: QueryContext): { system: string; fixedSystem: st
 
   // Retrieved memory deliberately does NOT go here — see buildMessages().
 
-  const fixedSystem = [parts.base, parts.harness].filter(Boolean).join('\n\n---\n\n')
-  const system = [fixedSystem, parts.skill].filter(Boolean).join('\n\n---\n\n')
+  // The layer-0 Skill index is a separately measured, separately bounded
+  // context slot. It still belongs in the actual system prompt, but counting it
+  // again as fixed system content makes the no-Skill path fail whenever the
+  // valid 600-token index is combined with the valid 800-token fixed prefix.
+  const fixedHarness = harnessContext.filter((part) => !isSkillIndexContext(part)).join('\n\n')
+  const fixedSystem = [parts.base, fixedHarness].filter(Boolean).join('\n\n---\n\n')
+  const fullHarness = harnessContext.join('\n\n')
+  const system = [parts.base, fullHarness, parts.skill].filter(Boolean).join('\n\n---\n\n')
   return { system, fixedSystem }
+}
+
+function isSkillIndexContext(part: string): boolean {
+  return part.startsWith('可用的 Skill') || part.startsWith('Available skills')
 }
 
 /**

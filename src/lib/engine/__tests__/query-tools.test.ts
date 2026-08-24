@@ -278,6 +278,170 @@ describe('runQuery tool execution (M1-14/15)', () => {
     expect(events.at(-1)).toMatchObject({ type: 'run.exhausted', reason: 'tool_loop' })
   })
 
+  it('keeps Draw.io retrieval closed after a hidden invalid call instead of reopening it', async () => {
+    const requests: CompletionRequest[] = []
+    const provider = makeMockProvider([
+      [
+        { type: 'tool_call_start', id: 'search-valid', name: 'search_attachments' },
+        { type: 'tool_call_end', id: 'search-valid', input: { query: 'system architecture', limit: 6 } },
+        { type: 'message_end', stopReason: 'tool_use' },
+      ],
+      [
+        // Reproduce the Qwen call from the ledger. The schema is already hidden
+        // on this turn, and the stale historical call also has a bad limit type.
+        { type: 'tool_call_start', id: 'search-hidden-invalid', name: 'search_attachments' },
+        { type: 'tool_call_end', id: 'search-hidden-invalid', input: { query: 'model layer', limit: '6' } },
+        { type: 'message_end', stopReason: 'tool_use' },
+      ],
+      finalTurn,
+    ], requests)
+    let executions = 0
+    const searchTool: Tool = {
+      name: 'search_attachments',
+      description: 'search attachment',
+      inputSchema: {
+        type: 'object',
+        required: ['query'],
+        properties: {
+          query: { type: 'string' },
+          limit: { type: 'integer' },
+        },
+      },
+      readOnly: true,
+      concurrencySafe: true,
+      destructive: false,
+      requiresConfirmation: false,
+      availability: 'always',
+      permissions: [],
+      loopGroup: 'attachment-retrieval',
+      loopKey: 'search',
+      replaySafe: true,
+      async execute(): Promise<ToolResult> {
+        executions++
+        return {
+          success: true,
+          content: '[brief.md 0-100]\narchitecture evidence',
+          data: { hits: [{ attachmentId: 'att-a', start: 0, end: 100 }] },
+        }
+      },
+      renderCall: () => 'search attachment',
+    }
+    const base = makeCtx(provider, [searchTool])
+    const events: QueryEvent[] = []
+    for await (const event of runQuery({
+      ...base,
+      attachments: [{ id: 'att-a', name: 'brief.md', size: 100, text: 'architecture evidence' }],
+      skill: {
+        metadata: { name: 'drawio-diagram', version: '2.1.0', description: 'draw diagram' },
+        content: 'Generate the diagram from attachment evidence.',
+        path: 'builtin://drawio-diagram/SKILL.md',
+      },
+    })) events.push(event)
+
+    expect(executions).toBe(1)
+    expect(requests.map((request) => request.tools?.map((tool) => tool.name) ?? []))
+      .toEqual([['search_attachments'], [], []])
+    expect(events.find((event) => event.type === 'tool.completed' && event.callId === 'search-hidden-invalid'))
+      .toMatchObject({ result: { error: { kind: 'budget_exhausted' } } })
+    expect(events.at(-1)?.type).toBe('run.completed')
+  })
+
+  it('closes Draw.io retrieval after an inline evidence pack is prepared', async () => {
+    const requests: CompletionRequest[] = []
+    const provider = makeMockProvider([
+      [
+        { type: 'tool_call_start', id: 'prepare-inline', name: 'prepare_attachment_evidence' },
+        { type: 'tool_call_end', id: 'prepare-inline', input: { attachmentIds: ['att-a'], maxChars: 8_000 } },
+        { type: 'message_end', stopReason: 'tool_use' },
+      ],
+      finalTurn,
+    ], requests)
+    const evidenceTool: Tool = {
+      name: 'prepare_attachment_evidence',
+      description: 'prepare evidence',
+      inputSchema: { type: 'object' },
+      readOnly: true,
+      concurrencySafe: true,
+      destructive: false,
+      requiresConfirmation: false,
+      availability: 'always',
+      permissions: [],
+      loopGroup: 'attachment-retrieval',
+      loopKey: 'evidence',
+      replaySafe: true,
+      async execute(): Promise<ToolResult> {
+        return {
+          success: true,
+          content: '[source attachment:att-a]\ncomplete architecture evidence',
+          data: { entries: [{ attachmentId: 'att-a', offset: 0, end: 100 }] },
+        }
+      },
+      renderCall: () => 'prepare evidence',
+    }
+    const base = makeCtx(provider, [evidenceTool])
+    for await (const _event of runQuery({
+      ...base,
+      attachments: [{ id: 'att-a', name: 'brief.md', size: 100, text: 'complete architecture evidence' }],
+      skill: {
+        metadata: { name: 'drawio-diagram', version: '2.1.0', description: 'draw diagram' },
+        content: 'Generate the diagram from attachment evidence.',
+        path: 'builtin://drawio-diagram/SKILL.md',
+      },
+    })) { /* drain */ }
+
+    expect(requests.map((request) => request.tools?.map((tool) => tool.name) ?? []))
+      .toEqual([['prepare_attachment_evidence'], []])
+  })
+
+  it('keeps targeted retrieval available when an evidence pack was handleized', async () => {
+    const requests: CompletionRequest[] = []
+    const provider = makeMockProvider([
+      [
+        { type: 'tool_call_start', id: 'prepare-handle', name: 'prepare_attachment_evidence' },
+        { type: 'tool_call_end', id: 'prepare-handle', input: { attachmentIds: ['att-a'], maxChars: 48_000 } },
+        { type: 'message_end', stopReason: 'tool_use' },
+      ],
+      finalTurn,
+    ], requests)
+    const evidenceTool: Tool = {
+      name: 'prepare_attachment_evidence',
+      description: 'prepare evidence',
+      inputSchema: { type: 'object' },
+      readOnly: true,
+      concurrencySafe: true,
+      destructive: false,
+      requiresConfirmation: false,
+      availability: 'always',
+      permissions: [],
+      loopGroup: 'attachment-retrieval',
+      loopKey: 'evidence',
+      replaySafe: true,
+      async execute(): Promise<ToolResult> {
+        return {
+          success: true,
+          content: '[source attachment:att-a]\npreview only\n\n[Result stored as mem-evidence: 48000 bytes. Use read_handle to retrieve it.]',
+          data: { entries: [{ attachmentId: 'att-a', offset: 0, end: 48_000 }] },
+          handle: 'mem-evidence',
+          truncated: true,
+        }
+      },
+      renderCall: () => 'prepare evidence',
+    }
+    const base = makeCtx(provider, [evidenceTool])
+    for await (const _event of runQuery({
+      ...base,
+      attachments: [{ id: 'att-a', name: 'brief.md', size: 48_000, text: 'large architecture evidence' }],
+      skill: {
+        metadata: { name: 'drawio-diagram', version: '2.1.0', description: 'draw diagram' },
+        content: 'Generate the diagram from attachment evidence.',
+        path: 'builtin://drawio-diagram/SKILL.md',
+      },
+    })) { /* drain */ }
+
+    expect(requests.map((request) => request.tools?.map((tool) => tool.name) ?? []))
+      .toEqual([['prepare_attachment_evidence'], ['prepare_attachment_evidence']])
+  })
+
   it('enforces the provider-reported token hard cap separately from progress budget', async () => {
     const callTurn = (index: number): CompletionChunk[] => [
       { type: 'tool_call_start', id: `budget-${index}`, name: 'read_budgeted' },

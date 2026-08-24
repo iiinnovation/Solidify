@@ -179,6 +179,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       const usingCompactInput = compactNextTurn
       compactNextTurn = false
       let response: { text: string; toolCalls: ToolCall[]; usage?: UsageStats; stopReason?: string; reasoningLength: number }
+      let exposedTools: readonly Tool[] = activeTools
       let firstChunkAt: string | undefined
       try {
         const modelContext: QueryContext = closedToolGroups.size === 0
@@ -192,6 +193,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
                 return !tool.loopGroup || !closedToolGroups.has(tool.loopGroup)
               }),
             }
+        exposedTools = modelContext.tools
         response = yield* streamModelResponse({
           ...modelContext,
           messages: currentMessages,
@@ -370,18 +372,13 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       // placeholder) need the latest tool-result messages, not only the
       // immutable context from the start of the run.
       const results = yield* executeTools(
-        { ...runCtx, skill: activeSkill, skillResources: activeSkillResources, tools: activeTools, messages: currentMessages },
+        { ...runCtx, skill: activeSkill, skillResources: activeSkillResources, tools: exposedTools, messages: currentMessages },
         response.toolCalls,
         logger,
         harness,
         consecutiveToolFailures,
         toolLoopGuard,
-      )
-
-      closedToolGroups = new Set(
-        activeTools
-          .flatMap((tool) => tool.loopGroup ? [tool.loopGroup] : [])
-          .filter((group) => toolLoopGuard.isClosed(group)),
+        activeTools,
       )
 
       // Draw.io generation is a targeted extraction task, not an open-ended
@@ -389,9 +386,18 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       // concrete attachment evidence, close the retrieval phase and force the
       // model to generate from that evidence instead of exploring every
       // remaining reader and Skill reference.
-      if (activeSkill?.metadata.name === 'drawio-diagram' && hasTargetedAttachmentEvidence(results)) {
-        closedToolGroups.add('attachment-retrieval')
+      if (
+        activeSkill?.metadata.name === 'drawio-diagram'
+        && hasDrawioAttachmentEvidence(response.toolCalls, results)
+      ) {
+        toolLoopGuard.closeGroup('attachment-retrieval')
       }
+
+      closedToolGroups = new Set(
+        activeTools
+          .flatMap((tool) => tool.loopGroup ? [tool.loopGroup] : [])
+          .filter((group) => toolLoopGuard.isClosed(group)),
+      )
 
       // Three real executions are enough evidence that repeating the same
       // strategy is unsafe. A fourth request is reported once and terminates
@@ -521,7 +527,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
 
       // Append tool results as next message
       const suppressDrawioEvidenceHandle = activeSkill?.metadata.name === 'drawio-diagram'
-        && hasTargetedAttachmentEvidence(results)
+        && hasTargetedAttachmentEvidence(response.toolCalls, results)
       const toolResultContent: MessageContent[] = results.flatMap((result) => {
         const call = response.toolCalls.find((c) => c.id === result.callId)
         let content = suppressDrawioEvidenceHandle && call?.name === 'prepare_attachment_evidence' && result.handle
@@ -910,6 +916,7 @@ async function* executeTools(
   harness?: HarnessRuntime,
   consecutiveToolFailures?: ReadonlyMap<string, number>,
   loopGuard?: ToolLoopGuard,
+  knownTools: readonly Tool[] = ctx.tools,
 ): AsyncGenerator<QueryEvent, Array<ToolResult & { callId: string }>> {
   logger.log('tools.executing', { count: calls.length })
 
@@ -920,6 +927,32 @@ async function* executeTools(
   // can self-correct, with tombstones for the recoverable cases (M1-11)
   const runnable: Array<{ call: ToolCall; tool: Tool; loopWarning?: string }> = []
   for (const call of calls) {
+    // A model may repeat a tool name from conversation history even after its
+    // schema has been removed from the current request. Enforce the closed
+    // phase before validating arguments: otherwise malformed arguments return
+    // `invalid_input`, the loop recovery path never sees `budget_exhausted`,
+    // and a transiently hidden group can be reopened on the next turn.
+    const declaredTool = knownTools.find((tool) => tool.name === call.name)
+    const closedGroup = declaredTool?.loopGroup
+      ?? (call.name === 'read_handle' && loopGuard?.isClosed('attachment-retrieval')
+        ? 'attachment-retrieval'
+        : undefined)
+    if (closedGroup && loopGuard?.isClosed(closedGroup)) {
+      const message = `${closedGroup} 检索阶段已关闭。请不要继续调用该组工具，依据已有证据直接生成结果。`
+      const result: ToolResult & { callId: string } = {
+        callId: call.id,
+        success: false,
+        content: message,
+        error: { kind: 'budget_exhausted', message, recoverable: true },
+        metadata: { durationMs: 0 },
+      }
+      results.push(result)
+      if (harness) recordToolCompleted(harness, result.callId, result)
+      yield { type: 'tool.completed', callId: call.id, result }
+      logger.warn('tool.loop_closed', { callId: call.id, name: call.name, message })
+      continue
+    }
+
     const priorFailures = consecutiveToolFailures?.get(call.name) ?? 0
     if (priorFailures >= 3) {
       const message = `工具 ${call.name} 已连续失败 ${priorFailures} 次，本次运行已阻止继续执行。请改用其它策略或开始新的运行。`
@@ -1224,17 +1257,55 @@ function modelVisibleToolResult(toolName: string | undefined, result: ToolResult
   return result.content
 }
 
-function hasTargetedAttachmentEvidence(results: readonly ToolResult[]): boolean {
+function hasTargetedAttachmentEvidence(
+  calls: readonly ToolCall[],
+  results: readonly (ToolResult & { callId: string })[],
+): boolean {
+  const toolNames = new Map(calls.map((call) => [call.id, call.name]))
   return results.some((result) => {
     if (!result.success || typeof result.content !== 'string') return false
     if (result.content.includes('没有找到与查询匹配的附件内容')) return false
+    const toolName = toolNames.get(result.callId)
+    if (toolName !== 'search_attachments' && toolName !== 'read_attachment') return false
     const data = result.data
-    return data !== undefined
-      && data !== null
-      && typeof data === 'object'
-      && !Array.isArray(data)
-      && ('hits' in data || 'attachmentId' in data)
+    if (data !== undefined && data !== null && typeof data === 'object' && !Array.isArray(data)) {
+      if (toolName === 'search_attachments' && Array.isArray((data as { hits?: unknown }).hits)) {
+        return (data as { hits: unknown[] }).hits.length > 0
+      }
+      if (toolName === 'read_attachment') {
+        return typeof (data as { attachmentId?: unknown }).attachmentId === 'string'
+      }
+    }
+    // Normalization may drop oversized structured data after storing the full
+    // result behind a handle. A successful, non-empty result from these two
+    // call-verified attachment tools is still concrete model-visible evidence.
+    return result.content.trim().length > 0
   })
+}
+
+/**
+ * Decide when Draw.io has enough model-visible evidence to leave retrieval.
+ *
+ * A search hit or bounded read is already targeted. A prepared evidence pack
+ * is sufficient only when it remained inline; a handleized/truncated pack gave
+ * the model just a short preview, so one targeted search/read must remain
+ * available to fill the actual diagram gap.
+ */
+function hasDrawioAttachmentEvidence(
+  calls: readonly ToolCall[],
+  results: readonly (ToolResult & { callId: string })[],
+): boolean {
+  if (hasTargetedAttachmentEvidence(calls, results)) return true
+  const preparedIds = new Set(
+    calls
+      .filter((call) => call.name === 'prepare_attachment_evidence')
+      .map((call) => call.id),
+  )
+  return results.some((result) => preparedIds.has(result.callId)
+    && result.success
+    && !result.truncated
+    && !result.handle
+    && result.content.trim().length > 0)
 }
 
 /** Relay progress emitted during a pending tool promise without buffering it until completion. */

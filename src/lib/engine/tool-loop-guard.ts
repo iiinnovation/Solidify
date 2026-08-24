@@ -106,6 +106,18 @@ export class ToolLoopGuard {
     return this.closedGroups_.has(group)
   }
 
+  /**
+   * Close a retrieval phase for a result-aware workflow decision.
+   *
+   * Some workflows know that one successful result is sufficient even when
+   * the generic repeat/budget detector has not fired yet. Persist that decision
+   * in the guard itself so rebuilding the model-visible tool list on a later
+   * turn cannot accidentally reopen the phase.
+   */
+  closeGroup(group: string): void {
+    this.closedGroups_.add(group)
+  }
+
   inspect(call: ToolCall, tool: Tool): ToolLoopDecision {
     const group = tool.loopGroup
     if (!group) return { kind: 'allow' }

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { compileContext } from './context-compiler'
 import type { QueryContext } from './types'
+import { formatSkillIndex } from '../skills/registry'
+import { compiledBuiltinSkills } from '../skills/generated/manifest'
 
 function context(overrides: Partial<QueryContext> = {}): QueryContext {
   return {
@@ -39,5 +41,25 @@ describe('Context Compiler', () => {
   it('enforces the production budget before a provider request can be built', async () => {
     await expect(compileContext(context({ cwd: `/${'x'.repeat(7_000)}` })))
       .rejects.toThrow(/system prompt exceeds/)
+  })
+
+  it('budgets the no-Skill metadata index separately from the fixed system prompt', async () => {
+    const index = formatSkillIndex(
+      compiledBuiltinSkills.map((item) => item.metadata),
+      undefined,
+      { includePaths: false },
+    )
+    const compiled = await compileContext(context({
+      harnessContext: [
+        'Environment: cwd=/workspace; platform=web',
+        index,
+      ],
+    }))
+
+    expect(compiled.stats.skillIndexTokens).toBeGreaterThan(0)
+    expect(compiled.stats.skillIndexTokens).toBeLessThan(600)
+    expect(compiled.stats.slots.fixedSystemTokens).toBeLessThanOrEqual(800)
+    expect(compiled.stats.slots.systemTokens).toBeGreaterThan(compiled.stats.slots.fixedSystemTokens)
+    expect(compiled.system.split(index)).toHaveLength(2)
   })
 })
