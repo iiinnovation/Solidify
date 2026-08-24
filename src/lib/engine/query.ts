@@ -18,6 +18,7 @@ import { ToolLoopGuard } from './tool-loop-guard'
 import { toolRegistry } from '../tools'
 import { enablePptdPipeline } from './pptd-context'
 import { newId } from '../id'
+import { modelSupportsReasoningToggle } from '../model/capabilities'
 
 /**
  * How many times a single answer may be resumed after hitting the model's
@@ -64,6 +65,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
   let prefill = ''
   let compactNextTurn = ctx.inputMode === 'compact_recovery'
   let reasoningRecoveryUsed = ctx.inputMode === 'compact_recovery'
+  let forceDrawioGenerationOnly = false
   let drawioDeliveryRetries = 0
   // `usage.totalTokens` remains the provider-reported cost for telemetry. The
   // run budget deliberately does not charge the same history input again on
@@ -200,12 +202,13 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       const drawioRun = activeSkill?.metadata.name === 'drawio-diagram'
       const drawioGenerationOnly = drawioRun
         && (
-          runCtx.attachmentMode === 'inline'
+          forceDrawioGenerationOnly
+          || runCtx.attachmentMode === 'inline'
           || (!runCtx.attachments?.length && activeTools.length === 0)
           || closedToolGroups.has('attachment-retrieval')
         )
       try {
-        const modelContext: QueryContext = drawioGenerationOnly
+        const scopedModelContext: QueryContext = drawioGenerationOnly
           ? {
               ...runCtx,
               skill: activeSkill,
@@ -228,6 +231,9 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
                 return !tool.loopGroup || !closedToolGroups.has(tool.loopGroup)
               }),
             }
+        const modelContext: QueryContext = drawioRun && modelSupportsReasoningToggle(runCtx.model.model)
+          ? { ...scopedModelContext, reasoningMode: 'disabled' }
+          : scopedModelContext
         exposedTools = modelContext.tools
         response = yield* streamModelResponse({
           ...modelContext,
@@ -250,6 +256,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
                 messageCount: request.messages.length,
                 toolCount: request.tools?.length ?? 0,
                 toolChoice: request.toolChoice ?? 'auto',
+                reasoningMode: request.reasoningMode ?? 'default',
                 promptCache: request.promptCache ?? null,
               },
               localGapMs: previousModelCompletedAt === undefined
@@ -345,6 +352,14 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
           if (!reasoningRecoveryUsed && turn < ctx.limits.maxTurns) {
             reasoningRecoveryUsed = true
             compactNextTurn = true
+            // Once Draw.io has attempted delivery, a thought-only retry must
+            // remain a delivery retry. Reopening attachment tools here caused
+            // Qwen to abandon generation and start another retrieval cycle.
+            if (drawioRun) {
+              forceDrawioGenerationOnly = true
+              toolLoopGuard.closeGroup('attachment-retrieval')
+              closedToolGroups = new Set([...closedToolGroups, 'attachment-retrieval'])
+            }
             harness?.ledger.append('model.retrying', {
               turn,
               reason: 'reasoning_exhausted_output',

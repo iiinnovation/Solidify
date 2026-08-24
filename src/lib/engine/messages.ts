@@ -240,6 +240,12 @@ Do necessary planning internally. Prefer the smallest useful next action: call a
     prompt += `\n\nThe previous model turn spent its output window without producing an actionable answer. The input has been compacted automatically. Do not restate the task or write a long plan. Emit the single next tool call if evidence is missing; otherwise return the concise final answer.`
   }
 
+  if (ctx.reasoningMode === 'disabled') {
+    // Qwen's documented soft switch remains useful when an internal
+    // OpenAI-compatible gateway ignores the native enable_thinking field.
+    prompt += `\n\n/no_think\nDo not spend output tokens on hidden reasoning. Produce the requested answer or Artifact immediately.`
+  }
+
   return prompt
 }
 

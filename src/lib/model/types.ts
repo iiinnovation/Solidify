@@ -53,6 +53,8 @@ export interface CompletionRequest {
   tools?: ToolDefinition[]
   /** Explicitly prevent stale historical tool calls during a generation-only recovery turn. */
   toolChoice?: 'auto' | 'none'
+  /** Ask hybrid-thinking adapters to produce the answer directly. */
+  reasoningMode?: 'default' | 'disabled'
   temperature?: number
   maxTokens?: number
   topP?: number

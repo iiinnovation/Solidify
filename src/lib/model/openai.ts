@@ -105,6 +105,9 @@ export class OpenAIProvider implements ModelProvider {
           messages,
           tools,
           ...(request.toolChoice ? { tool_choice: request.toolChoice } : {}),
+          ...(request.reasoningMode === 'disabled' && /(?:qwen|glm)/i.test(request.model)
+            ? { enable_thinking: false }
+            : {}),
           temperature: request.temperature,
           max_tokens: request.maxTokens,
           stream: true,

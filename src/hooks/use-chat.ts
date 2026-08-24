@@ -21,6 +21,7 @@ import { attachmentMediaPath, loadAttachmentMedia, saveAttachmentMedia } from '@
 import { useSkillStore } from '@/stores/skill-store'
 import { deriveArtifactPath, materializeArtifact, normalizeArtifactPath, normalizeArtifactType } from '@/lib/workspace/materialize'
 import { isTauri } from '@/lib/tauri'
+import { modelContextWindow } from '@/lib/model/capabilities'
 import { buildAttachmentEvidencePack, chooseAttachmentContextMode, createAttachmentResourceId, formatAttachmentManifest, formatInlineAttachments, type AttachmentResource } from '@/lib/attachments/types'
 import { loadAttachmentResource, loadAttachmentResources, saveAttachmentResource } from '@/lib/attachments/store'
 import {
@@ -694,7 +695,7 @@ ${result.content}
       const attachmentMode = chooseAttachmentContextMode({
         resources: attachmentResources,
         userContent: content,
-        contextWindow: activeProvider.contextWindow,
+        contextWindow: modelContextWindow(activeProvider.modelId, activeProvider.contextWindow),
         reservedTokens: Math.ceil(requestHistory.reduce((sum, message) => {
           return sum + message.content.length / 3
         }, 0)) + 4_000,

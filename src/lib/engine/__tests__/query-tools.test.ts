@@ -14,6 +14,10 @@ import type { MemoryState } from '../../memory/types'
 import { clearFlagOverrides, setFlagOverride } from '../../harness/flags'
 import { readAttachmentTool } from '../../tools/builtin/attachments'
 import { readHandleTool } from '../../tools/builtin/read-handle'
+import { chooseAttachmentContextMode, formatInlineAttachments } from '../../attachments/types'
+import { modelContextWindow } from '../../model/capabilities'
+import { createChatQueryContext } from '../chat-context'
+import type { ModelProvider as ModelProviderConfig } from '../../../stores/model-store'
 
 function makeMockProvider(script: CompletionChunk[][], requests?: CompletionRequest[]): ModelProvider {
   let callIndex = 0
@@ -114,6 +118,58 @@ describe('runQuery tool execution (M1-14/15)', () => {
   })
 
   afterEach(() => clearFlagOverrides())
+
+  it('runs the logged qwen3.8 Draw.io attachment case in one tool-free model round', async () => {
+    const attachment = {
+      id: 'att-qwen-drawio',
+      name: '审计AI综合场景建设技术方案.md',
+      size: 77_600,
+      text: `${'数'.repeat(28_700)}总体五层技术架构：业务应用层、AI能力层、模型服务层、数据支撑层、安全治理。`,
+    }
+    const prompt = '根据文档内容生成一份系统架构图。'
+    const contextWindow = modelContextWindow('qwen3.8')
+    const attachmentMode = chooseAttachmentContextMode({
+      resources: [attachment],
+      userContent: prompt,
+      contextWindow,
+      reservedTokens: 4_000,
+    })
+    const requests: CompletionRequest[] = []
+    const mock = makeMockProvider([drawioFinalTurn], requests)
+    const registry = new ProviderRegistry()
+    registry.register('openai', mock)
+    const configuredProvider: ModelProviderConfig = {
+      id: 'qwen-internal', name: '内网 qwen3.8', apiUrl: 'https://example.com/v1/chat/completions',
+      apiKey: 'test-key', modelId: 'qwen3.8', format: 'openai', enabled: true,
+    }
+    const context = createChatQueryContext({
+      runId: 'qwen-drawio-real-path',
+      conversationId: 'qwen-drawio-conversation',
+      messages: [{ role: 'user', content: `${prompt}${formatInlineAttachments([attachment])}` }],
+      provider: configuredProvider,
+      signal: new AbortController().signal,
+      attachments: [attachment],
+      attachmentMode,
+      loadedSkill: {
+        metadata: { name: 'drawio-diagram', version: '2.1.0', description: 'Draw.io diagram' },
+        content: 'Return one valid Draw.io Artifact.',
+        path: 'builtin://drawio-diagram/SKILL.md',
+      },
+    })
+    const events: QueryEvent[] = []
+    for await (const event of runQuery({ ...context, providerRegistry: registry })) events.push(event)
+
+    expect(contextWindow).toBe(128_000)
+    expect(attachmentMode).toBe('inline')
+    expect(context.tools).toEqual([])
+    expect(requests).toHaveLength(1)
+    expect(requests[0]).toMatchObject({ toolChoice: 'none', reasoningMode: 'disabled' })
+    expect(requests[0].tools).toBeUndefined()
+    expect(requests[0].system).toContain('/no_think')
+    expect(JSON.stringify(requests[0].messages)).toContain('总体五层技术架构')
+    expect(events.filter((event) => event.type === 'tool.requested')).toHaveLength(0)
+    expect(events.at(-1)?.type).toBe('run.completed')
+  })
 
   it('emits a generator-owned artifact directly without a second model turn', async () => {
     let providerCalls = 0
@@ -1139,6 +1195,40 @@ describe('runQuery tool execution (M1-14/15)', () => {
       type: 'run.exhausted',
       reason: 'max_output_tokens',
     })
+  })
+
+  it('keeps a Draw.io reasoning-only recovery in generation mode instead of reopening retrieval', async () => {
+    const requests: CompletionRequest[] = []
+    const thoughtOnly: CompletionChunk[] = [
+      { type: 'reasoning_delta', delta: '内部规划'.repeat(100) },
+      {
+        type: 'message_end',
+        usage: { inputTokens: 10_457, outputTokens: 8_192, totalTokens: 18_649 },
+        stopReason: 'max_tokens',
+      },
+    ]
+    const reader = makeSlowReadTool('read_attachment', 1, [])
+    const base = makeCtx(makeMockProvider([thoughtOnly, drawioFinalTurn], requests), [reader])
+    const events: QueryEvent[] = []
+    for await (const event of runQuery({
+      ...base,
+      model: { ...base.model, model: 'qwen3.8' },
+      attachments: [{ id: 'att-a', name: 'large.md', size: 40_000, text: 'evidence' }],
+      attachmentMode: 'retrieval',
+      skill: {
+        metadata: { name: 'drawio-diagram', version: '2.1.0', description: 'Draw.io diagram' },
+        content: 'Return one Draw.io Artifact.',
+        path: 'builtin://drawio-diagram/SKILL.md',
+      },
+    })) events.push(event)
+
+    expect(requests).toHaveLength(2)
+    expect(requests[0].tools?.map((tool) => tool.name)).toEqual(['read_attachment'])
+    expect(requests[0].reasoningMode).toBe('disabled')
+    expect(requests[1].tools).toBeUndefined()
+    expect(requests[1]).toMatchObject({ toolChoice: 'none', reasoningMode: 'disabled' })
+    expect(events.filter((event) => event.type === 'tool.requested')).toHaveLength(0)
+    expect(events.at(-1)?.type).toBe('run.completed')
   })
 
   it('still continues a truncated turn that produced real text alongside reasoning', async () => {

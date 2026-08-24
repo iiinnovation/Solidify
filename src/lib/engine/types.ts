@@ -99,6 +99,8 @@ export interface QueryContext {
   readonly providerRegistry: ProviderRegistry  // Model provider registry
   /** Provider-level tool policy for a turn; `none` is stronger than hiding schemas. */
   readonly toolChoice?: 'auto' | 'none'
+  /** Provider-level hybrid reasoning policy for deterministic deliverable turns. */
+  readonly reasoningMode?: 'default' | 'disabled'
   /** M1-13: Optional snapshot store for crash recovery; absent = no snapshots */
   readonly snapshots?: SnapshotStore
   /** Resume an interrupted run from the latest turn snapshot. */

@@ -93,6 +93,7 @@ export async function* streamModel(
     messages: unifiedMessages,
     tools: tools.length > 0 ? tools : undefined,
     toolChoice: ctx.toolChoice,
+    reasoningMode: ctx.reasoningMode,
     temperature: ctx.model.temperature,
     maxTokens: ctx.limits.maxOutputTokens,
     stream: true,
@@ -122,6 +123,7 @@ export async function* streamModel(
     topP: request.topP,
     stream: request.stream,
     toolChoice: request.toolChoice,
+    reasoningMode: request.reasoningMode,
     promptCache: request.promptCache,
   }, contextStats)
 

@@ -19,7 +19,7 @@ import type { WorkspaceHandle } from '@/lib/workspace'
 import { enableSubAgents } from './sub-agent/context'
 import { enablePptdPipeline } from './pptd-context'
 import type { AttachmentContextMode, AttachmentResource } from '../attachments/types'
-import { modelSupportsVision } from '../model/capabilities'
+import { modelContextWindow, modelSupportsVision } from '../model/capabilities'
 
 const DEFAULT_LIMITS: RunLimits = {
   maxTurns: 25,
@@ -133,7 +133,7 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
       model: options.provider.modelId,
       temperature: 0.7,
       maxTokens: maxOutputTokens,
-      contextWindow: options.provider.contextWindow ?? inferContextWindow(options.provider.modelId),
+      contextWindow: modelContextWindow(options.provider.modelId, options.provider.contextWindow),
     },
     limits: createRunLimits(options.attachments, maxOutputTokens),
     signal: options.signal,
@@ -314,24 +314,6 @@ function createWorkspaceHandle(root: string): WorkspaceHandle {
       }
     },
   }
-}
-
-/**
- * Best-effort context window by model family, used only when the provider
- * config does not declare one. Deliberately conservative: under-estimating
- * costs a little history, over-estimating means the request is rejected
- * outright by the provider after trimming has already decided it fits.
- */
-function inferContextWindow(modelId: string): number | undefined {
-  const id = modelId.toLowerCase()
-  if (id.includes('claude')) return 200_000
-  if (id.includes('gpt-4o') || id.includes('gpt-4.1') || id.includes('gpt-5')) return 128_000
-  if (id.includes('gpt-4-turbo')) return 128_000
-  if (id.includes('gpt-3.5') && id.includes('16k')) return 16_384
-  if (id.includes('gpt-3.5')) return 16_384
-  if (id.includes('deepseek')) return 64_000
-  if (id.includes('qwen') || id.includes('glm') || id.includes('moonshot')) return 128_000
-  return undefined
 }
 
 /**

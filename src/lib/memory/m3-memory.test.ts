@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { files, searchWorkspaceIndex } = vi.hoisted(() => ({
+const { files, searchWorkspaceIndex, writeWorkspaceFile } = vi.hoisted(() => ({
   files: new Map<string, string>(),
   searchWorkspaceIndex: vi.fn(async () => [{ path: '资料/需求.md', text: '统一数据治理平台', score: -0.5 }]),
+  writeWorkspaceFile: vi.fn(async (path: string, content: string) => { files.set(path, content); return content.length }),
 }))
 
 vi.mock('@/lib/tauri', () => ({
@@ -11,7 +12,7 @@ vi.mock('@/lib/tauri', () => ({
     if (content === undefined) throw new Error('not found')
     return { content, binary: false, bytes: content.length, truncated: false }
   }),
-  writeWorkspaceFile: vi.fn(async (path: string, content: string) => { files.set(path, content); return content.length }),
+  writeWorkspaceFile,
   searchWorkspaceIndex,
 }))
 
@@ -23,6 +24,8 @@ describe('M3 workspace memory', () => {
   beforeEach(() => {
     files.clear()
     searchWorkspaceIndex.mockClear()
+    writeWorkspaceFile.mockClear()
+    writeWorkspaceFile.mockImplementation(async (path: string, content: string) => { files.set(path, content); return content.length })
   })
 
   it('persists handles through the workspace memdir manifest', async () => {
@@ -37,6 +40,16 @@ describe('M3 workspace memory', () => {
     const results = await memory.search('数据治理', 5)
     expect(results.map((result) => result.source)).toContain('资料/需求.md')
     expect(results.some((result) => result.content.includes('短期结论'))).toBe(true)
+  })
+
+  it('keeps a retrievable in-memory handle when workspace persistence fails', async () => {
+    writeWorkspaceFile.mockRejectedValue(new Error('workspace is read-only'))
+    const memory = new WorkspaceMemory('/workspace')
+
+    const handle = await memory.store('large transient evidence')
+
+    expect(handle).toMatch(/^handle-/)
+    expect(await memory.retrieve(handle)).toBe('large transient evidence')
   })
 
   it('formats retrieved memory for the before-query hook', async () => {
