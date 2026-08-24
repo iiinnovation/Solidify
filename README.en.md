@@ -1,24 +1,40 @@
-# Solidify
+# Solidify 2
 
 <div align="center">
 
-**AI-Powered Delivery Workbench**
+**Second-generation local-first AI delivery workbench · Beta**
 
 A lightweight AI tool designed for non-technical implementation professionals, focusing on document generation, presentation preparation, and knowledge management.
 
 [简体中文](./README.md) | English
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue)](https://www.typescriptlang.org/)
+[![Version](https://img.shields.io/badge/version-2.0.0--beta.1-2f855a)](./CHANGELOG.md)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.9-blue)](https://www.typescriptlang.org/)
 [![Tauri](https://img.shields.io/badge/Tauri-2.0-orange)](https://tauri.app/)
-[![React](https://img.shields.io/badge/React-18-61dafb)](https://reactjs.org/)
+[![React](https://img.shields.io/badge/React-19-61dafb)](https://react.dev/)
 
 </div>
+
+> Solidify 2 is currently in Beta. Some workspace, PPTD, and multi-Agent capabilities remain behind experimental settings.
+
+## Why Solidify 2
+
+Solidify 2 is an architectural rebuild from a chat-and-Artifact tool into a local-first workbench for durable project execution.
+
+| First generation | Solidify 2 |
+|---|---|
+| Chat and Artifact panels | Local files, conversations, deliverables, and versions in one workspace |
+| Single-turn generation | Recoverable multi-turn Agent runs with native tool calling |
+| Inline Skill prompts | Directory-based Skills with routing and progressive disclosure |
+| Mostly full message history | Budgeted context compilation, deduplication, and trimming |
+| Navigation coupled to the active task | Multiple chat runs continue independently in the background |
+| Generated output as the endpoint | Approvals, run ledgers, snapshots, and deliverable versioning |
 
 ## ✨ Features
 
 - 🤖 **AI-Powered** - Support for Claude, GPT-4, DeepSeek, and more
-- 📝 **9 Built-in Skills** - Requirements analysis, solution design, presentations, test plans, etc.
+- 📝 **10 Built-in Skills** - Requirements analysis, solution design, presentations, diagrams, test plans, etc.
 - 🎨 **Multi-Format Export** - PPTX, PDF, DOCX, Markdown, HTML
 - 📊 **Rich Visualizations** - 8 slide layouts, Mermaid diagrams, data charts
 - 📁 **File Upload** - Extract content from PDF, DOCX, TXT, MD, CSV files
@@ -149,19 +165,20 @@ npm run tauri:build
 4. **View Artifact** - Generated docs, PPTs, charts appear in right panel
 5. **Export Content** - Click export button and select desired format
 
-### 9 Built-in Skills
+### 10 Built-in Skills
 
 | Skill | Description | Recommended Models |
 |-------|-------------|-------------------|
 | 📋 Requirements Analysis | Output numbered functional requirements list | General |
 | 🏗️ Solution Design | Generate technical solution docs + architecture diagrams | General |
 | 💻 Demo Code | Generate single-file HTML demos | General |
+| Draw.io Diagram | Generate editable process and architecture diagrams | General |
 | 📊 Gap Analysis | Gap matrix table + matching scores | General |
 | ✅ Test Plan | UAT test cases + acceptance criteria | General |
 | 📝 Meeting Notes | Organize recordings/notes into structured minutes | General |
 | 📑 Report Outline | Generate report outline based on audience | General |
 | 📖 Glossary | Plain analogies + implementation scenarios | General |
-| 🎨 Presentation | Generate JSON-structured slides | Claude, GPT-4 |
+| 🎨 PPTD Presentation | Generate, validate, preview, and export PPTX decks | Claude, GPT-4 |
 
 ### File Upload
 
@@ -198,7 +215,7 @@ Create custom templates for quick standardized document generation:
 
 ### Tech Stack
 
-- **Frontend**: Vite + React 18 + TypeScript + Tailwind CSS v4
+- **Frontend**: Vite 7 + React 19 + TypeScript 5.9 + Tailwind CSS v4
 - **Desktop**: Tauri v2 (Rust + WebView)
 - **State Management**: Zustand + TanStack Query
 - **Backend**: Supabase (Auth + PostgreSQL + Edge Functions + Storage)
@@ -207,7 +224,7 @@ Create custom templates for quick standardized document generation:
 
 ### Architecture Features
 
-- **Cloud-First** - Prioritize cloud storage with offline fallback
+- **Local-First** - Workspace files and project metadata remain portable with the project
 - **Lightweight** - Tauri packaging, small size, high performance
 - **Extensible** - Modular design, easy to extend new features
 - **Cross-Platform** - Web + macOS + Windows, single codebase
@@ -267,8 +284,8 @@ This project is open source under the [MIT License](./LICENSE).
 
 ## 📧 Contact
 
-- GitHub Issues: [Report Issues](https://github.com/your-org/solidify/issues)
-- GitHub Discussions: [Technical Discussions](https://github.com/your-org/solidify/discussions)
+- GitHub Issues: [Report Issues](https://github.com/iiinnovation/Solidify/issues)
+- GitHub Discussions: [Technical Discussions](https://github.com/iiinnovation/Solidify/discussions)
 
 ---
 

@@ -73,8 +73,9 @@ export function Header() {
             <PanelLeftOpen size={20} strokeWidth={1.75} />
           )}
         </Button>
-        <span className="text-base font-semibold text-text-primary">
-          Solidify
+        <span className="flex items-center gap-1.5 text-base font-semibold text-text-primary">
+          <span>Solidify 2</span>
+          <span className="text-[10px] font-medium uppercase text-text-tertiary">Beta</span>
         </span>
       </div>
       <div className="flex min-w-0 items-center gap-0.5 sm:gap-2">

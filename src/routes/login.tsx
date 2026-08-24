@@ -62,8 +62,11 @@ export function LoginPage() {
       <div className="w-full max-w-sm">
         {/* Logo */}
         <div className="mb-8 text-center">
-          <h1 className="text-2xl font-bold text-text-primary">Solidify</h1>
-          <p className="mt-1 text-sm text-text-tertiary">AI 交付工作台</p>
+          <div className="flex items-center justify-center gap-2">
+            <h1 className="text-2xl font-bold text-text-primary">Solidify 2</h1>
+            <span className="text-xs font-medium uppercase text-text-tertiary">Beta</span>
+          </div>
+          <p className="mt-1 text-sm text-text-tertiary">本地优先的 AI 实施交付工作台</p>
         </div>
 
         {/* Supabase 未配置提示 */}

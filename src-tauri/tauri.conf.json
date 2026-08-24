@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "Solidify",
-  "version": "0.1.0",
+  "productName": "Solidify 2",
+  "version": "2.0.0-beta.1",
   "identifier": "com.solidify.desktop",
   "build": {
     "frontendDist": "../dist",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Solidify",
+        "title": "Solidify 2 Beta",
         "width": 1280,
         "height": 800,
         "minWidth": 900,

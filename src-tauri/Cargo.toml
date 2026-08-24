@@ -1,7 +1,7 @@
 [package]
 name = "solidify"
-version = "0.1.0"
-description = "Solidify - AI 交付工作台"
+version = "2.0.0-beta.1"
+description = "Solidify 2 - 本地优先的 AI 实施交付工作台"
 authors = ["Solidify Team"]
 license = ""
 repository = ""

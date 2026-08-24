@@ -18,6 +18,8 @@ describe('desktop window header', () => {
     const header = container.querySelector('header')
 
     expect(header).not.toBeNull()
+    expect(screen.getByText('Solidify 2')).not.toBeNull()
+    expect(screen.getByText('Beta')).not.toBeNull()
     fireEvent.mouseDown(header!, { button: 0 })
     expect(startDragging).toHaveBeenCalledOnce()
   })

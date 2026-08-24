@@ -4035,7 +4035,7 @@ dependencies = [
 
 [[package]]
 name = "solidify"
-version = "0.1.0"
+version = "2.0.0-beta.1"
 dependencies = [
  "ignore",
  "log",

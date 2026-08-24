@@ -1,21 +1,35 @@
-# Solidify
+# Solidify 2
 
 <div align="center">
 
-**本地优先的 AI 实施交付工作台**
+**第二代本地优先 AI 实施交付工作台 · Beta**
 
 面向实施工程师、售前顾问和项目团队，将对话、项目文件、Skill、Agent 工具与可交付成果放进同一个工作区。
 
 [English](./README.en.md) | 简体中文
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![Version](https://img.shields.io/badge/version-2.0.0--beta.1-2f855a)](./CHANGELOG.md)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9-blue)](https://www.typescriptlang.org/)
 [![Tauri](https://img.shields.io/badge/Tauri-2-orange)](https://tauri.app/)
 [![React](https://img.shields.io/badge/React-19-61dafb)](https://react.dev/)
 
 </div>
 
-> Solidify 目前处于源码开发阶段，尚未提供正式的 macOS / Windows 安装包。部分工作台、PPTD 和多 Agent 能力仍通过设置页的实验开关控制。
+> Solidify 2 目前处于 Beta 阶段，尚未提供正式的 macOS / Windows 安装包。部分工作台、PPTD 和多 Agent 能力仍通过设置页的实验开关控制。
+
+## 为什么是 Solidify 2
+
+Solidify 2 不是对第一版界面的简单改版，而是将产品从“AI 对话 + Artifact”重构为可持续执行项目任务的本地交付工作台。
+
+| 第一版 | Solidify 2 |
+|---|---|
+| 对话与 Artifact 双栏工具 | 文件、对话、交付物和版本统一的本地工作区 |
+| 单轮生成链路 | 可恢复的多轮 Agent 与原生工具调用 |
+| 将 Skill 作为内联 Prompt 注入 | 目录式 Skill、自动路由和参考资料渐进披露 |
+| 主要依赖完整历史消息 | 按模型窗口重新编译、去重和裁剪上下文 |
+| 切换对话会影响当前任务 | 多会话后台运行，导航与任务生命周期分离 |
+| 生成结果即最终输出 | Harness 审批、运行账本、Snapshot 和交付物版本管理 |
 
 ## 核心能力
 

@@ -7,34 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- No unreleased changes yet.
+
+## [2.0.0-beta.1] - 2026-08-24
+
 ### Added
-- Initial open source release
-- 9 built-in skills for implementation tasks
-- Multi-format export (PPTX, PDF, DOCX, Markdown, HTML, SVG, PNG)
-- File upload support (PDF, DOCX, TXT, MD, CSV)
-- Knowledge base RAG integration (RagFlow)
-- Template system for document generation
-- Draw.io diagram support
-- Mermaid diagram rendering
-- Slides generation with 8 layout types
-- Dark mode support
-- Tauri desktop app (macOS)
-- Multi-AI model support (Claude, GPT-4, DeepSeek)
+- Local-first workspaces with file indexing, workspace-owned conversations, deliverables, and version history.
+- Multi-turn Agent runtime with native tool calling, loop guards, approvals, run ledgers, and snapshots.
+- Context compiler with explicit token budgets, tool-result deduplication, large-result handles, and tool-pair-safe trimming.
+- Directory-based Skill runtime with automatic routing, progressive disclosure, bundled references, and tool allowlists.
+- Ten built-in delivery Skills, including Draw.io diagrams and the PPTD presentation pipeline.
+- Attachment resources for PDF, DOCX, Markdown, text, CSV, and image inputs.
+- Background chat runs that continue when users navigate to or create another conversation.
+- Optional restricted sub-Agent execution with shared cancellation and token budgets.
+- Workspace inspector, on-demand Artifact preview, and PPTD-to-PPTX export.
 
 ### Changed
-- N/A
+- Repositioned Solidify from a chat-and-Artifact tool into a local-first AI delivery workbench.
+- Replaced legacy inline Skill prompts with compiled Skill resources.
+- Rebuilt model transport around Provider-native OpenAI and Anthropic payloads.
+- Moved workspace retrieval into untrusted user-role context instead of the system prompt.
+- Compacted model request and response bodies out of persisted run ledgers.
 
 ### Deprecated
-- N/A
+- Legacy stored `skillSystemPrompt` values remain readable for migration but are ignored by new runs.
 
 ### Removed
-- N/A
+- Legacy inline presentation Skill execution path.
 
 ### Fixed
-- N/A
+- Streaming recovery, attachment persistence, model relay validation, PPTD generation resilience, and cross-conversation run isolation.
 
 ### Security
-- N/A
+- Added workspace boundary guards, monotonic approval policy, authenticated model relay checks, and provider host allowlisting.
 
 ## [0.1.0] - 2025-02-19
 
@@ -49,30 +55,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Search functionality
 - Hotkey system
 - Theme toggle
-
----
-
-## Release Notes
-
-### v0.1.0 - Initial Release
-
-This is the first public release of Solidify, an AI-powered delivery workbench designed for implementation engineers, pre-sales consultants, and project managers.
-
-**Key Features:**
-- Chat + Artifacts dual-panel interface
-- 9 specialized skills for common delivery tasks
-- Multi-format document export
-- Knowledge base integration
-- Template system
-- Desktop app (macOS)
-
-**Known Limitations:**
-- Windows desktop app not yet available
-- Limited to text-based knowledge (no image/video support)
-- PPTX export uses placeholder images only
-
-**Next Steps:**
-- Windows desktop app
-- Enhanced knowledge base features
-- More export format options
-- Collaboration features
