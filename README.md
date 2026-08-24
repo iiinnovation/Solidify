@@ -2,285 +2,227 @@
 
 <div align="center">
 
-**AI 驱动的实施交付工作台**
+**本地优先的 AI 实施交付工作台**
 
-一款专为非研发背景实施人员打造的轻量级 AI 工具，专注文档生成、演示准备和知识管理。
+面向实施工程师、售前顾问和项目团队，将对话、项目文件、Skill、Agent 工具与可交付成果放进同一个工作区。
 
 [English](./README.en.md) | 简体中文
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue)](https://www.typescriptlang.org/)
-[![Tauri](https://img.shields.io/badge/Tauri-2.0-orange)](https://tauri.app/)
-[![React](https://img.shields.io/badge/React-18-61dafb)](https://reactjs.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.9-blue)](https://www.typescriptlang.org/)
+[![Tauri](https://img.shields.io/badge/Tauri-2-orange)](https://tauri.app/)
+[![React](https://img.shields.io/badge/React-19-61dafb)](https://react.dev/)
 
 </div>
 
-## ✨ 特性
+> Solidify 目前处于源码开发阶段，尚未提供正式的 macOS / Windows 安装包。部分工作台、PPTD 和多 Agent 能力仍通过设置页的实验开关控制。
 
-- 🤖 **AI 驱动** - 支持 Claude、GPT-4、DeepSeek 等多种 AI 模型
-- 📝 **9 个内置技能** - 需求分析、方案设计、演示文稿、测试方案等
-- 🎨 **多格式导出** - PPTX、PDF、DOCX、Markdown、HTML
-- 📊 **丰富的可视化** - 8 种幻灯片布局、Mermaid 图表、数据图表
-- 📁 **文件上传** - 支持 PDF、DOCX、TXT、MD、CSV 文件内容提取
-- 🗂️ **知识库** - RAG 增强，支持接入 RagFlow 等知识库系统
-- 🎯 **模板系统** - 自定义文档模板，快速生成标准化内容
-- 🌓 **深色模式** - 自动跟随系统或手动切换
-- ⚡ **轻量快速** - Tauri 打包，体积小（~50MB），启动快（<1s）
-- 🔄 **云端同步** - 可选的 Supabase 云端存储，多设备同步
+## 核心能力
 
-## 🎯 适用场景
+- **统一工作区**：在桌面端打开本地项目目录，浏览文件、对话、交付物和版本记录；项目元数据保存在工作区的 `.solidify/` 目录。
+- **多轮 Agent 运行时**：支持 Provider 原生工具调用、流式输出、工具结果回传、循环保护、审批和运行账本。
+- **并行会话运行**：切换或新建对话不会中止正在执行的会话；删除会话、停止任务或切换工作区时才会取消相应运行。
+- **可控上下文**：每轮重新编译历史、附件、工作区检索结果、Skill 和工具结果，并按照模型窗口执行预算、去重、句柄化与成对裁剪。
+- **目录式 Skill**：内置 10 个交付 Skill，支持自动路由、渐进式披露、参考资料按需读取和工具白名单。
+- **附件与知识检索**：支持 PDF、DOCX、Markdown、文本、CSV 和图片；大附件按 manifest 与读取工具渐进加载，避免整份内容反复进入上下文。
+- **Artifact 预览与导出**：按需打开右侧预览，支持文档、HTML、Mermaid、图表、Draw.io 和 PPTD 演示文稿。
+- **PPTD 演示引擎**：从来源索引、设计方向和大纲生成可校验的演示文稿，支持逐页预览和 PPTX 导出。
+- **多模型接入**：提供 OpenAI、Anthropic、DeepSeek 模板，也支持自定义 OpenAI / Anthropic 兼容端点。
+- **中断恢复**：完成的工具轮会写入 Snapshot，异常退出后可从最后一个有效快照继续，而不是从头执行。
 
-Solidify 专为以下人群设计：
+## 运行方式
 
-- **实施工程师** - 快速生成实施方案、部署文档、测试报告
-- **售前顾问** - 准备演示文稿、产品介绍、方案对比
-- **项目经理** - 整理会议纪要、项目汇报、进度报告
-- **技术支持** - 编写操作手册、FAQ 文档、问题分析
-
-## 🚀 快速开始
-
-### 获取方式
-
-本项目当前仅提供源码，不提供 macOS / Windows 安装包。
-
-请下载源码后在本地自行打包：
-
-```bash
-# Web 构建
-npm run build
-
-# 桌面端构建（Tauri）
-npm run tauri:build
+```text
+持久化会话
+  -> 固定 Provider、工作区、Skill 和工具权限
+  -> 注入当前附件、工作区检索和 Memory
+  -> 编译上下文预算并清理工具消息配对
+  -> 调用模型并执行工具循环
+  -> 每轮写入 Snapshot
+  -> 将最终回答与 Artifact 写回会话
 ```
 
-构建产物默认输出到 `dist/`（Web）和 `src-tauri/target/release/`（桌面端）。
+会话历史会被保留，但不会无上限地原样发送给模型。工作区检索内容以不可信的 user-role 数据注入；工具 Schema 使用 Provider 原生 `tools` 字段；大工具结果会转换为可按需读取的 handle。详细约束参见 [Agent 查询循环规格](./docs/specs/agent-loop.md) 和 [Harness 规格](./docs/specs/harness.md)。
 
-### 配置 AI API
-
-首次使用需要配置 AI API Key：
-
-1. 打开设置页面
-2. 选择 AI 模型提供商（OpenAI / Anthropic / DeepSeek）
-3. 输入 API Key
-4. 保存配置
-
-支持的 AI 模型：
-
-- **OpenAI**: GPT-4, GPT-4 Turbo, GPT-3.5 Turbo
-- **Anthropic**: Claude 3.5 Sonnet, Claude 3 Opus
-- **DeepSeek**: DeepSeek Chat, DeepSeek Coder
-
-### 可选：配置 Supabase（云端同步）
-
-如果需要云端存储和多设备同步：
-
-1. 创建 Supabase 项目：https://supabase.com
-2. 在设置中配置 Supabase URL 和 Anon Key
-3. 注册账号并登录
-4. 本地数据将自动同步到云端
-
-## 🛠️ 本地开发
+## 快速开始
 
 ### 环境要求
 
-- Node.js 18+
+- Node.js 20.19+ 或 22.12+
 - npm 9+
-- Rust 1.70+ (仅 Tauri 开发)
+- Rust stable（仅桌面端开发和构建需要）
+- macOS 10.15+、Windows 或支持 WebView 的 Linux 桌面环境
 
-### 安装依赖
+### 安装与启动
 
 ```bash
 git clone https://github.com/iiinnovation/Solidify.git
-cd solidify
+cd Solidify
 npm install
+
+# Web 开发模式
+npm run dev
+
+# 桌面端开发模式
+npm run tauri:dev
 ```
 
-### 配置环境变量
+`npm run tauri:dev` 会通过 Tauri 的 `beforeDevCommand` 自动启动 Vite，不需要先单独运行 `npm run dev`。
+
+### 配置模型
+
+首次启动后进入“设置”，添加模型 Provider：
+
+1. 选择预设模板或自定义 API 格式。
+2. 填写完整 API URL、API Key 和模型 ID。
+3. 按模型能力设置工具调用、视觉输入、上下文窗口和单轮输出上限。
+4. 保存并将该 Provider 设为当前模型。
+
+API Key 默认只存储在本地应用数据中。开发模式通过 Vite 本地代理转发模型请求；未配置 Supabase 的生产构建会直接请求所配置的 Provider。
+
+### 可选后端
+
+登录、用量统计、云端知识库和 Edge Function 模型代理依赖 Supabase。需要这些能力时，在项目根创建 `.env.local`：
 
 ```bash
-cp .env.example .env
+VITE_SUPABASE_URL=https://your-project.supabase.co
+VITE_SUPABASE_ANON_KEY=your-anon-key
 ```
 
-编辑 `.env` 文件，配置必要的环境变量：
+外部 RAG 可另外配置 RagFlow：
 
 ```bash
-# AI API Keys (至少配置一个)
-VITE_OPENAI_API_KEY=sk-...
-VITE_ANTHROPIC_API_KEY=sk-ant-...
-VITE_DEEPSEEK_API_KEY=sk-...
-
-# Supabase (可选，用于云端存储)
-VITE_SUPABASE_URL=https://xxx.supabase.co
-VITE_SUPABASE_ANON_KEY=eyJ...
-
-# RAG Provider (可选)
-VITE_RAG_PROVIDER=supabase  # 或 ragflow
+VITE_RAG_PROVIDER=ragflow
 VITE_RAGFLOW_API_URL=http://localhost:9380
-VITE_RAGFLOW_API_KEY=ragflow-...
+VITE_RAGFLOW_API_KEY=your-ragflow-key
 ```
 
-部署 `chat` Edge Function 时会强制校验 Supabase 登录态，并且只代理受信任的模型主机。
-默认允许 OpenAI、Anthropic、DeepSeek、Qwen（DashScope）、GLM（智谱）和 Moonshot 的官方公共主机。
-业务空间专属域名及其他自定义兼容服务需要通过 Edge Secret 增加精确主机名。
-
-必须先设置 Secret，再部署函数，避免新代码生效后、自定义 Provider 白名单尚未生效的中断窗口：
+部署 `chat` Edge Function 前，应先配置允许访问的自定义模型主机。官方 OpenAI、Anthropic、DeepSeek、DashScope、智谱和 Moonshot 主机已在服务端策略中受控处理：
 
 ```bash
 supabase secrets set MODEL_PROXY_ALLOWED_HOSTS=api.example.com,models.example.org
 supabase functions deploy chat
 ```
 
-### 开发模式
+## 桌面端端口排查
+
+Tauri 开发配置固定连接 `http://127.0.0.1:5173`。如果出现 `Port 5173 is already in use`，先检查占用进程：
 
 ```bash
-# Web 开发模式
-npm run dev
-
-# Tauri 开发模式（桌面端）
+lsof -nP -iTCP:5173 -sTCP:LISTEN
+kill <PID>
 npm run tauri:dev
 ```
 
-### 构建
+不要同时启动两份 Vite。若需要保留占用 5173 的进程，应同步修改 `src-tauri/tauri.conf.json` 中的 `devUrl` 和 Vite 启动端口，保证两者一致。
+
+## 内置 Skill
+
+| Skill | 主要输出 |
+|---|---|
+| 需求分析 | 结构化需求规格与验收边界 |
+| 方案设计 | 技术方案、组件关系与实施路径 |
+| 演示代码 | 可直接运行的单文件 HTML Demo |
+| Draw.io 流程图 | 可编辑的流程图或系统架构图 |
+| 差距分析 | 差距矩阵、匹配度与定制建议 |
+| 测试方案 | UAT 用例、验收标准与覆盖矩阵 |
+| 会议纪要 | 决议、风险、负责人和待办 |
+| 汇报大纲 | 面向具体受众的汇报结构 |
+| 术语解释 | 通俗定义、类比和实施场景 |
+| PPTD 演示文稿 | 可预览、校验并导出 PPTX 的演示文稿 |
+
+Skill 来源位于 `src/lib/skills/builtin/`。修改内置 Skill 后运行 `npm run compile:skills`，不要手工编辑生成的 manifest。
+
+## Artifact 与导出
+
+| Artifact 类型 | 支持的导出格式 |
+|---|---|
+| 文档 | Markdown、HTML、DOCX、PDF |
+| HTML Demo | HTML |
+| Mermaid | SVG、PNG |
+| 数据图表 | PNG |
+| Draw.io | `.drawio`；SVG/PNG 通过编辑模式导出 |
+| PPTD 演示文稿 | PPTX、PDF |
+
+Artifact 面板默认不占用工作区，用户从消息或交付物入口打开后才挂载预览。
+
+## 开发命令
+
+| 命令 | 用途 |
+|---|---|
+| `npm run dev` | 启动 Web 开发服务器 |
+| `npm run tauri:dev` | 启动 Tauri 桌面端开发环境 |
+| `npm run test:run` | 运行全部 Vitest 测试 |
+| `npm run lint` | 运行 ESLint |
+| `npm run build` | 编译 Skill、检查上下文预算、执行 TypeScript 检查并构建 Web 产物 |
+| `npm run tauri:build` | 构建桌面安装产物 |
+| `npm run check:context-budgets` | 校验系统提示词、Skill 和工具 Schema 的预算 |
+| `npm run check:agent-benchmark` | 检查 Agent 基准结果是否满足门槛 |
+
+Web 产物输出到 `dist/`，桌面构建产物输出到 `src-tauri/target/release/`。
+
+## 技术架构
+
+- **前端**：Vite 7、React 19、TypeScript 5.9、Tailwind CSS 4
+- **桌面端**：Tauri 2、Rust、系统 WebView
+- **状态管理**：Zustand、TanStack Query
+- **Agent Runtime**：上下文编译器、工具注册表、Harness、Snapshot、子 Agent
+- **模型接入**：OpenAI SDK、Anthropic SDK、兼容端点和可选 Supabase Edge Relay
+- **文档与演示**：Markdown、Mermaid、Draw.io、PPTD、PptxGenJS
+- **可选服务**：Supabase Auth / PostgreSQL / Edge Functions、RagFlow
+
+```text
+Solidify/
+├── src/
+│   ├── components/          # 对话、工作台、Artifact 和通用 UI
+│   ├── hooks/               # 会话与 Agent 运行编排
+│   ├── lib/
+│   │   ├── attachments/     # 附件存储、提取和渐进读取
+│   │   ├── engine/          # Agent 循环、上下文编译和 Snapshot
+│   │   ├── harness/         # Hook、审批、Guard、账本和遥测
+│   │   ├── model/           # Provider 适配与流式传输
+│   │   ├── pptd/            # 演示文稿生成、校验、预览和导出
+│   │   ├── skills/          # 内置 Skill、编译器和自动路由
+│   │   ├── tools/           # 工具注册表与内置工具
+│   │   └── workspace/       # 本地文件、索引、检索和持久化
+│   ├── routes/              # 页面路由
+│   └── stores/              # Zustand 状态
+├── src-tauri/               # Tauri 配置、Rust 命令和桌面能力
+├── supabase/                # 数据库迁移与 Edge Functions
+├── benchmarks/              # Agent 请求链路基准
+├── scripts/                 # Skill、预算和 PPTD 维护脚本
+└── docs/                    # 产品、架构、规格和 ADR
+```
+
+## 数据与安全边界
+
+- 本地工作区文件操作必须位于已授权的工作区根目录内。
+- 写入、覆盖和删除由 Harness 策略决定是否允许、询问或拒绝；硬 Guard 不能被审批绕过。
+- 工作区 RAG 和附件内容按不可信数据处理，不进入系统提示词的可信指令层。
+- 运行账本只保存诊断所需的模型参数和摘要，不持久化完整请求正文或模型回答。
+- 配置 Supabase 后，模型代理要求有效登录态，并按服务端主机白名单转发请求。
+
+## 文档
+
+- [产品与架构文档](./docs/README.md)
+- [Agent 查询循环](./docs/specs/agent-loop.md)
+- [工具接口](./docs/specs/tool-interface.md)
+- [Harness 安全控制](./docs/specs/harness.md)
+- [工作区格式](./docs/specs/workspace-format.md)
+- [Skill 格式](./docs/specs/skill-format.md)
+- [PPTD 支持范围](./docs/specs/pptd-subset.md)
+
+## 贡献与许可证
+
+提交改动前至少运行：
 
 ```bash
-# Web 构建
+npm run test:run
+npm run lint
 npm run build
-
-# Tauri 构建（桌面端）
-npm run tauri:build
 ```
 
-## 📖 使用指南
+贡献流程参见 [CONTRIBUTING.md](./CONTRIBUTING.md)。项目采用 [MIT License](./LICENSE)。
 
-### 基础使用
-
-1. **创建项目** - 在侧边栏创建新项目，组织你的对话
-2. **选择技能** - 输入 `/` 唤起技能面板，选择合适的技能
-3. **输入需求** - 描述你的需求，AI 会根据技能生成对应内容
-4. **查看 Artifact** - 生成的文档、PPT、图表会显示在右侧面板
-5. **导出内容** - 点击导出按钮，选择需要的格式
-
-### 9 个内置技能
-
-| 技能 | 说明 | 推荐模型 |
-|------|------|---------|
-| 📋 需求分析 | 输出带编号的功能需求清单 | 通用 |
-| 🏗️ 方案设计 | 生成技术方案文档 + 架构图 | 通用 |
-| 💻 演示代码 | 生成单文件 HTML Demo | 通用 |
-| 📊 差距分析 | 差距矩阵表格 + 匹配度评分 | 通用 |
-| ✅ 测试方案 | UAT 测试用例 + 验收标准 | 通用 |
-| 📝 会议纪要 | 从录音/笔记整理结构化纪要 | 通用 |
-| 📑 汇报大纲 | 根据受众生成汇报大纲 | 通用 |
-| 📖 术语解释 | 通俗类比 + 实施场景 | 通用 |
-| 🎨 演示文稿 | 生成 JSON 结构化幻灯片 | Claude, GPT-4 |
-
-### 文件上传
-
-支持上传以下格式的文件，AI 会自动提取内容：
-
-- 📄 文档：PDF, DOCX, TXT, MD
-- 📊 表格：CSV
-- 🖼️ 图片：PNG, JPG（显示占位符）
-
-### 知识库（RAG）
-
-上传项目相关文档到知识库，AI 会自动引用相关知识回答问题：
-
-1. 进入知识库页面
-2. 上传文档（支持 PDF、DOCX、TXT、MD）
-3. 系统自动提取和索引
-4. 在对话中 AI 会自动搜索相关知识
-
-**支持接入外部知识库**：
-
-- RagFlow
-- 其他兼容的 RAG 系统
-
-### 模板系统
-
-创建自定义模板，快速生成标准化文档：
-
-1. 进入模板页面
-2. 创建新模板
-3. 使用变量语法：`{{variable}}`
-4. 在对话中使用模板
-
-## 🏗️ 技术架构
-
-### 技术栈
-
-- **前端**: Vite + React 18 + TypeScript + Tailwind CSS v4
-- **桌面端**: Tauri v2 (Rust + WebView)
-- **状态管理**: Zustand + TanStack Query
-- **后端**: Supabase (Auth + PostgreSQL + Edge Functions + Storage)
-- **AI**: 直接调用 API 或通过 Edge Functions 代理
-- **向量搜索**: pgvector (PostgreSQL 扩展)
-
-### 架构特点
-
-- **云优先** - 优先使用云端存储，支持离线降级
-- **轻量级** - Tauri 打包，体积小，性能好
-- **可扩展** - 模块化设计，易于扩展新功能
-- **跨平台** - Web + macOS + Windows，一套代码
-
-### 目录结构
-
-```
-Solidify/
-├── src/                      # 前端源代码
-│   ├── components/          # UI 组件
-│   │   ├── artifacts/      # Artifact 渲染
-│   │   ├── chat/           # 聊天界面
-│   │   ├── knowledge/      # 知识库（新增）
-│   │   ├── layout/         # 布局组件
-│   │   └── templates/      # 模板管理
-│   ├── hooks/              # 自定义 Hooks
-│   ├── lib/                # 核心逻辑
-│   │   ├── api/           # API 调用
-│   │   ├── rag/           # RAG 接口层（新增）
-│   │   └── ...
-│   ├── routes/             # 页面路由
-│   └── stores/             # 状态管理
-├── src-tauri/              # Tauri 桌面端
-│   ├── src/               # Rust 代码
-│   └── icons/             # 应用图标
-├── supabase/               # Supabase 配置
-│   ├── functions/         # Edge Functions
-│   └── migrations/        # 数据库迁移
-├── docs/                   # 额外技术文档
-└── .github/                # GitHub 模板与工作流
-```
-
-## 🤝 贡献
-
-我们欢迎所有形式的贡献！请阅读 [贡献指南](./CONTRIBUTING.md) 了解详情。
-
-### 开发流程
-
-1. Fork 本仓库
-2. 创建特性分支 (`git checkout -b feature/amazing-feature`)
-3. 提交更改 (`git commit -m 'feat: 添加某个功能'`)
-4. 推送到分支 (`git push origin feature/amazing-feature`)
-5. 创建 Pull Request
-
-## 📝 许可证
-
-本项目采用 [MIT License](./LICENSE) 开源。
-
-## 🙏 致谢
-
-- [Tauri](https://tauri.app/) - 轻量级桌面应用框架
-- [Supabase](https://supabase.com/) - 开源的 Firebase 替代品
-- [React](https://reactjs.org/) - UI 框架
-- [Tailwind CSS](https://tailwindcss.com/) - CSS 框架
-- [Mermaid](https://mermaid.js.org/) - 图表渲染
-- [pptxgenjs](https://gitbrent.github.io/PptxGenJS/) - PPTX 生成
-
-## 📧 联系方式
-
-- GitHub Issues: [问题反馈](https://github.com/your-org/solidify/issues)
-- GitHub Discussions: [技术讨论](https://github.com/your-org/solidify/discussions)
-
----
-
-**核心价值**：10 分钟完成 2 小时的文档工作 ⚡
+- [GitHub Issues](https://github.com/iiinnovation/Solidify/issues)
+- [GitHub Discussions](https://github.com/iiinnovation/Solidify/discussions)
