@@ -40,12 +40,14 @@ const DEFAULT_LIMITS: RunLimits = {
     // environment it cannot influence, so close the group instead of paying
     // another model turn per attempt.
     'artifact-capture': { maxCalls: 2, softThreshold: 2, hardThreshold: 2 },
-    'folder-task-processing': { maxCalls: 48, softThreshold: 36, hardThreshold: 48 },
-    'folder-task-processing:context': { maxCalls: 1, softThreshold: 1, hardThreshold: 1 },
-    'folder-task-processing:claim': { maxCalls: 1, softThreshold: 1, hardThreshold: 1 },
-    'folder-task-processing:read': { maxCalls: 45, softThreshold: 36, hardThreshold: 45 },
-    'folder-task-processing:checkpoint': { maxCalls: 2, softThreshold: 2, hardThreshold: 2 },
-    'folder-task-processing:decision': { maxCalls: 1, softThreshold: 1, hardThreshold: 1 },
+    // FolderTask capabilities are separate leases. Closing the one-shot context
+    // or claim capability must not revoke the read/checkpoint capabilities that
+    // are required by the next workflow stage.
+    'folder-task-context': { maxCalls: 1, softThreshold: 1, hardThreshold: 1 },
+    'folder-task-claim': { maxCalls: 1, softThreshold: 1, hardThreshold: 1 },
+    'folder-task-read': { maxCalls: 45, softThreshold: 36, hardThreshold: 45 },
+    'folder-task-checkpoint': { maxCalls: 2, softThreshold: 2, hardThreshold: 2 },
+    'folder-task-decision': { maxCalls: 1, softThreshold: 1, hardThreshold: 1 },
   },
 }
 

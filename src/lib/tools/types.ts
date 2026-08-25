@@ -55,6 +55,11 @@ export interface Tool<I = unknown, O = unknown> {
   concurrencySafe: boolean
   /** May cause irreversible consequences */
   destructive: boolean
+  /**
+   * Mutates only runtime-owned durable state behind an already trusted scope
+   * (for example a FolderTask checkpoint), never an arbitrary user resource.
+   */
+  internalStateOnly?: boolean
   /** Requires user confirmation before execution */
   requiresConfirmation: boolean | ((input: I, ctx: ToolUseContext) => boolean)
 

@@ -23,7 +23,7 @@ Creating a task inventories the selected folder but does not expose it to the mo
 - A conversation stores only a trusted `folderTaskId`; it is independent of the currently selected Workspace.
 - In a FolderTask run the model-visible API is physically reduced to the five tools in `src/lib/tools/builtin/folder-tasks.ts`.
 - Filesystem paths are never accepted as general capabilities. A file must belong to the task inventory **and** have status `processing` in the currently claimed batch before Rust will return its bytes.
-- One run may claim one batch. Repeated context/claim/decision calls are bounded by the runtime loop guard.
+- One run may claim one batch. Context, claim, read, checkpoint and decision are independent capability leases, so exhausting a one-shot stage cannot revoke the tools required by the next stage.
 - Temporary chat attachments, Skill instructions, knowledge retrieval, general filesystem tools, PPTD tools and sub-agents do not enter the FolderTask capability lease.
 
 ## Persistence and recovery

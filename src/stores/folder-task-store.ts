@@ -63,9 +63,21 @@ export const useFolderTaskStore = create<FolderTaskState>((set, get) => {
     clearError: () => set({ error: null }),
     refresh: async () => {
       set({ loading: true, error: null })
+      const selectedId = get().selectedTask?.id
       try {
-        const tasks = await folderTaskClient.list()
-        set({ tasks })
+        const [tasks, selectedTask, items] = await Promise.all([
+          folderTaskClient.list(),
+          selectedId ? folderTaskClient.get(selectedId) : Promise.resolve(null),
+          selectedId
+            ? folderTaskClient.listItems(selectedId, undefined, 0, 100)
+            : Promise.resolve([]),
+        ])
+        set((state) => ({
+          tasks,
+          ...(selectedId && state.selectedTask?.id === selectedId
+            ? { selectedTask, items }
+            : {}),
+        }))
       } catch (error) {
         set({ error: errorMessage(error) })
       } finally {

@@ -95,6 +95,9 @@ export class PolicyEngine {
     if (tool.name === 'generate_pptd' && !tool.destructive && requiresConfirmation === false) {
       return { kind: 'allow', reason: 'PPTD 生成仅写入受约束的内部恢复检查点。', source: 'default' }
     }
+    if (tool.internalStateOnly && !tool.destructive && requiresConfirmation === false) {
+      return { kind: 'allow', reason: '工具仅更新当前受信任作用域的内部持久化状态。', source: 'default' }
+    }
     if (
       tool.name === 'materialize_document'
       && call.input?.intent === 'artifact_materialize'

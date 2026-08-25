@@ -30,6 +30,15 @@ describe('workspace rich document extraction', () => {
     await expect(extractText(file)).resolves.toBe('[Sheet: 资源清单]\n云资源名称\t生产环境\necs-001\t8')
   })
 
+  it('preserves empty XLSX columns from sparse cell references', async () => {
+    const zip = new JSZip()
+    zip.file('xl/worksheets/sheet1.xml', `<?xml version="1.0"?><worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>名称</t></is></c><c r="C1" t="inlineStr"><is><t>规格</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>ecs-001</t></is></c><c r="C2"><v>8</v></c></row></sheetData></worksheet>`)
+    const blob = await zip.generateAsync({ type: 'blob' })
+    const file = new File([blob], '稀疏资源清单.xlsx', { type: inferFileMimeType('稀疏资源清单.xlsx') })
+
+    await expect(extractText(file)).resolves.toBe('[Sheet: Sheet1]\n名称\t\t规格\necs-001\t\t8')
+  })
+
   it('infers supported local document MIME types', () => {
     expect(inferFileMimeType('report.docx')).toContain('wordprocessingml')
     expect(inferFileMimeType('inventory.xlsx')).toContain('spreadsheetml')

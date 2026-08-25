@@ -37,6 +37,8 @@ export interface FolderTaskProgress {
   skipped: number
   failed: number
   pendingDecision: number
+  manualReview: number
+  awaitingExternalParser: number
 }
 
 export interface FolderTaskSummary {
@@ -60,7 +62,7 @@ export interface FolderTaskItem {
   size: number
   modifiedAt: number
   extension: string
-  status: 'pending' | 'processing' | 'completed' | 'skipped' | 'failed' | 'pending_decision'
+  status: 'pending' | 'processing' | 'completed' | 'skipped' | 'failed' | 'pending_decision' | 'manual_review' | 'awaiting_external_parser'
   attempts: number
   result?: unknown
   error?: string
@@ -108,7 +110,7 @@ export interface FolderTaskDetail extends FolderTaskSummary {
 
 export interface FolderTaskItemUpdate {
   itemId: string
-  status: 'completed' | 'skipped' | 'failed' | 'pending_decision'
+  status: 'completed' | 'skipped' | 'failed'
   result?: unknown
   error?: string
 }
@@ -142,7 +144,11 @@ export const FOLDER_TASK_STATUS_LABELS: Record<FolderTaskStatus, string> = {
 }
 
 export function folderTaskProcessedItems(task: FolderTaskSummary): number {
-  return task.progress.completed + task.progress.skipped + task.progress.failed + task.progress.pendingDecision
+  return task.progress.completed
+    + task.progress.skipped
+    + task.progress.failed
+    + task.progress.manualReview
+    + task.progress.awaitingExternalParser
 }
 
 export function folderTaskProgressPercent(task: FolderTaskSummary): number {

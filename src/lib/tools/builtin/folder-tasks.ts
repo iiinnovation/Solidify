@@ -7,7 +7,13 @@ import type {
 import { folderTaskClient } from '@/lib/folder-tasks/client'
 import { extractText, inferFileMimeType } from '@/lib/file-extractor'
 
-const FOLDER_TASK_GROUP = 'folder-task-processing'
+export const FOLDER_TASK_TOOL_GROUPS = {
+  context: 'folder-task-context',
+  claim: 'folder-task-claim',
+  read: 'folder-task-read',
+  checkpoint: 'folder-task-checkpoint',
+  decision: 'folder-task-decision',
+} as const
 
 function requireTaskId(folderTaskId: string | undefined): string {
   if (!folderTaskId) throw new Error('This tool is only available inside a folder task conversation')
@@ -75,8 +81,7 @@ export const getFolderTaskContextTool: Tool<Record<string, never>, unknown> = {
   concurrencySafe: true,
   destructive: false,
   requiresConfirmation: false,
-  loopGroup: FOLDER_TASK_GROUP,
-  loopKey: 'context',
+  loopGroup: FOLDER_TASK_TOOL_GROUPS.context,
   replaySafe: false,
   availability: 'tauri-only',
   permissions: ['fs:read'],
@@ -99,9 +104,9 @@ export const claimFolderTaskBatchTool: Tool<Record<string, never>, unknown> = {
   readOnly: false,
   concurrencySafe: false,
   destructive: false,
+  internalStateOnly: true,
   requiresConfirmation: false,
-  loopGroup: FOLDER_TASK_GROUP,
-  loopKey: 'claim',
+  loopGroup: FOLDER_TASK_TOOL_GROUPS.claim,
   replaySafe: false,
   availability: 'tauri-only',
   permissions: ['fs:read'],
@@ -135,8 +140,7 @@ export const readFolderTaskFileTool: Tool<{ relativePath: string; offset?: numbe
   concurrencySafe: true,
   destructive: false,
   requiresConfirmation: false,
-  loopGroup: FOLDER_TASK_GROUP,
-  loopKey: 'read',
+  loopGroup: FOLDER_TASK_TOOL_GROUPS.read,
   replaySafe: true,
   availability: 'tauri-only',
   permissions: ['fs:read'],
@@ -174,7 +178,7 @@ export const updateFolderTaskBatchTool: Tool<{ updates: FolderTaskItemUpdate[]; 
           required: ['itemId', 'status'],
           properties: {
             itemId: { type: 'string', minLength: 1 },
-            status: { type: 'string', enum: ['completed', 'skipped', 'failed', 'pending_decision'] },
+            status: { type: 'string', enum: ['completed', 'skipped', 'failed'] },
             result: { type: 'object' },
             error: { type: 'string' },
           },
@@ -188,9 +192,9 @@ export const updateFolderTaskBatchTool: Tool<{ updates: FolderTaskItemUpdate[]; 
   readOnly: false,
   concurrencySafe: false,
   destructive: false,
+  internalStateOnly: true,
   requiresConfirmation: false,
-  loopGroup: FOLDER_TASK_GROUP,
-  loopKey: 'checkpoint',
+  loopGroup: FOLDER_TASK_TOOL_GROUPS.checkpoint,
   replaySafe: false,
   availability: 'tauri-only',
   permissions: ['fs:read'],
@@ -245,19 +249,24 @@ export const requestFolderTaskDecisionTool: Tool<NewFolderTaskDecision, unknown>
   readOnly: false,
   concurrencySafe: false,
   destructive: false,
+  internalStateOnly: true,
   requiresConfirmation: false,
-  loopGroup: FOLDER_TASK_GROUP,
-  loopKey: 'decision',
+  loopGroup: FOLDER_TASK_TOOL_GROUPS.decision,
   replaySafe: false,
   availability: 'tauri-only',
   permissions: ['fs:read'],
   async execute(input, ctx) {
     try {
-      const decision = await folderTaskClient.requestDecision(requireTaskId(ctx.folderTaskId), input)
+      const taskId = requireTaskId(ctx.folderTaskId)
+      const decision = await folderTaskClient.requestDecision(taskId, input)
+      const task = await folderTaskClient.get(taskId)
+      const paused = task.status === 'awaiting_decision'
       return ok(JSON.stringify({
-        paused: true,
+        paused,
         decision,
-        instruction: 'The durable task is paused. Tell the user to answer in the Folder Tasks decision panel; do not continue processing in this run.',
+        instruction: paused
+          ? 'The durable task is paused. Tell the user to answer in the Folder Tasks decision panel; do not continue processing in this run.'
+          : 'The decision is saved. Finish the current claimed batch and checkpoint it; the task will pause for the user at that checkpoint.',
       }, null, 2), decision)
     } catch (error) {
       return failure(error)

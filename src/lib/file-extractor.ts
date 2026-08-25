@@ -90,15 +90,37 @@ async function extractXlsxText(file: File): Promise<string> {
     if (!entry) continue
     const xml = parseXml(await entry.async('string'))
     const rows = [...xml.querySelectorAll('sheetData > row')]
-      .map((row) => [...row.querySelectorAll(':scope > c')]
-        .map((cell) => xlsxCellValue(cell, sharedStrings))
-        .join('\t')
-        .trimEnd())
+      .map((row) => xlsxRowValue(row, sharedStrings))
       .filter(Boolean)
     sections.push(`[Sheet: ${sheet.name}]\n${rows.join('\n')}`.trim())
   }
 
   return sections.filter(Boolean).join('\n\n') || `[Excel 文档: ${file.name}，内容为空]`
+}
+
+function xlsxRowValue(row: Element, sharedStrings: readonly string[]): string {
+  const values: string[] = []
+  let nextColumn = 0
+  for (const cell of row.querySelectorAll(':scope > c')) {
+    const reference = cell.getAttribute('r')
+    const referencedColumn = reference ? xlsxColumnIndex(reference) : undefined
+    const column = referencedColumn ?? nextColumn
+    values[column] = xlsxCellValue(cell, sharedStrings)
+    nextColumn = column + 1
+  }
+  return Array.from({ length: values.length }, (_, index) => values[index] ?? '')
+    .join('\t')
+    .trimEnd()
+}
+
+function xlsxColumnIndex(reference: string): number | undefined {
+  const letters = reference.match(/^[A-Za-z]+/)?.[0]
+  if (!letters) return undefined
+  let value = 0
+  for (const letter of letters.toUpperCase()) {
+    value = value * 26 + letter.charCodeAt(0) - 64
+  }
+  return value - 1
 }
 
 async function readSharedStrings(zip: JSZip): Promise<string[]> {

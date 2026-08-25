@@ -1,3 +1,4 @@
+use ignore::gitignore::GitignoreBuilder;
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -10,7 +11,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager, Runtime, State};
 use tauri_plugin_dialog::DialogExt;
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 const DEFAULT_BATCH_SIZE: u32 = 8;
 const MAX_BATCH_SIZE: u32 = 20;
 const MAX_MODEL_FILE_BYTES: u64 = 25 * 1024 * 1024;
@@ -159,6 +160,19 @@ impl FolderTaskPlan {
         ) {
             return Err("Unsupported review policy".into());
         }
+        for extension in &self.include_extensions {
+            let value = extension.trim();
+            if value.is_empty()
+                || value.starts_with('.')
+                || value.contains('/')
+                || value.contains('\\')
+            {
+                return Err(format!("Invalid included extension: {extension}"));
+            }
+        }
+        if self.exclusions.len() > 200 {
+            return Err("A plan cannot contain more than 200 exclusion patterns".into());
+        }
         Ok(())
     }
 }
@@ -203,6 +217,8 @@ pub struct FolderTaskProgress {
     pub skipped: u64,
     pub failed: u64,
     pub pending_decision: u64,
+    pub manual_review: u64,
+    pub awaiting_external_parser: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -440,6 +456,7 @@ fn confirm_folder_task_plan_impl(
             }
         }
     }
+    apply_plan_scope(&transaction, task_id, &plan)?;
     transaction
         .execute(
             "UPDATE folder_tasks SET status = 'running', plan_json = ?1, updated_at = ?2, revision = revision + 1 WHERE id = ?3",
@@ -602,6 +619,14 @@ fn migrate(connection: &Connection) -> Result<(), String> {
                 data_json TEXT NOT NULL,
                 created_at INTEGER NOT NULL
             );
+            UPDATE folder_task_items
+               SET status = 'manual_review'
+             WHERE status = 'pending_decision'
+               AND result_json LIKE '%manual_review_queue%';
+            UPDATE folder_task_items
+               SET status = 'awaiting_external_parser'
+             WHERE status = 'pending_decision'
+               AND result_json LIKE '%external_parser_required%';
             INSERT INTO folder_task_meta(key, value) VALUES ('schema_version', '{SCHEMA_VERSION}')
                 ON CONFLICT(key) DO UPDATE SET value = excluded.value;
             "
@@ -688,6 +713,75 @@ fn insert_inventory_items(
                 item.extension,
                 item.status,
             ])
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn apply_plan_scope(
+    transaction: &Transaction<'_>,
+    task_id: &str,
+    plan: &FolderTaskPlan,
+) -> Result<(), String> {
+    let included = plan
+        .include_extensions
+        .iter()
+        .map(|extension| extension.trim().to_ascii_lowercase())
+        .collect::<BTreeSet<_>>();
+    let mut builder = GitignoreBuilder::new("");
+    for pattern in &plan.exclusions {
+        let pattern = pattern.trim();
+        if pattern.is_empty() {
+            continue;
+        }
+        builder
+            .add_line(None, pattern)
+            .map_err(|error| format!("Invalid exclusion pattern '{pattern}': {error}"))?;
+    }
+    let exclusions = builder
+        .build()
+        .map_err(|error| format!("Unable to build plan exclusions: {error}"))?;
+    let mut statement = transaction
+        .prepare(
+            "SELECT id, relative_path, extension FROM folder_task_items
+             WHERE task_id = ?1 AND status = 'pending'",
+        )
+        .map_err(|error| error.to_string())?;
+    let rows = statement
+        .query_map([task_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    drop(statement);
+    for (item_id, relative_path, extension) in rows {
+        let extension_included = included.contains(&extension.to_ascii_lowercase());
+        let path_excluded = exclusions
+            .matched_path_or_any_parents(Path::new(&relative_path), false)
+            .is_ignore();
+        if extension_included && !path_excluded {
+            continue;
+        }
+        transaction
+            .execute(
+                "UPDATE folder_task_items SET status = 'skipped', result_json = ?1
+                 WHERE task_id = ?2 AND id = ?3 AND status = 'pending'",
+                params![
+                    json!({
+                        "reason": "plan_scope",
+                        "extensionIncluded": extension_included,
+                        "pathExcluded": path_excluded,
+                    })
+                    .to_string(),
+                    task_id,
+                    item_id,
+                ],
+            )
             .map_err(|error| error.to_string())?;
     }
     Ok(())
@@ -974,7 +1068,7 @@ fn list_folder_task_items_impl(
         let mut statement = connection
             .prepare(
                 "SELECT id FROM folder_task_items WHERE task_id = ?1
-                 ORDER BY CASE status WHEN 'failed' THEN 0 WHEN 'pending_decision' THEN 1 WHEN 'processing' THEN 2 ELSE 3 END,
+                 ORDER BY CASE status WHEN 'failed' THEN 0 WHEN 'pending_decision' THEN 1 WHEN 'manual_review' THEN 2 WHEN 'awaiting_external_parser' THEN 3 WHEN 'processing' THEN 4 ELSE 5 END,
                  relative_path LIMIT ?2 OFFSET ?3",
             )
             .map_err(|error| error.to_string())?;
@@ -995,7 +1089,14 @@ fn list_folder_task_items_impl(
 fn validate_item_status_filter(status: &str) -> Result<(), String> {
     if matches!(
         status,
-        "pending" | "processing" | "completed" | "skipped" | "failed" | "pending_decision"
+        "pending"
+            | "processing"
+            | "completed"
+            | "skipped"
+            | "failed"
+            | "pending_decision"
+            | "manual_review"
+            | "awaiting_external_parser"
     ) {
         Ok(())
     } else {
@@ -1061,6 +1162,8 @@ fn progress(connection: &Connection, task_id: &str) -> Result<FolderTaskProgress
             "skipped" => result.skipped = count,
             "failed" => result.failed = count,
             "pending_decision" => result.pending_decision = count,
+            "manual_review" => result.manual_review = count,
+            "awaiting_external_parser" => result.awaiting_external_parser = count,
             _ => {}
         }
     }
@@ -1126,13 +1229,30 @@ fn claim_folder_task_batch_impl(
             .map_err(|error| error.to_string())?;
         if processing == 0 {
             let now = now_ms()?;
-            transaction
-                .execute(
-                    "UPDATE folder_tasks SET status = 'reviewing', updated_at = ?1, revision = revision + 1 WHERE id = ?2",
-                    params![now, task_id],
-                )
-                .map_err(|error| error.to_string())?;
-            append_event(&transaction, task_id, "task.reviewing", json!({}), now)?;
+            let pending_decisions = count_pending_decisions(&transaction, task_id)?;
+            if pending_decisions > 0 {
+                transition_task_status(
+                    &transaction,
+                    task_id,
+                    FolderTaskStatus::AwaitingDecision,
+                    "task.awaiting_decision",
+                    now,
+                )?;
+            } else {
+                let orphaned: u64 = transaction
+                    .query_row(
+                        "SELECT COUNT(*) FROM folder_task_items WHERE task_id = ?1 AND status = 'pending_decision'",
+                        [task_id],
+                        |row| row.get(0),
+                    )
+                    .map_err(|error| error.to_string())?;
+                if orphaned > 0 {
+                    return Err(
+                        "Task contains decision-bound items without a pending decision".into(),
+                    );
+                }
+                transition_task_after_processing(&transaction, task_id, now)?;
+            }
         }
         transaction.commit().map_err(|error| error.to_string())?;
         return Ok(Vec::new());
@@ -1184,10 +1304,7 @@ fn update_folder_task_batch_impl(
         if !seen.insert(&update.item_id) {
             return Err(format!("Duplicate item update: {}", update.item_id));
         }
-        if !matches!(
-            update.status.as_str(),
-            "completed" | "skipped" | "failed" | "pending_decision"
-        ) {
+        if !matches!(update.status.as_str(), "completed" | "skipped" | "failed") {
             return Err(format!("Unsupported item status: {}", update.status));
         }
     }
@@ -1242,29 +1359,87 @@ fn update_folder_task_batch_impl(
     )?;
     let unfinished: u64 = transaction
         .query_row(
-            "SELECT COUNT(*) FROM folder_task_items WHERE task_id = ?1 AND status IN ('pending', 'processing')",
+            "SELECT COUNT(*) FROM folder_task_items WHERE task_id = ?1 AND status IN ('pending', 'processing', 'pending_decision')",
             [task_id],
             |row| row.get(0),
         )
         .map_err(|error| error.to_string())?;
-    let pending_decisions: u64 = transaction
+    let pending_decisions = count_pending_decisions(&transaction, task_id)?;
+    if pending_decisions > 0 {
+        transition_task_status(
+            &transaction,
+            task_id,
+            FolderTaskStatus::AwaitingDecision,
+            "task.awaiting_decision",
+            now,
+        )?;
+    } else if unfinished == 0 {
+        transition_task_after_processing(&transaction, task_id, now)?;
+    }
+    transaction.commit().map_err(|error| error.to_string())?;
+    get_folder_task_impl(manager, task_id)
+}
+
+fn count_pending_decisions(connection: &Connection, task_id: &str) -> Result<u64, String> {
+    connection
         .query_row(
             "SELECT COUNT(*) FROM folder_task_decisions WHERE task_id = ?1 AND status = 'pending'",
             [task_id],
             |row| row.get(0),
         )
+        .map_err(|error| error.to_string())
+}
+
+fn transition_task_status(
+    transaction: &Transaction<'_>,
+    task_id: &str,
+    status: FolderTaskStatus,
+    event_type: &str,
+    now: i64,
+) -> Result<(), String> {
+    let changed = transaction
+        .execute(
+            "UPDATE folder_tasks SET status = ?1, updated_at = ?2, revision = revision + 1
+             WHERE id = ?3 AND status = 'running'",
+            params![status.as_str(), now, task_id],
+        )
         .map_err(|error| error.to_string())?;
-    if unfinished == 0 && pending_decisions == 0 {
-        transaction
-            .execute(
-                "UPDATE folder_tasks SET status = 'reviewing' WHERE id = ?1 AND status = 'running'",
-                [task_id],
-            )
-            .map_err(|error| error.to_string())?;
-        append_event(&transaction, task_id, "task.reviewing", json!({}), now)?;
+    if changed == 1 {
+        append_event(transaction, task_id, event_type, json!({}), now)?;
     }
-    transaction.commit().map_err(|error| error.to_string())?;
-    get_folder_task_impl(manager, task_id)
+    Ok(())
+}
+
+fn transition_task_after_processing(
+    transaction: &Transaction<'_>,
+    task_id: &str,
+    now: i64,
+) -> Result<(), String> {
+    let plan_json: String = transaction
+        .query_row(
+            "SELECT plan_json FROM folder_tasks WHERE id = ?1",
+            [task_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| map_not_found(error, "Folder task"))?;
+    let plan: FolderTaskPlan = from_json(&plan_json, "folder task plan")?;
+    if plan.output_mode == "export_only" {
+        transition_task_status(
+            transaction,
+            task_id,
+            FolderTaskStatus::Completed,
+            "task.completed",
+            now,
+        )
+    } else {
+        transition_task_status(
+            transaction,
+            task_id,
+            FolderTaskStatus::Reviewing,
+            "task.reviewing",
+            now,
+        )
+    }
 }
 
 fn request_folder_task_decision_impl(
@@ -1284,6 +1459,14 @@ fn request_folder_task_decision_impl(
             status.as_str()
         ));
     }
+    let plan_json: String = transaction
+        .query_row(
+            "SELECT plan_json FROM folder_tasks WHERE id = ?1",
+            [task_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| map_not_found(error, "Folder task"))?;
+    let plan: FolderTaskPlan = from_json(&plan_json, "folder task plan")?;
     let now = now_ms()?;
     let decision = insert_decision(&transaction, task_id, request, now)?;
     for item_id in &decision.affected_item_ids {
@@ -1299,17 +1482,33 @@ fn request_folder_task_decision_impl(
             ));
         }
     }
+    let remaining_processing: u64 = transaction
+        .query_row(
+            "SELECT COUNT(*) FROM folder_task_items WHERE task_id = ?1 AND status = 'processing'",
+            [task_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())?;
+    let next_status = if plan.review_policy == "pause_on_ambiguity" || remaining_processing == 0 {
+        FolderTaskStatus::AwaitingDecision
+    } else {
+        FolderTaskStatus::Running
+    };
     transaction
         .execute(
-            "UPDATE folder_tasks SET status = 'awaiting_decision', updated_at = ?1, revision = revision + 1 WHERE id = ?2",
-            params![now, task_id],
+            "UPDATE folder_tasks SET status = ?1, updated_at = ?2, revision = revision + 1 WHERE id = ?3",
+            params![next_status.as_str(), now, task_id],
         )
         .map_err(|error| error.to_string())?;
     append_event(
         &transaction,
         task_id,
         "decision.requested",
-        json!({ "decisionId": decision.id, "kind": decision.kind }),
+        json!({
+            "decisionId": decision.id,
+            "kind": decision.kind,
+            "deferredUntilCheckpoint": next_status == FolderTaskStatus::Running,
+        }),
         now,
     )?;
     transaction.commit().map_err(|error| error.to_string())?;
@@ -1486,7 +1685,7 @@ fn apply_unsupported_format_policy(
         "queue_manual_review" => {
             transaction
                 .execute(
-                    "UPDATE folder_task_items SET status = 'pending_decision', result_json = ?1
+                    "UPDATE folder_task_items SET status = 'manual_review', result_json = ?1
                      WHERE task_id = ?2 AND status = 'pending' AND extension NOT IN ('txt','md','markdown','csv','json','yaml','yml','xml','html','htm','log','docx','xlsx','pdf')",
                     params![json!({ "reason": "manual_review_queue" }).to_string(), task_id],
                 )
@@ -1495,7 +1694,7 @@ fn apply_unsupported_format_policy(
         "attempt_external" => {
             transaction
                 .execute(
-                    "UPDATE folder_task_items SET status = 'pending_decision', result_json = ?1
+                    "UPDATE folder_task_items SET status = 'awaiting_external_parser', result_json = ?1
                      WHERE task_id = ?2 AND status = 'pending' AND extension NOT IN ('txt','md','markdown','csv','json','yaml','yml','xml','html','htm','log','docx','xlsx','pdf')",
                     params![json!({ "reason": "external_parser_required" }).to_string(), task_id],
                 )
@@ -1521,16 +1720,19 @@ fn resolved_unsupported_policy(
         .optional()
         .map_err(|error| error.to_string())?
         .flatten();
-    resolution
-        .map(|value| {
-            let parsed: Value = from_json(&value, "unsupported format resolution")?;
-            parsed
-                .get("optionId")
-                .and_then(Value::as_str)
-                .map(str::to_string)
-                .ok_or_else(|| "Unsupported format resolution has no optionId".into())
-        })
-        .transpose()
+    let Some(value) = resolution else {
+        return Ok(None);
+    };
+    let parsed: Value = from_json(&value, "unsupported format resolution")?;
+    if parsed.get("applyToSimilar").and_then(Value::as_bool) != Some(true) {
+        return Ok(None);
+    }
+    parsed
+        .get("optionId")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .map(Some)
+        .ok_or_else(|| "Unsupported format resolution has no optionId".into())
 }
 
 fn set_folder_task_status_impl(
@@ -1576,7 +1778,7 @@ fn set_folder_task_status_impl(
     }
     if action == "complete" {
         let progress = progress(&transaction, task_id)?;
-        if progress.pending + progress.processing > 0 {
+        if progress.pending + progress.processing + progress.pending_decision > 0 {
             return Err("Task still has unfinished items".into());
         }
     }
@@ -1822,7 +2024,6 @@ fn list_events(
             created_at,
         });
     }
-    events.reverse();
     Ok(events)
 }
 
@@ -2093,6 +2294,203 @@ mod tests {
         );
         assert_eq!(detail.summary.pending_decisions, 1);
         assert_eq!(detail.summary.inventory.attention_files, 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn confirmed_plan_filters_inventory_and_export_only_completes_automatically() {
+        let root = tempdir("plan-scope");
+        let input = root.join("input");
+        fs::create_dir_all(input.join("ignored")).unwrap();
+        fs::write(input.join("keep.txt"), "keep").unwrap();
+        fs::write(input.join("skip.md"), "skip extension").unwrap();
+        fs::write(input.join("ignored/also.txt"), "skip path").unwrap();
+        let manager = manager(&root);
+        let mut detail = create_folder_task_impl(
+            &manager,
+            input,
+            "Scoped plan".into(),
+            "Only process selected files".into(),
+            "custom".into(),
+        )
+        .unwrap();
+        detail.plan.include_extensions = vec!["txt".into()];
+        detail.plan.exclusions = vec!["ignored/**".into()];
+        detail.plan.output_mode = "export_only".into();
+        detail = confirm_folder_task_plan_impl(
+            &manager,
+            &detail.summary.id,
+            detail.plan,
+            detail.summary.revision,
+        )
+        .unwrap();
+        assert_eq!(detail.summary.progress.pending, 1);
+        assert_eq!(detail.summary.progress.skipped, 2);
+        let batch = claim_folder_task_batch_impl(&manager, &detail.summary.id, 8).unwrap();
+        assert_eq!(batch.len(), 1);
+        assert_eq!(batch[0].relative_path, "keep.txt");
+        detail = update_folder_task_batch_impl(
+            &manager,
+            &detail.summary.id,
+            vec![FolderTaskItemUpdate {
+                item_id: batch[0].id.clone(),
+                status: "completed".into(),
+                result: Some(json!({ "ok": true })),
+                error: None,
+            }],
+            None,
+        )
+        .unwrap();
+        assert_eq!(detail.summary.status, FolderTaskStatus::Completed);
+        assert!(detail
+            .recent_events
+            .windows(2)
+            .all(|pair| pair[0].seq > pair[1].seq));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn collect_until_checkpoint_defers_the_user_pause_and_preserves_decision_invariant() {
+        let root = tempdir("deferred-decision");
+        let input = root.join("input");
+        fs::create_dir_all(&input).unwrap();
+        fs::write(input.join("first.txt"), "ambiguous").unwrap();
+        fs::write(input.join("second.txt"), "clear").unwrap();
+        let manager = manager(&root);
+        let mut detail = create_folder_task_impl(
+            &manager,
+            input,
+            "Deferred decision".into(),
+            "Collect one batch before asking".into(),
+            "custom".into(),
+        )
+        .unwrap();
+        detail.plan.review_policy = "collect_until_checkpoint".into();
+        detail = confirm_folder_task_plan_impl(
+            &manager,
+            &detail.summary.id,
+            detail.plan,
+            detail.summary.revision,
+        )
+        .unwrap();
+        let batch = claim_folder_task_batch_impl(&manager, &detail.summary.id, 8).unwrap();
+        let ambiguous = batch
+            .iter()
+            .find(|item| item.relative_path == "first.txt")
+            .unwrap();
+        let clear = batch
+            .iter()
+            .find(|item| item.relative_path == "second.txt")
+            .unwrap();
+        let invalid = update_folder_task_batch_impl(
+            &manager,
+            &detail.summary.id,
+            vec![FolderTaskItemUpdate {
+                item_id: ambiguous.id.clone(),
+                status: "pending_decision".into(),
+                result: None,
+                error: None,
+            }],
+            None,
+        );
+        assert!(invalid.unwrap_err().contains("Unsupported item status"));
+        let decision = request_folder_task_decision_impl(
+            &manager,
+            &detail.summary.id,
+            NewDecisionRequest {
+                kind: "resource_mapping".into(),
+                title: "选择资源映射".into(),
+                description: "该映射会影响同类文件".into(),
+                evidence: json!({ "path": ambiguous.relative_path }),
+                options: vec![
+                    DecisionOption {
+                        id: "a".into(),
+                        label: "A".into(),
+                        description: "A".into(),
+                    },
+                    DecisionOption {
+                        id: "b".into(),
+                        label: "B".into(),
+                        description: "B".into(),
+                    },
+                ],
+                recommended_option_id: Some("a".into()),
+                affected_item_ids: vec![ambiguous.id.clone()],
+                apply_key: Some("resource_mapping".into()),
+            },
+        )
+        .unwrap();
+        detail = get_folder_task_impl(&manager, &detail.summary.id).unwrap();
+        assert_eq!(detail.summary.status, FolderTaskStatus::Running);
+        detail = update_folder_task_batch_impl(
+            &manager,
+            &detail.summary.id,
+            vec![FolderTaskItemUpdate {
+                item_id: clear.id.clone(),
+                status: "completed".into(),
+                result: Some(json!({ "ok": true })),
+                error: None,
+            }],
+            Some("batch checkpoint".into()),
+        )
+        .unwrap();
+        assert_eq!(detail.summary.status, FolderTaskStatus::AwaitingDecision);
+        detail = resolve_folder_task_decision_impl(
+            &manager,
+            &detail.summary.id,
+            &decision.id,
+            "a",
+            None,
+            true,
+            detail.summary.revision,
+        )
+        .unwrap();
+        assert_eq!(detail.summary.status, FolderTaskStatus::Running);
+        assert_eq!(detail.summary.progress.pending_decision, 0);
+        assert_eq!(detail.summary.progress.pending, 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn full_rescan_does_not_reuse_a_policy_declined_for_similar_files() {
+        let root = tempdir("non-reusable-policy");
+        let input = root.join("input");
+        fs::create_dir_all(&input).unwrap();
+        fs::write(input.join("legacy.wps"), "legacy").unwrap();
+        let manager = manager(&root);
+        let mut detail = create_folder_task_impl(
+            &manager,
+            input.clone(),
+            "Non reusable policy".into(),
+            "Ask again after rescan".into(),
+            "custom".into(),
+        )
+        .unwrap();
+        let decision = detail.decisions[0].clone();
+        detail = resolve_folder_task_decision_impl(
+            &manager,
+            &detail.summary.id,
+            &decision.id,
+            "skip",
+            None,
+            false,
+            detail.summary.revision,
+        )
+        .unwrap();
+        fs::write(input.join("another.pages"), "new unsupported file").unwrap();
+        detail.plan.baseline_mode = "full_rescan".into();
+        detail = confirm_folder_task_plan_impl(
+            &manager,
+            &detail.summary.id,
+            detail.plan,
+            detail.summary.revision,
+        )
+        .unwrap();
+        assert_eq!(
+            detail.summary.status,
+            FolderTaskStatus::AwaitingPlanConfirmation
+        );
+        assert_eq!(detail.summary.pending_decisions, 1);
         fs::remove_dir_all(root).unwrap();
     }
 
