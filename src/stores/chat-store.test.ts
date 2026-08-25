@@ -63,6 +63,17 @@ describe('chat store truncation', () => {
     })
   })
 
+  it('persists a FolderTask capability binding on its conversation', () => {
+    const id = useChatStore.getState().createConversation('Folder task', {
+      folderTaskId: 'folder-task-1',
+    })
+
+    expect(useChatStore.getState().conversations[0]).toMatchObject({
+      id,
+      folderTaskId: 'folder-task-1',
+    })
+  })
+
   it('removes artifacts owned by truncated messages and clears the active artifact', () => {
     useChatStore.setState({
       conversations: [{

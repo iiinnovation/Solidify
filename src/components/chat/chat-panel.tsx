@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { SendHorizonal, Square, FileText, Code, Presentation, GitGraph, ChevronDown, Settings2, Copy, RefreshCw, X, Paperclip, FileIcon, AlertCircle, BookOpen, Sparkles, FolderOpen, Undo2, Zap, Gauge } from 'lucide-react'
+import { SendHorizonal, Square, FileText, Code, Presentation, GitGraph, ChevronDown, Settings2, Copy, RefreshCw, X, Paperclip, FileIcon, AlertCircle, BookOpen, Sparkles, FolderOpen, Undo2, Zap, Gauge, ListTodo } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { cn, formatDuration } from '@/lib/utils'
 import { MarkdownRenderer } from '@/components/artifacts/markdown-renderer'
@@ -334,6 +334,8 @@ function MessageActions({
 
 
 export function ChatPanel({ conversationId }: { conversationId?: string }) {
+  const navigate = useNavigate()
+  const folderTaskId = useChatStore((state) => state.conversations.find((conversation) => conversation.id === conversationId)?.folderTaskId)
   const draftKey = composerDraftKey(conversationId)
   const composerDraft = useUIStore((s) => s.composerDrafts[draftKey] ?? EMPTY_COMPOSER_DRAFT)
   const setComposerDraft = useUIStore((s) => s.setComposerDraft)
@@ -576,6 +578,16 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
   return (
     <div className="h-full flex flex-col bg-background">
       <ConfirmDialog request={visibleApprovalRequests} onAnswer={answerApproval} />
+      {folderTaskId && (
+        <button
+          type="button"
+          onClick={() => navigate(`/folder-tasks/${folderTaskId}`)}
+          className="flex shrink-0 items-center justify-center gap-2 border-b border-accent/15 bg-accent-light px-4 py-2 text-xs font-medium text-accent hover:bg-accent/15"
+        >
+          <ListTodo size={14} />
+          文件夹任务模式：本会话仅能访问任务已登记的文件和检查点
+        </button>
+      )}
       {/* 消息列表 */}
       <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-3xl space-y-8 px-5 py-8 sm:px-8 sm:py-10">

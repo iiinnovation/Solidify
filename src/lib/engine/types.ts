@@ -94,6 +94,8 @@ export interface QueryContext {
   readonly attachments?: readonly AttachmentResource[]
   /** Whether attachment text is already present in the request or retrieved by tools. */
   readonly attachmentMode?: AttachmentContextMode
+  /** Durable folder task associated with this conversation. */
+  readonly folderTaskId?: string
   readonly memory: MemoryState
   readonly model: ModelConfig
   readonly limits: RunLimits

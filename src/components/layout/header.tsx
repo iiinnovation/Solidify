@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, type MouseEvent as ReactMouseEvent } from 'react'
-import { PanelLeftClose, PanelLeftOpen, Settings, LogOut, FileText, BarChart3, BookOpen, FolderTree, Sparkles } from 'lucide-react'
+import { PanelLeftClose, PanelLeftOpen, Settings, LogOut, FileText, BarChart3, BookOpen, FolderTree, Sparkles, ListTodo } from 'lucide-react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useHotkeys } from 'react-hotkeys-hook'
 import { Button } from '@/components/ui/button'
@@ -66,13 +66,13 @@ export function Header() {
       style={isTauri ? { paddingLeft: '80px' } : undefined}
     >
       <div className="flex shrink-0 items-center gap-2 sm:gap-3">
-        <Button variant="ghost" size="icon" onClick={toggleSidebar} aria-label="切换侧边栏">
+        {!location.pathname.startsWith('/folder-tasks') && <Button variant="ghost" size="icon" onClick={toggleSidebar} aria-label="切换侧边栏">
           {sidebarOpen ? (
             <PanelLeftClose size={20} strokeWidth={1.75} />
           ) : (
             <PanelLeftOpen size={20} strokeWidth={1.75} />
           )}
-        </Button>
+        </Button>}
         <span className="flex items-center gap-1.5 text-base font-semibold text-text-primary">
           <span>Solidify 2</span>
           <span className="text-[10px] font-medium uppercase text-text-tertiary">Beta</span>
@@ -83,6 +83,18 @@ export function Header() {
         {isEnabled('localWorkspace') && !isEnabled('workbenchV2') && (
           <Button variant="ghost" size="sm" onClick={() => navigate('/workspace')} className={cn(location.pathname === '/workspace' && 'bg-accent-light text-accent')} aria-label="工作区">
             <FolderTree size={18} strokeWidth={1.75} className="sm:mr-1.5" /><span className="hidden sm:inline">工作区</span>
+          </Button>
+        )}
+        {isTauri && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => navigate('/folder-tasks')}
+            className={cn(location.pathname.startsWith('/folder-tasks') && 'bg-accent-light text-accent')}
+            aria-label="文件夹任务"
+          >
+            <ListTodo size={18} strokeWidth={1.75} className="sm:mr-1.5" />
+            <span className="hidden sm:inline">任务</span>
           </Button>
         )}
         <Button

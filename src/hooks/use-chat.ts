@@ -311,22 +311,39 @@ export function useChat(conversationId?: string) {
       }
       const selectedWorkspace = useWorkspaceStore.getState()
       const resumeWorkspaceRoot = resume?.assistantMessage.agentContext?.workspaceRoot
+      const folderTaskId = resume?.assistantMessage.agentContext?.folderTaskId
+        ?? storedConversation?.folderTaskId
+      if (folderTaskId && (
+        !isTauri
+        || !isEnabled('agentLoop')
+        || !isEnabled('toolCalling')
+        || activeProvider.supportsTools === false
+      )) {
+        setError(new Error('当前环境或模型不支持 FolderTask 所需的工具调用'))
+        return
+      }
+      if (folderTaskId && composerAttachments?.length) {
+        setError(new Error('FolderTask 会话只处理已登记的任务文件，请移除临时附件'))
+        return
+      }
       if (resume && (
         !storedConversation
-        || storedConversation.workspaceRoot !== (selectedWorkspace.workspaceRoot ?? undefined)
-        || resumeWorkspaceRoot !== (selectedWorkspace.workspaceRoot ?? undefined)
+        || (!folderTaskId && (
+          storedConversation.workspaceRoot !== (selectedWorkspace.workspaceRoot ?? undefined)
+          || resumeWorkspaceRoot !== (selectedWorkspace.workspaceRoot ?? undefined)
+        ))
       )) {
         setError(new Error('无法恢复 Agent：会话已不在当前工作区'))
         return
       }
       const taskWorkspaceRoot = resume?.assistantMessage.agentContext?.workspaceRoot
         ?? storedConversation?.workspaceRoot
-        ?? selectedWorkspace.workspaceRoot
+        ?? (folderTaskId ? undefined : selectedWorkspace.workspaceRoot)
         ?? undefined
       const currentProjectId = selectedWorkspace.workspaceRoot === taskWorkspaceRoot
         ? selectedWorkspace.project?.id
         : undefined
-      if (taskWorkspaceRoot && (!storedConversation?.workspaceRoot || (!storedConversation.projectId && currentProjectId))) {
+      if (!folderTaskId && taskWorkspaceRoot && (!storedConversation?.workspaceRoot || (!storedConversation.projectId && currentProjectId))) {
         bindConversationToWorkspace(currentConvId, {
           workspaceRoot: taskWorkspaceRoot,
           projectId: currentProjectId,
@@ -345,6 +362,7 @@ export function useChat(conversationId?: string) {
 
       const userMessageId = genId()
       const autoRouteRequested = !resume
+        && !folderTaskId
         && !skillId
         && !skillSystemPrompt
         && Boolean(content.trim())
@@ -581,7 +599,7 @@ export function useChat(conversationId?: string) {
         context: string
         sources: Array<{ id: string; title: string; similarity: number }>
       }> => {
-        if (resume || !knowledgeEnabled || !enableKnowledge) return { context: '', sources: [] }
+        if (resume || folderTaskId || !knowledgeEnabled || !enableKnowledge) return { context: '', sources: [] }
         try {
           const { getRAGProvider } = await import('@/lib/rag')
           const ragProvider = getRAGProvider()
@@ -957,6 +975,7 @@ ${result.content}
           const agentContext = resume?.assistantMessage.agentContext ?? {
             providerId: activeProvider.id,
             workspaceRoot: taskWorkspaceRoot,
+            folderTaskId,
             skillSystemPrompt,
             skillSkipConfirmation,
             skillId: effectiveSkillId,
@@ -995,6 +1014,7 @@ ${result.content}
             attachments: attachmentResources,
             attachmentMode,
             workspaceRoot: agentContext.workspaceRoot,
+            folderTaskId: agentContext.folderTaskId,
             restoreSnapshot: Boolean(resume),
           })
 
@@ -1441,9 +1461,10 @@ ${result.content}
 }
 
 function conversationBelongsToWorkspace(
-  conversation: { workspaceRoot?: string },
+  conversation: { workspaceRoot?: string; folderTaskId?: string },
   workspaceRoot: string | null,
 ): boolean {
+  if (conversation.folderTaskId) return true
   return workspaceRoot
     ? conversation.workspaceRoot === workspaceRoot
     : conversation.workspaceRoot === undefined

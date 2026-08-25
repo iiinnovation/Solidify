@@ -20,6 +20,7 @@ import { enableSubAgents } from './sub-agent/context'
 import { enablePptdPipeline } from './pptd-context'
 import type { AttachmentContextMode, AttachmentResource } from '../attachments/types'
 import { modelContextWindow, modelSupportsVision } from '../model/capabilities'
+import { FOLDER_TASK_TOOL_NAMES } from '../tools/builtin/folder-tasks'
 
 const DEFAULT_LIMITS: RunLimits = {
   maxTurns: 25,
@@ -39,6 +40,12 @@ const DEFAULT_LIMITS: RunLimits = {
     // environment it cannot influence, so close the group instead of paying
     // another model turn per attempt.
     'artifact-capture': { maxCalls: 2, softThreshold: 2, hardThreshold: 2 },
+    'folder-task-processing': { maxCalls: 48, softThreshold: 36, hardThreshold: 48 },
+    'folder-task-processing:context': { maxCalls: 1, softThreshold: 1, hardThreshold: 1 },
+    'folder-task-processing:claim': { maxCalls: 1, softThreshold: 1, hardThreshold: 1 },
+    'folder-task-processing:read': { maxCalls: 45, softThreshold: 36, hardThreshold: 45 },
+    'folder-task-processing:checkpoint': { maxCalls: 2, softThreshold: 2, hardThreshold: 2 },
+    'folder-task-processing:decision': { maxCalls: 1, softThreshold: 1, hardThreshold: 1 },
   },
 }
 
@@ -58,6 +65,7 @@ export interface ChatQueryContextOptions {
   attachments?: readonly AttachmentResource[]
   attachmentMode?: AttachmentContextMode
   workspaceRoot?: string | null
+  folderTaskId?: string
   restoreSnapshot?: boolean
 }
 
@@ -72,7 +80,9 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
   // The directory Skill runtime is the sole source of prompt instructions.
   // `skillSystemPrompt` remains on the persisted context type for migration
   // compatibility, but old inline prompts are intentionally ignored.
-  const skill = options.loadedSkill
+  // FolderTask is its own capability lease. A composer-selected Skill must not
+  // add prompt instructions or tools to that deterministic task workflow.
+  const skill = options.folderTaskId ? undefined : options.loadedSkill
   const settings = createSettings(options.provider, cwd)
   const localWorkspaceEnabled = isEnabled('localWorkspace') && Boolean(workspaceRoot)
   configureLedgerWorkspace(localWorkspaceEnabled ? workspaceRoot ?? null : null)
@@ -82,12 +92,13 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
     && isEnabled('toolCalling')
     && options.provider.supportsTools !== false
   const attachmentRetrievalActive = hasReadableAttachments && options.attachmentMode === 'retrieval'
+  const folderTaskActive = platform === 'tauri' && Boolean(options.folderTaskId)
   // Feature flags describe what the installation supports, not what every
   // conversation should receive. A run earns a tool surface only through an
   // explicitly selected/pre-routed Skill or a retrieval-mode attachment.
   // This keeps ordinary chat requests schema-free and prevents tools from
   // appearing merely because a workspace happens to be selected.
-  const runToolsActive = agentToolsEnabled && (Boolean(skill) || attachmentRetrievalActive)
+  const runToolsActive = agentToolsEnabled && (Boolean(skill) || attachmentRetrievalActive || folderTaskActive)
   const resolvedTools = runToolsActive
     ? toolRegistry.resolve({
         // A real root is mandatory before exposing desktop filesystem tools.
@@ -97,13 +108,16 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
         minimalUnselected: skillV2Enabled && !skill,
         skillResourceAccess: Boolean(options.skillResources),
         hasAttachments,
+        folderTaskActive,
         userDisabledTools: settings.disabledTools,
         isOnline: typeof navigator === 'undefined' || navigator.onLine,
       })
     : []
-  const scopedTools = !skill && attachmentRetrievalActive
-    ? resolvedTools.filter((tool) => ATTACHMENT_ONLY_TOOL_NAMES.has(tool.name))
-    : resolvedTools
+  const scopedTools = folderTaskActive
+    ? resolvedTools.filter((tool) => FOLDER_TASK_TOOL_NAMES.has(tool.name))
+    : !skill && attachmentRetrievalActive
+      ? resolvedTools.filter((tool) => ATTACHMENT_ONLY_TOOL_NAMES.has(tool.name))
+      : resolvedTools
   const tools = scopedTools.filter((tool) =>
     !ATTACHMENT_READER_NAMES.has(tool.name) || attachmentRetrievalActive,
   ).filter((tool) =>
@@ -125,6 +139,7 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
     pptdMedia: options.pptdMedia,
     attachments: options.attachments,
     attachmentMode: options.attachmentMode,
+    folderTaskId: options.folderTaskId,
     memory: localWorkspaceEnabled && workspaceRoot ? new WorkspaceMemory(workspaceRoot) : new InMemoryState(),
     model: {
       provider: providerName,
@@ -158,6 +173,7 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
     settings,
     platform,
     workspace: workspaceRoot ? createWorkspaceHandle(workspaceRoot) : undefined,
+    harnessContext: folderTaskActive ? [folderTaskHarnessContext(options.folderTaskId!)] : undefined,
   }
   // Delegation is a Skill capability, not an ambient chat capability. In
   // particular, an attachment-only run must not gain dispatch_agent in
@@ -166,6 +182,17 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
     ? enableSubAgents(context)
     : context
   return runToolsActive ? enablePptdPipeline(withSubAgents) : withSubAgents
+}
+
+function folderTaskHarnessContext(taskId: string): string {
+  return [
+    `FolderTask: ${taskId}`,
+    'This is a durable folder-processing run. The FolderTask database is the source of truth.',
+    'Call get_folder_task_context first. Claim at most one batch in this run and read only files returned by that claim.',
+    'Before ending, checkpoint every claimed item exactly once with update_folder_task_batch.',
+    'When a high-impact ambiguity affects similar files, create one grouped decision and stop. Never ask one question per file.',
+    'Do not claim a second batch, use arbitrary filesystem paths, or attempt to bypass the dedicated FolderTask tools.',
+  ].join('\n')
 }
 
 function createRunLimits(

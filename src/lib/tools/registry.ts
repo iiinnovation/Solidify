@@ -46,6 +46,7 @@ export class ToolRegistry implements IToolRegistry {
       // (Layer 3) still applies, so a disabled reader stays disabled.
       const skillExempt = runtimeRequired
         || (ctx.hasAttachments === true && ATTACHMENT_TOOLS.has(tool.name))
+        || (ctx.folderTaskActive === true && FOLDER_TASK_TOOLS.has(tool.name))
 
       // A plain canonical run should not pay for PPTD, capture, write or other
       // specialized schemas before the model has chosen a Skill. The
@@ -133,7 +134,10 @@ import { capturePreviewTool } from './builtin/capture-preview'
 import { readHandleTool } from './builtin/read-handle'
 import { searchAttachmentsTool, readAttachmentTool, prepareAttachmentEvidenceTool } from './builtin/attachments'
 import { activateSkillTool } from './builtin/activate-skill'
+import { folderTaskTools, FOLDER_TASK_TOOL_NAMES } from './builtin/folder-tasks'
 
-for (const tool of [listDirTool, readFileTool, writeFileTool, searchFilesTool, capturePreviewTool, readHandleTool, searchAttachmentsTool, readAttachmentTool, prepareAttachmentEvidenceTool, activateSkillTool]) {
+const FOLDER_TASK_TOOLS: ReadonlySet<string> = FOLDER_TASK_TOOL_NAMES
+
+for (const tool of [listDirTool, readFileTool, writeFileTool, searchFilesTool, capturePreviewTool, readHandleTool, searchAttachmentsTool, readAttachmentTool, prepareAttachmentEvidenceTool, activateSkillTool, ...folderTaskTools]) {
   toolRegistry.register(tool as Tool)
 }

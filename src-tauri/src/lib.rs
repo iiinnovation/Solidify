@@ -40,10 +40,22 @@ pub fn run() {
             fs::workspace::create_workspace,
             fs::workspace::close_workspace,
             fs::workspace::update_project_stage,
+            fs::folder_tasks::create_folder_task,
+            fs::folder_tasks::list_folder_tasks,
+            fs::folder_tasks::get_folder_task,
+            fs::folder_tasks::list_folder_task_items,
+            fs::folder_tasks::confirm_folder_task_plan,
+            fs::folder_tasks::claim_folder_task_batch,
+            fs::folder_tasks::update_folder_task_batch,
+            fs::folder_tasks::request_folder_task_decision,
+            fs::folder_tasks::resolve_folder_task_decision,
+            fs::folder_tasks::set_folder_task_status,
+            fs::folder_tasks::read_folder_task_file_bytes,
         ])
         .setup(|app| {
             app.manage(fs::workspace::WorkspaceAuthorization::load(app.handle())?);
             app.manage(fs::watcher::WorkspaceWatcher::default());
+            app.manage(fs::folder_tasks::FolderTaskManager::load(app.handle())?);
             if cfg!(debug_assertions) {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()

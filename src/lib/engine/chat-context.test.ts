@@ -8,6 +8,17 @@ vi.mock('@/lib/tauri', () => ({
   appendWorkspaceSnapshot: vi.fn(async () => {}),
   clearWorkspaceSnapshot: vi.fn(async () => {}),
   readWorkspaceSnapshot: vi.fn(async () => null),
+  createFolderTask: vi.fn(),
+  listFolderTasks: vi.fn(),
+  listFolderTaskItems: vi.fn(),
+  getFolderTask: vi.fn(),
+  confirmFolderTaskPlan: vi.fn(),
+  claimFolderTaskBatch: vi.fn(),
+  updateFolderTaskBatch: vi.fn(),
+  requestFolderTaskDecision: vi.fn(),
+  resolveFolderTaskDecision: vi.fn(),
+  setFolderTaskStatus: vi.fn(),
+  readFolderTaskFileBytes: vi.fn(),
 }))
 
 vi.mock('@/lib/harness/flags', async (importOriginal) => {
@@ -103,6 +114,49 @@ describe('chat Agent workspace context', () => {
     expect(context.cwd).toBe('/')
     expect(context.tools).toEqual([])
     expect(context.workspace).toBeUndefined()
+  })
+
+  it('physically scopes a FolderTask run to its dedicated capability lease', () => {
+    const context = createChatQueryContext({
+      runId: 'run-folder-task',
+      conversationId: 'conversation-folder-task',
+      messages: [{ role: 'user', content: '继续处理下一批' }],
+      provider,
+      signal: new AbortController().signal,
+      workspaceRoot: '/Users/test/workspace',
+      folderTaskId: 'folder-task-1',
+    })
+
+    expect(context.folderTaskId).toBe('folder-task-1')
+    expect(context.tools.map((tool) => tool.name).sort()).toEqual([
+      'claim_folder_task_batch',
+      'get_folder_task_context',
+      'read_folder_task_file',
+      'request_folder_task_decision',
+      'update_folder_task_batch',
+    ])
+    expect(context.tools.map((tool) => tool.name)).not.toContain('read_file')
+    expect(context.harnessContext?.join('\n')).toContain('Claim at most one batch')
+  })
+
+  it('ignores a selected Skill inside a FolderTask capability lease', () => {
+    featureFlags.skillV2 = true
+    const context = createChatQueryContext({
+      runId: 'run-folder-task-skill',
+      conversationId: 'conversation-folder-task-skill',
+      messages: [{ role: 'user', content: '继续任务' }],
+      provider,
+      signal: new AbortController().signal,
+      folderTaskId: 'folder-task-1',
+      loadedSkill: {
+        metadata: { name: 'pptd-deck', version: '2.0.0', description: 'deck', allowedTools: ['generate_pptd'] },
+        content: 'Generate a deck.',
+        path: 'builtin://pptd-deck/SKILL.md',
+      },
+    })
+
+    expect(context.skill).toBeUndefined()
+    expect(context.tools.map((tool) => tool.name)).not.toContain('generate_pptd')
   })
 
   it('does not inject discovery tools into an unselected canonical run', () => {

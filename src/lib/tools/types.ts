@@ -116,6 +116,8 @@ export interface ToolUseContext {
   readonly attachments?: readonly AttachmentResource[]
   /** Current conversation, exposed only for recoverable tool-input repairs. */
   readonly messages?: readonly unknown[]
+  /** Durable folder task bound by trusted conversation state, never model input. */
+  readonly folderTaskId?: string
 }
 
 // ============================================================================
@@ -192,6 +194,8 @@ export interface ResolveContext {
   skillResourceAccess?: boolean
   /** The run carries user attachments, which unlocks the attachment readers. */
   hasAttachments?: boolean
+  /** Exposes only the dedicated durable folder-task capability set. */
+  folderTaskActive?: boolean
   userDisabledTools: string[]   // From settings
   isOnline: boolean
 }

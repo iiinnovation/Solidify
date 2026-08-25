@@ -22,6 +22,7 @@ import { initThemeListener } from '@/lib/theme'
 import { isEnabled } from '@/lib/harness/flags'
 import { migrateStoredCustomSkills } from '@/lib/skills/migration'
 import { SkillsPage } from '@/routes/skills'
+import { FolderTasksPage } from '@/routes/folder-tasks'
 
 export default function App() {
   const initialize = useAuthStore((s) => s.initialize)
@@ -63,6 +64,8 @@ export default function App() {
               <Route path="/usage" element={<UsagePage />} />
               <Route path="/templates" element={<TemplatesPage />} />
               <Route path="/knowledge" element={<KnowledgePage />} />
+              <Route path="/folder-tasks" element={<FolderTasksPage />} />
+              <Route path="/folder-tasks/:taskId" element={<FolderTasksPage />} />
               <Route path="/workspace" element={isEnabled('workbenchV2') ? <Navigate to="/chat" replace /> : <WorkspacePage />} />
             </Route>
           </Routes>

@@ -1,4 +1,5 @@
 pub mod documents;
+pub mod folder_tasks;
 pub mod index;
 pub mod persistence;
 pub mod sandbox;

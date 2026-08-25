@@ -7,6 +7,17 @@
  * 业务组件不应直接 import @tauri-apps/api。
  */
 
+import type {
+  FolderTaskDecision,
+  FolderTaskDetail,
+  FolderTaskFileBytes,
+  FolderTaskItem,
+  FolderTaskItemUpdate,
+  FolderTaskPlan,
+  FolderTaskSummary,
+  NewFolderTaskDecision,
+} from '@/lib/folder-tasks/types'
+
 /** 是否运行在 Tauri 桌面端 */
 export const isTauri = '__TAURI_INTERNALS__' in window
 
@@ -192,6 +203,84 @@ export function readWorkspaceRecords<T>(
   recordId: string,
 ): Promise<T[]> {
   return invokeCommand('read_workspace_records', { workspaceRoot, category, recordId })
+}
+
+export function createFolderTask(input: {
+  name: string
+  goal: string
+  recipe: string
+}): Promise<FolderTaskDetail | null> {
+  return invokeCommand('create_folder_task', input)
+}
+
+export function listFolderTasks(): Promise<FolderTaskSummary[]> {
+  return invokeCommand('list_folder_tasks', {})
+}
+
+export function getFolderTask(taskId: string): Promise<FolderTaskDetail> {
+  return invokeCommand('get_folder_task', { taskId })
+}
+
+export function listFolderTaskItems(
+  taskId: string,
+  status?: FolderTaskItem['status'],
+  offset = 0,
+  limit = 100,
+): Promise<FolderTaskItem[]> {
+  return invokeCommand('list_folder_task_items', { taskId, status, offset, limit })
+}
+
+export function confirmFolderTaskPlan(
+  taskId: string,
+  plan: FolderTaskPlan,
+  expectedRevision: number,
+): Promise<FolderTaskDetail> {
+  return invokeCommand('confirm_folder_task_plan', { taskId, plan, expectedRevision })
+}
+
+export function claimFolderTaskBatch(taskId: string, limit?: number): Promise<FolderTaskItem[]> {
+  return invokeCommand('claim_folder_task_batch', { taskId, limit })
+}
+
+export function updateFolderTaskBatch(
+  taskId: string,
+  updates: FolderTaskItemUpdate[],
+  checkpointNote?: string,
+): Promise<FolderTaskDetail> {
+  return invokeCommand('update_folder_task_batch', { taskId, updates, checkpointNote })
+}
+
+export function requestFolderTaskDecision(
+  taskId: string,
+  request: NewFolderTaskDecision,
+): Promise<FolderTaskDecision> {
+  return invokeCommand('request_folder_task_decision', { taskId, request })
+}
+
+export function resolveFolderTaskDecision(input: {
+  taskId: string
+  decisionId: string
+  optionId: string
+  note?: string
+  applyToSimilar: boolean
+  expectedRevision: number
+}): Promise<FolderTaskDetail> {
+  return invokeCommand('resolve_folder_task_decision', input)
+}
+
+export function setFolderTaskStatus(
+  taskId: string,
+  action: 'pause' | 'resume' | 'complete' | 'cancel',
+  expectedRevision: number,
+): Promise<FolderTaskDetail> {
+  return invokeCommand('set_folder_task_status', { taskId, action, expectedRevision })
+}
+
+export function readFolderTaskFileBytes(
+  taskId: string,
+  relativePath: string,
+): Promise<FolderTaskFileBytes> {
+  return invokeCommand('read_folder_task_file_bytes', { taskId, relativePath })
 }
 
 /** 当前操作系统平台 */

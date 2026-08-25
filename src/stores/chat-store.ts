@@ -51,6 +51,7 @@ export interface Message {
   agentContext?: {
     providerId: string
     workspaceRoot?: string
+    folderTaskId?: string
     skillSystemPrompt?: string
     skillSkipConfirmation?: boolean
     skillId?: string
@@ -73,11 +74,14 @@ export interface Conversation {
   /** The task's durable workspace boundary. Once set, it is not silently rebound. */
   workspaceRoot?: string
   projectId?: string
+  /** Optional durable FolderTask controlled by this conversation. */
+  folderTaskId?: string
 }
 
 export interface ConversationWorkspaceBinding {
   workspaceRoot?: string
   projectId?: string
+  folderTaskId?: string
 }
 
 /* ── Store 类型 ── */
@@ -154,6 +158,7 @@ export const useChatStore = create<ChatState>()(
               createdAt: Date.now(),
               ...(workspace?.workspaceRoot ? { workspaceRoot: workspace.workspaceRoot } : {}),
               ...(workspace?.projectId ? { projectId: workspace.projectId } : {}),
+              ...(workspace?.folderTaskId ? { folderTaskId: workspace.folderTaskId } : {}),
             },
             ...state.conversations,
           ],
@@ -171,6 +176,7 @@ export const useChatStore = create<ChatState>()(
               ...conversation,
               ...(workspace.workspaceRoot ? { workspaceRoot: workspace.workspaceRoot } : {}),
               ...(workspace.projectId ? { projectId: workspace.projectId } : {}),
+              ...(workspace.folderTaskId ? { folderTaskId: workspace.folderTaskId } : {}),
             }
           }),
         })),

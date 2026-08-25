@@ -32,6 +32,7 @@ export function buildToolUseContext(
     skillRegistry: ctx.skillRegistry,
     attachments: ctx.attachments,
     messages: ctx.messages,
+    folderTaskId: ctx.folderTaskId,
   }
 }
 
