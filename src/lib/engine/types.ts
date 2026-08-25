@@ -14,6 +14,8 @@ import type { ConfirmationPrompt } from '../harness/policy'
 import type { ApprovalOutcome } from '../harness/approval'
 import type { TaskTreeBudget } from './sub-agent/types'
 import type { AttachmentContextMode, AttachmentResource } from '../attachments/types'
+import type { RunPlan } from './run-plan'
+import type { SerializedPhaseState } from './phase-controller'
 
 // ============================================================================
 // Query Context
@@ -125,6 +127,8 @@ export interface QueryContext {
    * disclosing less historical context on the retry.
    */
   readonly inputMode?: 'standard' | 'compact_recovery'
+  /** Explicit compatibility lease for providers that serialize tool calls as text. */
+  readonly recoverTextToolCalls?: boolean
   /** M6: Shared cancellation and token accounting for the whole task tree. */
   readonly taskTree?: {
     readonly rootRunId: string
@@ -142,12 +146,18 @@ export interface QueryContext {
  * @see docs/specs/agent-loop.md §4 (恢复)
  */
 export interface TurnSnapshot {
+  /** Snapshot schema version. Missing means the legacy v1 shape. */
+  version?: 2
   runId: string
   turn: number
   messages: Message[]
   usage: UsageStats
   /** Progress-budget charge (first-turn input plus generated output). */
   budgetTokens?: number
+  /** Deterministic workflow state required for safe staged-run recovery. */
+  runPlan?: RunPlan
+  phaseState?: SerializedPhaseState
+  activeSkillName?: string
   ts: string
 }
 

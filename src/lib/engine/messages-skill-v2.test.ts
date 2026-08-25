@@ -104,7 +104,7 @@ describe('Skill progressive disclosure context', () => {
   it('points a non-PPTD Skill at the attachment readers when they are resolved', async () => {
     const result = await buildMessages(context({
       skill: {
-        metadata: { name: 'drawio-diagram', version: '1.0.0', description: '绘制流程图' },
+        metadata: { name: 'drawio-diagram', version: '1.0.0', description: '绘制流程图', deliverableContract: 'drawio' },
         content: '根据材料绘制流程图。',
         path: 'builtin://drawio-diagram/SKILL.md',
         virtualRoot: '.solidify/skills/drawio-diagram',

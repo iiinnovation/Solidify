@@ -222,12 +222,19 @@ describe('M2 Harness query integration', () => {
     expect(events.at(-1)?.type).toBe('run.completed')
     expect(types).toEqual([
       'run.started',
+      'run.planned',
+      'phase.started',
+      'capability.bound',
       'model.called',
       'tool.requested',
       'model.completed',
       'tool.completed',
+      'capability.bound',
       'model.called',
       'model.completed',
+      'phase.completed',
+      'phase.transitioned',
+      'phase.started',
       'run.completed',
     ])
     expect(ledger.find('tool.completed')[0].payload).toMatchObject({

@@ -62,4 +62,19 @@ describe('Context Compiler', () => {
     expect(compiled.stats.slots.systemTokens).toBeGreaterThan(compiled.stats.slots.fixedSystemTokens)
     expect(compiled.system.split(index)).toHaveLength(2)
   })
+
+  it('counts nested inline attachment text exactly once and keeps slots exclusive', async () => {
+    const compiled = await compileContext(context({
+      messages: [{
+        role: 'user',
+        content: '生成架构图\n<attachments_inline><attachment_full_text id="a">完整附件内容</attachment_full_text></attachments_inline>',
+      }],
+    }))
+
+    const slots = compiled.stats.slots
+    expect(slots.attachmentTokens).toBeGreaterThan(0)
+    expect(slots.currentTaskTokens).toBeGreaterThan(0)
+    expect(slots.historyTokens + slots.currentTaskTokens + slots.attachmentTokens)
+      .toBe(compiled.stats.finalHistoryTokens)
+  })
 })

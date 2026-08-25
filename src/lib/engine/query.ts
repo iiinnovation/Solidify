@@ -15,9 +15,12 @@ import { createHarnessRuntime, hardGuard, recordToolCompleted, recordToolRequest
 import { readWorkspaceFile } from '../tauri'
 import { snapshotJson } from '../harness/ledger'
 import { ToolLoopGuard } from './tool-loop-guard'
-import { toolRegistry } from '../tools'
-import { enablePptdPipeline } from './pptd-context'
 import { newId } from '../id'
+import { createRunPlan, type RunPlan, type RunPhase } from './run-plan'
+import { PhaseController, type SerializedPhaseState } from './phase-controller'
+import { resolveCapabilityLease } from './capability-policy'
+import { deliverableRegistry } from './deliverables/registry'
+import { activateSkillRuntime } from './skill-runtime'
 
 /**
  * How many times a single answer may be resumed after hitting the model's
@@ -25,19 +28,11 @@ import { newId } from '../id'
  * spin, but high enough that a full deck fits.
  */
 const MAX_CONTINUATIONS = 4
-const MAX_DRAWIO_DELIVERY_RETRIES = 1
 
-const DRAWIO_GENERATION_ONLY_CONTEXT = [
-  'Draw.io evidence is already present in the conversation and all tools are intentionally unavailable.',
+const STAGED_GENERATION_ONLY_CONTEXT = [
+  'Evidence is already present in the conversation and all tools are intentionally unavailable.',
   'Do not emit any tool call, including tools mentioned in earlier turns.',
-  'Use the evidence already present in the conversation and immediately return exactly one valid Draw.io Artifact.',
-].join(' ')
-
-const DRAWIO_DELIVERY_REPAIR_CONTEXT = [
-  'Your previous response was rejected because it was not a valid Draw.io Artifact.',
-  'There are no tools available now. Text such as <tool_call> is invalid output and will not execute.',
-  'Return only one <solidify-artifact type="drawio" title="..."> element containing one complete <mxfile>...</mxfile>, then close </solidify-artifact>.',
-  'Do not include commentary, Markdown fences, plans, or tool syntax.',
+  'Use the evidence already present in the conversation and immediately return the deliverable.',
 ].join(' ')
 
 /**
@@ -64,8 +59,6 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
   let prefill = ''
   let compactNextTurn = ctx.inputMode === 'compact_recovery'
   let reasoningRecoveryUsed = ctx.inputMode === 'compact_recovery'
-  let forceDrawioGenerationOnly = false
-  let drawioDeliveryRetries = 0
   // `usage.totalTokens` remains the provider-reported cost for telemetry. The
   // run budget deliberately does not charge the same history input again on
   // every turn: only the first input plus all generated output counts toward
@@ -86,6 +79,9 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
   const internal = new AbortController()
   const unlink = linkAbort(ctx.signal, internal)
   const runCtx: QueryContext = { ...ctx, signal: internal.signal }
+  let runPlan = createRunPlan(runCtx, deliverableRegistry, isEnabled('stagedRuntime'))
+  let phaseController = new PhaseController(runPlan)
+  let deliverableContract = deliverableRegistry.get()
   let activeSkill = runCtx.skill
   let activeSkillResources = runCtx.skillResources
   let activeTools = [...runCtx.tools]
@@ -93,6 +89,44 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
   let closedToolGroups = new Set<string>()
   let loopRecoveryTurnUsed = false
   const harness = isEnabled('harness') ? createHarnessRuntime(runCtx, { skillRegistry: runCtx.skillRegistry }) : undefined
+
+  const transitionPhase = (next: RunPhase, reason: string): void => {
+    const transition = phaseController.transitionTo(next, reason)
+    harness?.ledger.append('phase.completed', { phase: transition.from, reason })
+    harness?.ledger.append('phase.transitioned', transition)
+    harness?.ledger.append('phase.started', { phase: transition.to, reason })
+  }
+
+  const transitionTerminal = (next: 'completed' | 'failed' | 'exhausted', reason: string): void => {
+    if (phaseController.phase === 'completed' || phaseController.phase === 'failed' || phaseController.phase === 'exhausted') return
+    transitionPhase(next, reason)
+  }
+
+  const installRunPlan = (nextPlan: RunPlan, reason: string, restored?: SerializedPhaseState): void => {
+    const previousPhase = phaseController.phase
+    const previousTurn = phaseController.turn
+    runPlan = nextPlan
+    deliverableContract = deliverableRegistry.get(runPlan.contractId)
+    phaseController = new PhaseController(runPlan, restored ?? {
+      phase: runPlan.initialPhase,
+      turn: previousTurn,
+      repairAttempts: 0,
+      evidenceComplete: false,
+      closedGroups: [],
+    })
+    harness?.ledger.append('run.planned', {
+      mode: runPlan.mode,
+      initialPhase: runPlan.initialPhase,
+      contractId: runPlan.contractId ?? null,
+      attachmentMode: runPlan.attachmentMode,
+      maxRepairAttempts: runPlan.maxRepairAttempts,
+      reason: runPlan.reason,
+      replanned: true,
+    })
+    harness?.ledger.append('phase.completed', { phase: previousPhase, reason })
+    harness?.ledger.append('phase.transitioned', { from: previousPhase, to: phaseController.phase, reason })
+    harness?.ledger.append('phase.started', { phase: phaseController.phase, reason })
+  }
 
   // Current conversation state (reconstructed per turn or restored from the
   // last completed tool turn after a renderer restart).
@@ -103,6 +137,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
   let previousModelCompletedAt = ctx.requestStartedAt
 
   try {
+    deliverableContract = deliverableRegistry.get(runPlan.contractId)
     harness?.ledger.append('run.started', {
       conversationId: ctx.conversationId,
       parentRunId: ctx.parentRunId ?? null,
@@ -118,6 +153,15 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       } : null,
       startupDelayMs: ctx.requestStartedAt ? Math.max(0, Date.now() - ctx.requestStartedAt) : null,
     })
+    harness?.ledger.append('run.planned', {
+      mode: runPlan.mode,
+      initialPhase: runPlan.initialPhase,
+      contractId: runPlan.contractId ?? null,
+      attachmentMode: runPlan.attachmentMode,
+      maxRepairAttempts: runPlan.maxRepairAttempts,
+      reason: runPlan.reason,
+    })
+    harness?.ledger.append('phase.started', { phase: phaseController.phase, reason: 'run_started' })
     yield { type: 'run.started', runId: ctx.runId }
     logger.log('run.started', { runId: ctx.runId, conversationId: ctx.conversationId })
     if (harness) {
@@ -156,6 +200,24 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
           // conservative fallback instead of silently resetting the budget.
           budgetTokens = snapshot.budgetTokens ?? snapshot.usage.totalTokens
           totalToolCalls = snapshot.usage.toolCalls
+          if (snapshot.activeSkillName && snapshot.activeSkillName !== activeSkill?.metadata.name) {
+            throw new Error(`Snapshot requires active Skill ${snapshot.activeSkillName}`)
+          }
+          if (snapshot.runPlan) {
+            const restoredContract = deliverableRegistry.get(snapshot.runPlan.contractId)
+            const restoredPlan: RunPlan = {
+              ...snapshot.runPlan,
+              maxRepairAttempts: snapshot.runPlan.contractId ? restoredContract.maxRepairAttempts : 0,
+            }
+            const restoredState = snapshot.phaseState ?? legacySafePhaseState(restoredPlan, snapshot.turn)
+            installRunPlan(restoredPlan, 'snapshot_restored', restoredState)
+          } else if (runPlan.mode === 'staged-delivery') {
+            // Legacy snapshots have tool results but no phase. Resume at the
+            // physically isolated generation boundary instead of reopening
+            // retrieval and replaying reads.
+            installRunPlan(runPlan, 'legacy_snapshot_safe_generation', legacySafePhaseState(runPlan, snapshot.turn))
+          }
+          for (const group of phaseController.closedGroups) toolLoopGuard.closeGroup(group)
           logger.log('snapshot.restored', { turn, messageCount: currentMessages.length })
         }
       } catch (snapshotError) {
@@ -172,7 +234,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
 
     // Main agent loop: continue until completion or limit reached
     while (turn < ctx.limits.maxTurns) {
-      turn++
+      turn = phaseController.incrementTurn()
       usage.turns = turn
       logger.log('turn.started', { turn })
 
@@ -191,54 +253,88 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       }
 
       // Stream model response (M1-05, M1-06, M1-07)
-      yield { type: 'run.phase', phase: preparationRunPhase(runCtx, activeSkill, turn) }
+      yield { type: 'run.phase', phase: visibleRunPhase(phaseController.phase, runCtx, activeSkill, turn) }
       yield { type: 'model.progress', phase: 'preparing' }
       const usingCompactInput = compactNextTurn
       compactNextTurn = false
       let response: { text: string; toolCalls: ToolCall[]; usage?: UsageStats; stopReason?: string; reasoningLength: number }
       let exposedTools: readonly Tool[] = activeTools
       let firstChunkAt: string | undefined
-      const drawioRun = activeSkill?.metadata.name === 'drawio-diagram'
-      const drawioGenerationOnly = drawioRun
-        && (
-          forceDrawioGenerationOnly
-          || runCtx.attachmentMode === 'inline'
-          || (!runCtx.attachments?.length && activeTools.length === 0)
-          || closedToolGroups.has('attachment-retrieval')
-        )
+
+      // Sync closed groups into phaseController
+      for (const group of closedToolGroups) {
+        phaseController.closeGroup(group)
+      }
+      if (runPlan.mode === 'staged-delivery' && phaseController.phase === 'retrieving' && phaseController.closedGroups.has('attachment-retrieval')) {
+        transitionPhase('generating', 'retrieval_group_closed')
+      }
+
+      let capabilityLease = resolveCapabilityLease({
+        plan: runPlan,
+        phase: phaseController.phase,
+        skill: activeSkill,
+        attachments: runCtx.attachments,
+        closedGroups: phaseController.closedGroups,
+        platform: runCtx.platform,
+        contract: runPlan.contractId ? deliverableContract : undefined,
+      }, activeTools)
+
+      if (runPlan.mode === 'staged-delivery' && phaseController.phase === 'retrieving' && capabilityLease.tools.length === 0) {
+        phaseController.markEvidenceComplete()
+        phaseController.closeGroup('attachment-retrieval')
+        toolLoopGuard.closeGroup('attachment-retrieval')
+        closedToolGroups.add('attachment-retrieval')
+        transitionPhase('generating', 'retrieval_has_no_capabilities')
+        capabilityLease = resolveCapabilityLease({
+          plan: runPlan,
+          phase: phaseController.phase,
+          skill: activeSkill,
+          attachments: runCtx.attachments,
+          closedGroups: phaseController.closedGroups,
+          platform: runCtx.platform,
+          contract: deliverableContract,
+        }, activeTools)
+      }
+
+      harness?.ledger.append('capability.bound', {
+        mode: runPlan.mode,
+        phase: phaseController.phase,
+        contractId: runPlan.contractId ?? null,
+        contractVersion: runPlan.contractId ? deliverableContract.version : null,
+        toolCount: capabilityLease.tools.length,
+        toolNames: capabilityLease.tools.map((t) => t.name),
+        toolChoice: capabilityLease.toolChoice,
+        fingerprint: capabilityLease.fingerprint,
+      })
+
+      const isStructuredDelivery = runPlan.mode === 'staged-delivery' && runPlan.contractId !== undefined
+      const emitText = !isStructuredDelivery
+
       try {
-        const modelContext: QueryContext = drawioGenerationOnly
-          ? {
-              ...runCtx,
-              skill: activeSkill,
-              skillResources: activeSkillResources,
-              model: {
-                ...runCtx.model,
-                temperature: Math.min(runCtx.model.temperature ?? 0.2, 0.2),
-              },
-              toolChoice: 'none' as const,
-              tools: [],
-            }
-          : closedToolGroups.size === 0
-            ? { ...runCtx, skill: activeSkill, skillResources: activeSkillResources, tools: activeTools }
-          : {
-              ...runCtx,
-              skill: activeSkill,
-              skillResources: activeSkillResources,
-              tools: activeTools.filter((tool) => {
-                if (tool.name === 'read_handle' && closedToolGroups.has('attachment-retrieval')) return false
-                return !tool.loopGroup || !closedToolGroups.has(tool.loopGroup)
-              }),
-            }
+        const modelContext: QueryContext = {
+          ...runCtx,
+          skill: activeSkill,
+          skillResources: activeSkillResources,
+          tools: capabilityLease.tools as Tool[],
+          toolChoice: capabilityLease.toolChoice,
+          model: {
+            ...runCtx.model,
+            temperature: runPlan.mode === 'staged-delivery' && (phaseController.phase === 'generating' || phaseController.phase === 'repairing')
+              ? Math.min(runCtx.model.temperature ?? 0.2, 0.2)
+              : runCtx.model.temperature,
+          },
+        }
         exposedTools = modelContext.tools
+        const isGenerationStage = runPlan.mode === 'staged-delivery' && (phaseController.phase === 'generating' || phaseController.phase === 'repairing')
         response = yield* streamModelResponse({
           ...modelContext,
           messages: currentMessages,
-          harnessContext: drawioGenerationOnly
-            ? [...harnessContext, DRAWIO_GENERATION_ONLY_CONTEXT]
+          harnessContext: isGenerationStage
+            ? [...harnessContext, STAGED_GENERATION_ONLY_CONTEXT]
             : harnessContext,
           retrievedContext: isFirstTurn ? retrievedContext : undefined,
           inputMode: usingCompactInput ? 'compact_recovery' : 'standard',
+          recoverTextToolCalls: runPlan.mode === 'staged-delivery' && phaseController.phase === 'retrieving',
         }, logger, {
           onModelPrepared: harness ? (request, contextStats) => {
             const preparedAt = Date.now()
@@ -264,7 +360,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
             firstChunkAt = timestamp
           },
           onToolRequested: harness ? (call) => recordToolRequested(harness, call) : undefined,
-          emitText: !drawioRun,
+          emitText,
         })
       } catch (error) {
         harness?.ledger.append('model.failed', { turn, message: error instanceof Error ? error.message : String(error) })
@@ -297,12 +393,14 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
         budgetTokens += charge
         const providerLimit = runCtx.limits.maxProviderTokens
         if (providerLimit !== undefined && usage.totalTokens > providerLimit) {
+          transitionTerminal('exhausted', 'provider_token_budget')
           harness?.ledger.append('run.exhausted', { reason: 'max_tokens', usage, providerLimit })
           yield { type: 'run.exhausted', reason: 'max_tokens', usage: { ...usage } }
           logger.log('run.exhausted', { reason: 'provider_token_budget', usage, providerLimit })
           return
         }
         if (runCtx.taskTree && !runCtx.taskTree.budget.consume(runCtx.runId, charge)) {
+          transitionTerminal('exhausted', 'task_tree_token_budget')
           harness?.ledger.append('run.exhausted', {
             reason: 'max_tokens',
             scope: 'task_tree',
@@ -347,11 +445,9 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
           if (!reasoningRecoveryUsed && turn < ctx.limits.maxTurns) {
             reasoningRecoveryUsed = true
             compactNextTurn = true
-            // Once Draw.io has attempted delivery, a thought-only retry must
-            // remain a delivery retry. Reopening attachment tools here caused
-            // Qwen to abandon generation and start another retrieval cycle.
-            if (drawioRun) {
-              forceDrawioGenerationOnly = true
+            if (runPlan.mode === 'staged-delivery') {
+              phaseController.closeGroup('attachment-retrieval')
+              if (phaseController.phase === 'retrieving') transitionPhase('generating', 'reasoning_recovery_generation')
               toolLoopGuard.closeGroup('attachment-retrieval')
               closedToolGroups = new Set([...closedToolGroups, 'attachment-retrieval'])
             }
@@ -369,6 +465,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
             continue
           }
 
+          transitionTerminal('exhausted', 'reasoning_output_budget')
           harness?.ledger.append('run.exhausted', {
             reason: 'max_output_tokens',
             recoveryAttempted: true,
@@ -379,6 +476,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
           logger.warn('run.exhausted', { reason: 'reasoning_exhausted_after_compaction', reasoningLength: response.reasoningLength, usage })
           return
         }
+        transitionTerminal('exhausted', 'model_output_budget')
         harness?.ledger.append('run.exhausted', { reason: 'max_tokens', usage })
         yield { type: 'run.exhausted', reason: 'max_tokens', usage: { ...usage } }
         logger.log('run.exhausted', { reason: 'stop_reason_max_tokens', usage })
@@ -389,6 +487,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       // Let a tool call already emitted by the model run once so a deliverable
       // is not discarded merely because the preceding input was large.
       if (budgetTokens > ctx.limits.maxTokens && response.toolCalls.length === 0) {
+        transitionTerminal('exhausted', 'progress_token_budget')
         harness?.ledger.append('run.exhausted', { reason: 'max_tokens', usage })
         yield { type: 'run.exhausted', reason: 'max_tokens', usage: { ...usage } }
         logger.log('run.exhausted', { reason: 'max_tokens', usage })
@@ -397,51 +496,89 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
 
       // If no tool calls, we're done (stop_reason: end_turn)
       if (response.toolCalls.length === 0) {
+        if (runPlan.mode === 'staged-delivery' && phaseController.phase === 'retrieving') {
+          // A retrieval model signals that its evidence is sufficient by
+          // stopping tool use. Discard any draft produced while readers were
+          // still leased and start a fresh, physically tool-free generation
+          // turn using the evidence already recorded in the conversation.
+          phaseController.markEvidenceComplete()
+          phaseController.closeGroup('attachment-retrieval')
+          toolLoopGuard.closeGroup('attachment-retrieval')
+          closedToolGroups.add('attachment-retrieval')
+          currentMessages = dropPrefill(currentMessages, prefill)
+          prefill = ''
+          continuations = 0
+          transitionPhase('generating', 'retrieval_model_stopped_tools')
+          logger.log('retrieval.completed', { turn, reason: 'model_stopped_tools' })
+          continue
+        }
         const completedText = prefill + response.text
-        if (drawioRun) {
-          const validation = validateDrawioDelivery(completedText)
+        if (runPlan.mode === 'staged-delivery' && runPlan.contractId) {
+          transitionPhase('validating', 'delivery_generated')
+          const validation = deliverableContract.validate(completedText)
           if (!validation.valid) {
             harness?.ledger.append('artifact.parse_failed', {
               artifactId: null,
-              kind: 'drawio_delivery',
-              reason: validation.reason,
+              kind: `${deliverableContract.id}_delivery`,
+              issues: validation.issues,
               textLength: completedText.length,
             })
-            if (drawioDeliveryRetries < MAX_DRAWIO_DELIVERY_RETRIES && turn < ctx.limits.maxTurns) {
-              drawioDeliveryRetries++
+            if (phaseController.repairAttempts < runPlan.maxRepairAttempts && turn < ctx.limits.maxTurns) {
+              phaseController.incrementRepair()
+              transitionPhase('repairing', 'invalid_delivery')
+              harness?.ledger.append('deliverable.repairing', {
+                contractId: deliverableContract.id,
+                version: deliverableContract.version,
+                attempt: phaseController.repairAttempts,
+              })
               harness?.ledger.append('model.retrying', {
                 turn,
-                reason: 'invalid_drawio_delivery',
-                detail: validation.reason,
-                strategy: 'generation_only_repair',
+                reason: 'invalid_delivery',
+                detail: validation.issues.map((i) => i.message).join('; '),
+                strategy: 'contract_repair',
               })
               logger.warn('model.retrying', {
-                reason: 'invalid_drawio_delivery',
-                detail: validation.reason,
-                strategy: 'generation_only_repair',
+                reason: 'invalid_delivery',
+                detail: validation.issues.map((i) => i.message).join('; '),
+                strategy: 'contract_repair',
               })
               toolLoopGuard.closeGroup('attachment-retrieval')
+              phaseController.closeGroup('attachment-retrieval')
               closedToolGroups.add('attachment-retrieval')
+              const repairMessages = deliverableContract.buildRepairMessages({
+                originalTask: currentMessages[0],
+                invalidOutput: completedText,
+                issues: validation.issues,
+                attempt: phaseController.repairAttempts,
+              })
               currentMessages = [
                 ...dropPrefill(currentMessages, prefill),
-                { role: 'assistant', content: '[Invalid Draw.io delivery omitted.]' },
-                { role: 'user', content: DRAWIO_DELIVERY_REPAIR_CONTEXT },
+                ...repairMessages,
               ]
               prefill = ''
-              yield { type: 'run.phase', phase: 'repairing', detail: '正在修复 Draw.io 交付格式' }
+              yield { type: 'run.phase', phase: 'repairing', detail: `正在修复 ${deliverableContract.id} 交付格式` }
               continue
             }
 
+            const issueSummary = validation.issues.map((i) => i.message).join('；')
             const error: RunError = {
               kind: 'internal',
-              message: `模型未生成有效的 Draw.io 交付物：${validation.reason}`,
+              message: `模型未生成有效的 ${deliverableContract.displayName} 交付物：${issueSummary}`,
             }
+            transitionPhase('failed', 'delivery_validation_failed')
             appendTerminalFact(harness, logger, 'run.failed', { ...error, usage })
             yield { type: 'run.failed', error, usage: { ...usage } }
             logger.error('run.failed', error)
             return
           }
+          harness?.ledger.append('deliverable.validated', {
+            contractId: deliverableContract.id,
+            version: deliverableContract.version,
+          })
+          transitionPhase('completed', 'delivery_validated')
           if (completedText) yield { type: 'message.delta', text: completedText }
+        } else if (phaseController.phase !== 'completed') {
+          transitionPhase('completed', 'model_end_turn')
         }
         yield { type: 'message.completed', content: completedText }
         logger.log('message.completed', {
@@ -456,6 +593,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       totalToolCalls += response.toolCalls.length
       usage.toolCalls = totalToolCalls
       if (totalToolCalls > ctx.limits.maxToolCalls) {
+        transitionTerminal('exhausted', 'tool_call_budget')
         harness?.ledger.append('run.exhausted', { reason: 'max_tool_calls', usage })
         yield { type: 'run.exhausted', reason: 'max_tool_calls', usage: { ...usage } }
         logger.log('run.exhausted', { reason: 'max_tool_calls', totalToolCalls })
@@ -488,6 +626,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       const circuitFailure = results.find((result) => result.error?.kind === 'circuit_breaker')
       if (circuitFailure) {
         const error: RunError = { kind: 'internal', message: circuitFailure.error!.message }
+        transitionTerminal('failed', 'tool_circuit_breaker')
         appendTerminalFact(harness, logger, 'run.failed', { ...error, usage })
         yield { type: 'run.failed', error, usage: { ...usage } }
         logger.error('run.failed', error)
@@ -503,25 +642,16 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
         const skillName = (activation.data as { skillName: string }).skillName
         const loaded = await runCtx.skillRegistry.resolve(skillName)
         if (loaded) {
-          activeSkill = loaded
-          activeSkillResources = await runCtx.skillRegistry.resources?.(loaded.metadata.name)
-          const resolved = toolRegistry.resolve({
-            platform: runCtx.platform ?? 'web',
-            skillAllowedTools: loaded.metadata.allowedTools,
-            skillActive: true,
-            skillResourceAccess: Boolean(activeSkillResources),
-            hasAttachments: Boolean(runCtx.attachments?.length),
-            userDisabledTools: runCtx.settings?.disabledTools ?? [],
-            isOnline: typeof navigator === 'undefined' || navigator.onLine,
-          }).filter((tool) => tool.name !== 'activate_skill'
-            && (tool.name !== 'search_attachments' && tool.name !== 'read_attachment' && tool.name !== 'prepare_attachment_evidence' || Boolean(runCtx.attachments?.length)))
-          // Preserve runtime-only tools installed by the caller (for example
-          // dispatch_agent or a test harness tool) while replacing globally
-          // registered tools with the newly policy-filtered set.
-          const resolvedNames = new Set(resolved.map((tool) => tool.name))
-          const runtimeTools = activeTools.filter((tool) => !toolRegistry.get(tool.name) && !resolvedNames.has(tool.name))
-          const activatedContext = enablePptdPipeline({ ...runCtx, skill: loaded, skillResources: activeSkillResources, tools: [...resolved, ...runtimeTools] })
-          activeTools = [...activatedContext.tools]
+          const activated = await activateSkillRuntime(runCtx, activeTools, loaded)
+          activeSkill = activated.skill
+          activeSkillResources = activated.skillResources
+          activeTools = [...activated.tools]
+          const activatedPlan = createRunPlan(
+            { ...runCtx, skill: loaded, tools: activeTools },
+            deliverableRegistry,
+            isEnabled('stagedRuntime'),
+          )
+          installRunPlan(activatedPlan, 'skill_activated')
           harness?.ledger.append('skill.activated', { name: loaded.metadata.name, version: loaded.metadata.version })
           yield { type: 'skill.activated', name: loaded.metadata.name, version: loaded.metadata.version }
         }
@@ -531,6 +661,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       if (blockedLoopResult) {
         if (loopRecoveryTurnUsed) {
           const error: RunError = { kind: 'internal', message: blockedLoopResult.error?.message ?? '工具无进展循环已停止' }
+          transitionTerminal('exhausted', 'tool_loop')
           appendTerminalFact(harness, logger, 'run.exhausted', { reason: 'tool_loop', error, usage })
           yield { type: 'run.exhausted', reason: 'tool_loop', usage: { ...usage } }
           logger.warn('run.exhausted', { reason: 'tool_loop', message: error.message })
@@ -555,6 +686,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
         yield { type: 'message.delta', text: directAssistant.content }
         yield { type: 'message.completed', content: directAssistant.content }
         harness?.ledger.append('artifact.created', { id: directAssistant.callId, ...directAssistant.artifact })
+        transitionTerminal('completed', 'generator_owned_artifact')
         completed = true
         break
       }
@@ -571,6 +703,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       if (terminalFailure) {
         const message = terminalFailure.error?.message || terminalFailure.content || '工具执行失败'
         const error: RunError = { kind: 'internal', message }
+        transitionTerminal('failed', 'terminal_tool_failure')
         appendTerminalFact(harness, logger, 'run.failed', { ...error, usage })
         yield { type: 'run.failed', error, usage: { ...usage } }
         logger.error('run.failed', error)
@@ -578,6 +711,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       }
 
       if (budgetTokens > ctx.limits.maxTokens) {
+        transitionTerminal('exhausted', 'progress_token_budget')
         harness?.ledger.append('run.exhausted', { reason: 'max_tokens', usage })
         yield { type: 'run.exhausted', reason: 'max_tokens', usage: { ...usage } }
         logger.log('run.exhausted', { reason: 'progress_budget', usage, budgetTokens })
@@ -635,6 +769,24 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       }
       currentMessages = [...currentMessages, toolResultMessage]
 
+      if (runPlan.mode === 'staged-delivery' && phaseController.phase === 'retrieving') {
+        const completeEvidencePack = results.some((result) => {
+          if (!result.success) return false
+          const call = response.toolCalls.find((candidate) => candidate.id === result.callId)
+          if (call?.name !== 'prepare_attachment_evidence') return false
+          return Boolean(result.data && typeof result.data === 'object' && !Array.isArray(result.data)
+            && (result.data as { truncated?: unknown }).truncated === false)
+        })
+        if (completeEvidencePack) {
+          phaseController.markEvidenceComplete()
+          phaseController.closeGroup('attachment-retrieval')
+          toolLoopGuard.closeGroup('attachment-retrieval')
+          closedToolGroups.add('attachment-retrieval')
+          transitionPhase('generating', 'complete_evidence_pack')
+          logger.log('retrieval.completed', { turn, reason: 'complete_evidence_pack' })
+        }
+      }
+
       logger.log('turn.completed', { turn, toolCalls: response.toolCalls.length })
 
       // M1-13: Snapshot after each completed turn for crash recovery.
@@ -642,11 +794,15 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       if (ctx.snapshots) {
         try {
           await ctx.snapshots.append(ctx.conversationId, {
+            version: 2,
             runId: ctx.runId,
             turn,
             messages: currentMessages,
             usage: { ...usage },
             budgetTokens,
+            runPlan,
+            phaseState: phaseController.serialize(),
+            activeSkillName: activeSkill?.metadata.name,
             ts: new Date().toISOString(),
           })
           logger.log('snapshot.written', { turn })
@@ -666,12 +822,14 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
     // exhausted would suppress run.completed, the usage payload, the
     // on_run_completed hook and snapshot cleanup.
     if (!completed && turn >= ctx.limits.maxTurns) {
+      transitionTerminal('exhausted', 'turn_budget')
       harness?.ledger.append('run.exhausted', { reason: 'max_turns', usage })
       yield { type: 'run.exhausted', reason: 'max_turns', usage: { ...usage } }
       logger.log('run.exhausted', { reason: 'max_turns', turns: turn })
       return
     }
 
+    transitionTerminal('completed', 'run_completed')
     harness?.ledger.append('run.completed', usage)
     yield { type: 'run.completed', usage }
     logger.log('run.completed', { usage })
@@ -684,6 +842,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
   } catch (error) {
     await harness?.hooks.observe('on_error', { type: 'on_error', runId: ctx.runId, error, onHookError: (id, hookError) => logger.warn('hook.failed', { id, error: String(hookError) }) })
     if (ctx.taskTree?.budget.abortReason === 'budget_exhausted') {
+      transitionTerminal('exhausted', 'task_tree_token_budget')
       appendTerminalFact(harness, logger, 'run.exhausted', {
         reason: 'max_tokens',
         scope: 'task_tree',
@@ -693,10 +852,12 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
       yield { type: 'run.exhausted', reason: 'max_tokens', usage: { ...usage } }
       logger.log('run.exhausted', { reason: 'task_tree_max_tokens', usage })
     } else if (error instanceof Error && error.message === 'Run token budget exhausted') {
+      transitionTerminal('exhausted', 'progress_token_budget')
       appendTerminalFact(harness, logger, 'run.exhausted', { reason: 'max_tokens', usage, budgetTokens })
       yield { type: 'run.exhausted', reason: 'max_tokens', usage: { ...usage } }
       logger.log('run.exhausted', { reason: 'progress_budget', usage, budgetTokens })
     } else if (ctx.signal.aborted) {
+      transitionTerminal('failed', 'aborted')
       appendTerminalFact(harness, logger, 'run.failed', { kind: 'aborted', message: 'Run was aborted by user', usage })
       yield {
         type: 'run.failed',
@@ -707,6 +868,7 @@ export async function* runQuery(ctx: QueryContext): AsyncGenerator<QueryEvent> {
     } else {
       const message = error instanceof Error ? error.message : String(error)
       const kind = error instanceof ModelStreamError ? error.runErrorKind : 'internal'
+      transitionTerminal('failed', 'unhandled_error')
       appendTerminalFact(harness, logger, 'run.failed', { kind, message, usage })
       yield {
         type: 'run.failed',
@@ -975,16 +1137,14 @@ async function* streamModelResponse(
       }
     }
 
-    // Some OpenAI-compatible reasoning models occasionally serialize their
-    // tool protocol into assistant text instead of returning native
-    // `tool_calls`. Draw.io output is buffered, so an exact trailing protocol
-    // block can be recovered without ever leaking it into the chat. Recovery
-    // is limited to a currently exposed tool and still passes through the
-    // normal schema, permission and loop guards.
+    // Some compatible gateways serialize tool protocol as assistant text.
+    // Recovery is a leased runtime capability, never an ambient behavior for
+    // every tool-enabled conversation. The staged retrieval node opts in and
+    // the call still passes through schema, permission and loop guards.
     if (
       toolCalls.length === 0
-      && callbacks.emitText === false
-      && ctx.skill?.metadata.name === 'drawio-diagram'
+      && ctx.tools.length > 0
+      && ctx.recoverTextToolCalls === true
     ) {
       const tagged = parseTaggedToolCall(accumulatedText, ctx.tools)
       if (tagged) {
@@ -1057,18 +1217,6 @@ function coerceTaggedToolValue(
   }
   if (type === 'null') return value === 'null' ? null : INVALID_TAGGED_TOOL_VALUE
   return value
-}
-
-function validateDrawioDelivery(text: string): { valid: true } | { valid: false; reason: string } {
-  const matches = [...text.matchAll(/<solidify-artifact\b([^>]*)>([\s\S]*?)<\/solidify-artifact>/gi)]
-  if (matches.length !== 1) return { valid: false, reason: `需要且只能包含一个 Artifact，实际为 ${matches.length} 个` }
-  const match = matches[0]
-  const prefix = text.slice(0, match.index).trim()
-  const suffix = text.slice((match.index ?? 0) + match[0].length).trim()
-  if (prefix || suffix) return { valid: false, reason: 'Artifact 前后不能包含说明文字或工具调用标签' }
-  if (!/\btype\s*=\s*(?:"drawio"|'drawio')/i.test(match[1])) return { valid: false, reason: 'Artifact type 必须为 drawio' }
-  if (!/<mxfile\b[\s\S]*<\/mxfile\s*>/i.test(match[2])) return { valid: false, reason: 'Artifact 内缺少完整的 mxfile XML' }
-  return { valid: true }
 }
 
 /**
@@ -1557,13 +1705,37 @@ function preparationRunPhase(
   return 'generating'
 }
 
+function visibleRunPhase(
+  phase: RunPhase,
+  ctx: QueryContext,
+  activeSkill: QueryContext['skill'],
+  turn: number,
+): Extract<QueryEvent, { type: 'run.phase' }>['phase'] {
+  if (phase === 'retrieving') return 'reading_sources'
+  if (phase === 'validating') return 'validating'
+  if (phase === 'repairing') return 'repairing'
+  if (phase === 'generating') return 'generating'
+  return preparationRunPhase(ctx, activeSkill, turn)
+}
+
+function legacySafePhaseState(plan: RunPlan, turn: number): SerializedPhaseState {
+  const staged = plan.mode === 'staged-delivery'
+  return {
+    phase: staged ? 'generating' : plan.initialPhase,
+    turn,
+    repairAttempts: 0,
+    evidenceComplete: staged,
+    closedGroups: staged ? ['attachment-retrieval'] : [],
+  }
+}
+
 function toolRunPhase(name: string): Pick<Extract<QueryEvent, { type: 'run.phase' }>, 'phase'> {
   if (name === 'activate_skill') return { phase: 'selecting_skill' }
   if (name === 'search_attachments' || name === 'read_attachment' || name === 'prepare_attachment_evidence') {
     return { phase: 'reading_sources' }
   }
   if (name === 'capture_preview' || name.includes('validate') || name.includes('review')) return { phase: 'validating' }
-  if (name === 'generate_pptd') return { phase: 'generating' }
+  if (name.startsWith('generate_')) return { phase: 'generating' }
   return { phase: 'reading_sources' }
 }
 
@@ -1573,7 +1745,7 @@ function toolProgressRunPhase(progress: ToolProgress): Pick<Extract<QueryEvent, 
     : undefined
   const stage = typeof detail?.stage === 'string'
     ? detail.stage
-    : progress.phase.replace(/^pptd_/, '')
+    : progress.phase.replace(/^[^_]+_/, '')
   if (stage === 'repair') return { phase: 'repairing', ...(progress.message ? { detail: progress.message } : {}) }
   if (stage === 'assemble' || stage === 'review' || stage === 'validate' || stage === 'validation') {
     return { phase: 'validating', ...(progress.message ? { detail: progress.message } : {}) }

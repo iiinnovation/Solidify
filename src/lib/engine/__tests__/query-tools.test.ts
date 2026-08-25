@@ -151,7 +151,7 @@ describe('runQuery tool execution (M1-14/15)', () => {
       attachments: [attachment],
       attachmentMode,
       loadedSkill: {
-        metadata: { name: 'drawio-diagram', version: '2.1.0', description: 'Draw.io diagram' },
+        metadata: { name: 'drawio-diagram', version: '2.1.0', description: 'Draw.io diagram', deliverableContract: 'drawio' },
         content: 'Return one valid Draw.io Artifact.',
         path: 'builtin://drawio-diagram/SKILL.md',
       },
@@ -161,7 +161,7 @@ describe('runQuery tool execution (M1-14/15)', () => {
 
     expect(contextWindow).toBe(128_000)
     expect(attachmentMode).toBe('inline')
-    expect(context.tools).toEqual([])
+    expect(context.tools.filter(t => t.name !== 'read_handle')).toEqual([])
     expect(requests).toHaveLength(1)
     expect(requests[0]).toMatchObject({ toolChoice: 'none' })
     expect(requests[0]).not.toHaveProperty('reasoningMode')
@@ -366,7 +366,7 @@ describe('runQuery tool execution (M1-14/15)', () => {
       attachments: [{ id: 'att-a', name: 'brief.md', size: 100, text: 'architecture evidence' }],
       messages: [{ role: 'user', content: 'Draw the architecture.\n<attachments_inline>architecture evidence</attachments_inline>' }],
       skill: {
-        metadata: { name: 'drawio-diagram', version: '2.1.0', description: 'draw diagram' },
+        metadata: { name: 'drawio-diagram', version: '2.1.0', description: 'draw diagram', deliverableContract: 'drawio' },
         content: 'Generate the diagram from attachment evidence.',
         path: 'builtin://drawio-diagram/SKILL.md',
       },
@@ -381,7 +381,53 @@ describe('runQuery tool execution (M1-14/15)', () => {
     expect(events.at(-1)?.type).toBe('run.completed')
   })
 
-  it('keeps Draw.io retrieval available after valid evidence and rejects malformed follow-up input', async () => {
+  it('replans a dynamically activated structured Skill before generation', async () => {
+    const requests: CompletionRequest[] = []
+    const provider = makeMockProvider([
+      [
+        { type: 'tool_call_start', id: 'activate-1', name: 'activate_skill' },
+        { type: 'tool_call_end', id: 'activate-1', input: { skillName: 'diagram-skill' } },
+        { type: 'message_end', stopReason: 'tool_use' },
+      ],
+      drawioFinalTurn,
+    ], requests)
+    const activateTool: Tool = {
+      name: 'activate_skill',
+      description: 'activate skill',
+      inputSchema: { type: 'object' },
+      readOnly: true,
+      concurrencySafe: true,
+      destructive: false,
+      requiresConfirmation: false,
+      availability: 'always',
+      permissions: [],
+      async execute(): Promise<ToolResult> {
+        return { success: true, content: 'activated', data: { skillName: 'diagram-skill' } }
+      },
+      renderCall: () => 'activate skill',
+    }
+    const loaded = {
+      metadata: { name: 'diagram-skill', version: '1.0.0', description: 'diagram', allowedTools: [], deliverableContract: 'drawio' },
+      content: 'Generate one diagram artifact.',
+      path: 'builtin://diagram-skill/SKILL.md',
+    }
+    const base = makeCtx(provider, [activateTool])
+    const events = []
+    for await (const event of runQuery({
+      ...base,
+      skillRegistry: {
+        load: async () => loaded,
+        list: async () => [loaded.metadata],
+        resolve: async (name) => name === loaded.metadata.name ? loaded : null,
+      },
+    })) events.push(event)
+
+    expect(requests.map((request) => request.tools?.map((tool) => tool.name) ?? []))
+      .toEqual([['activate_skill'], []])
+    expect(events.at(-1)?.type).toBe('run.completed')
+  })
+
+  it('keeps retrieval bounded while correcting input, then isolates generation', async () => {
     const requests: CompletionRequest[] = []
     const provider = makeMockProvider([
       [
@@ -396,6 +442,7 @@ describe('runQuery tool execution (M1-14/15)', () => {
         { type: 'tool_call_end', id: 'search-hidden-invalid', input: { query: 'model layer', limit: '6' } },
         { type: 'message_end', stopReason: 'tool_use' },
       ],
+      [{ type: 'content_delta', delta: 'Evidence is sufficient.' }, { type: 'message_end', stopReason: 'end_turn' }],
       drawioFinalTurn,
     ], requests)
     let executions = 0
@@ -435,7 +482,7 @@ describe('runQuery tool execution (M1-14/15)', () => {
       ...base,
       attachments: [{ id: 'att-a', name: 'brief.md', size: 100, text: 'architecture evidence' }],
       skill: {
-        metadata: { name: 'drawio-diagram', version: '2.1.0', description: 'draw diagram' },
+        metadata: { name: 'drawio-diagram', version: '2.1.0', description: 'draw diagram', deliverableContract: 'drawio' },
         content: 'Generate the diagram from attachment evidence.',
         path: 'builtin://drawio-diagram/SKILL.md',
       },
@@ -443,13 +490,13 @@ describe('runQuery tool execution (M1-14/15)', () => {
 
     expect(executions).toBe(1)
     expect(requests.map((request) => request.tools?.map((tool) => tool.name) ?? []))
-      .toEqual([['search_attachments'], ['search_attachments'], ['search_attachments']])
+      .toEqual([['search_attachments'], ['search_attachments'], ['search_attachments'], []])
     expect(events.find((event) => event.type === 'tool.completed' && event.callId === 'search-hidden-invalid'))
       .toMatchObject({ result: { error: { kind: 'invalid_input' } } })
     expect(events.at(-1)?.type).toBe('run.completed')
   })
 
-  it('keeps retrieval schemas stable after an inline evidence pack is prepared', async () => {
+  it('revokes retrieval immediately after a complete evidence pack', async () => {
     const requests: CompletionRequest[] = []
     const provider = makeMockProvider([
       [
@@ -476,7 +523,7 @@ describe('runQuery tool execution (M1-14/15)', () => {
         return {
           success: true,
           content: '[source attachment:att-a]\ncomplete architecture evidence',
-          data: { entries: [{ attachmentId: 'att-a', offset: 0, end: 100 }] },
+          data: { truncated: false, entries: [{ attachmentId: 'att-a', offset: 0, end: 100 }] },
         }
       },
       renderCall: () => 'prepare evidence',
@@ -486,17 +533,17 @@ describe('runQuery tool execution (M1-14/15)', () => {
       ...base,
       attachments: [{ id: 'att-a', name: 'brief.md', size: 100, text: 'complete architecture evidence' }],
       skill: {
-        metadata: { name: 'drawio-diagram', version: '2.1.0', description: 'draw diagram' },
+        metadata: { name: 'drawio-diagram', version: '2.1.0', description: 'draw diagram', deliverableContract: 'drawio' },
         content: 'Generate the diagram from attachment evidence.',
         path: 'builtin://drawio-diagram/SKILL.md',
       },
     })) { /* drain */ }
 
     expect(requests.map((request) => request.tools?.map((tool) => tool.name) ?? []))
-      .toEqual([['prepare_attachment_evidence'], ['prepare_attachment_evidence']])
+      .toEqual([['prepare_attachment_evidence'], []])
   })
 
-  it('recovers tagged Qwen pagination calls without prematurely closing retrieval', async () => {
+  it('recovers tagged pagination during retrieval and revokes it before generation', async () => {
     const requests: CompletionRequest[] = []
     const taggedRead = [
       'I need one bounded section.',
@@ -510,6 +557,7 @@ describe('runQuery tool execution (M1-14/15)', () => {
     const provider = makeMockProvider([
       [{ type: 'content_delta', delta: taggedRead }, { type: 'message_end', stopReason: 'end_turn' }],
       [{ type: 'content_delta', delta: leakedClosedCall }, { type: 'message_end', stopReason: 'end_turn' }],
+      [{ type: 'content_delta', delta: 'Evidence complete.' }, { type: 'message_end', stopReason: 'end_turn' }],
       drawioFinalTurn,
     ], requests)
     let executions = 0
@@ -552,7 +600,7 @@ describe('runQuery tool execution (M1-14/15)', () => {
       ...base,
       attachments: [{ id: 'att-a', name: 'brief.md', size: 7_000, text: 'model layer evidence' }],
       skill: {
-        metadata: { name: 'drawio-diagram', version: '2.1.0', description: 'draw diagram' },
+        metadata: { name: 'drawio-diagram', version: '2.1.0', description: 'draw diagram', deliverableContract: 'drawio' },
         content: 'Generate the diagram from attachment evidence.',
         path: 'builtin://drawio-diagram/SKILL.md',
       },
@@ -560,7 +608,7 @@ describe('runQuery tool execution (M1-14/15)', () => {
 
     expect(executions).toBe(2)
     expect(requests.map((request) => request.tools?.map((tool) => tool.name) ?? []))
-      .toEqual([['read_attachment'], ['read_attachment'], ['read_attachment']])
+      .toEqual([['read_attachment'], ['read_attachment'], ['read_attachment'], []])
     expect(events.filter((event) => event.type === 'tool.requested')).toHaveLength(2)
     const streamed = events.filter((event): event is Extract<QueryEvent, { type: 'message.delta' }> => event.type === 'message.delta')
       .map((event) => event.text).join('')
@@ -571,6 +619,37 @@ describe('runQuery tool execution (M1-14/15)', () => {
       content: drawioArtifact,
     })
     expect(events.at(-1)?.type).toBe('run.completed')
+  })
+
+  it('does not execute tagged tool syntax in an ordinary Agent response', async () => {
+    const tagged = '<tool_call> <function=read_attachment> <parameter=attachmentId> att-a </parameter> </function> </tool_call>'
+    const provider = makeMockProvider([
+      [{ type: 'content_delta', delta: tagged }, { type: 'message_end', stopReason: 'end_turn' }],
+    ])
+    let executions = 0
+    const tool: Tool = {
+      name: 'read_attachment',
+      description: 'read attachment',
+      inputSchema: { type: 'object', properties: { attachmentId: { type: 'string' } }, required: ['attachmentId'] },
+      readOnly: true,
+      concurrencySafe: true,
+      destructive: false,
+      requiresConfirmation: false,
+      availability: 'always',
+      permissions: [],
+      loopGroup: 'attachment-retrieval',
+      async execute(): Promise<ToolResult> {
+        executions++
+        return { success: true, content: 'should not run' }
+      },
+      renderCall: () => 'read attachment',
+    }
+    const events = []
+    for await (const event of runQuery(makeCtx(provider, [tool]))) events.push(event)
+
+    expect(executions).toBe(0)
+    expect(events.some((event) => event.type === 'tool.requested')).toBe(false)
+    expect(events.find((event) => event.type === 'message.completed')).toMatchObject({ content: tagged })
   })
 
   it('fails instead of completing when Draw.io delivery remains invalid after repair', async () => {
@@ -584,7 +663,7 @@ describe('runQuery tool execution (M1-14/15)', () => {
     for await (const event of runQuery({
       ...base,
       skill: {
-        metadata: { name: 'drawio-diagram', version: '2.1.0', description: 'draw diagram' },
+        metadata: { name: 'drawio-diagram', version: '2.1.0', description: 'draw diagram', deliverableContract: 'drawio' },
         content: 'Generate one Draw.io artifact.',
         path: 'builtin://drawio-diagram/SKILL.md',
       },
@@ -607,6 +686,7 @@ describe('runQuery tool execution (M1-14/15)', () => {
         { type: 'tool_call_end', id: 'prepare-handle', input: { attachmentIds: ['att-a'], maxChars: 48_000 } },
         { type: 'message_end', stopReason: 'tool_use' },
       ],
+      [{ type: 'content_delta', delta: 'Evidence complete.' }, { type: 'message_end', stopReason: 'end_turn' }],
       drawioFinalTurn,
     ], requests)
     const evidenceTool: Tool = {
@@ -638,7 +718,7 @@ describe('runQuery tool execution (M1-14/15)', () => {
       ...base,
       attachments: [{ id: 'att-a', name: 'brief.md', size: 48_000, text: 'large architecture evidence' }],
       skill: {
-        metadata: { name: 'drawio-diagram', version: '2.1.0', description: 'draw diagram' },
+        metadata: { name: 'drawio-diagram', version: '2.1.0', description: 'draw diagram', deliverableContract: 'drawio' },
         content: 'Generate the diagram from attachment evidence.',
         path: 'builtin://drawio-diagram/SKILL.md',
       },
@@ -648,6 +728,7 @@ describe('runQuery tool execution (M1-14/15)', () => {
       .toEqual([
         ['prepare_attachment_evidence'],
         ['prepare_attachment_evidence', 'read_handle'],
+        [],
       ])
   })
 
@@ -1217,7 +1298,7 @@ describe('runQuery tool execution (M1-14/15)', () => {
       attachments: [{ id: 'att-a', name: 'large.md', size: 40_000, text: 'evidence' }],
       attachmentMode: 'retrieval',
       skill: {
-        metadata: { name: 'drawio-diagram', version: '2.1.0', description: 'Draw.io diagram' },
+        metadata: { name: 'drawio-diagram', version: '2.1.0', description: 'Draw.io diagram', deliverableContract: 'drawio' },
         content: 'Return one Draw.io Artifact.',
         path: 'builtin://drawio-diagram/SKILL.md',
       },

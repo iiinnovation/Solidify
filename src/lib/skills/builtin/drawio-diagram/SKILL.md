@@ -7,6 +7,7 @@ icon: Network
 placeholder: 描述流程图的内容和场景...
 allowed-tools: []
 recommended-models: [DeepSeek, GPT-4]
+deliverable-contract: drawio
 skip-confirmation: true
 ---
 

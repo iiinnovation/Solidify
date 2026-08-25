@@ -26,7 +26,7 @@ export const compiledBuiltinSkills: readonly CompiledSkill[] = [
       "list_dir",
       "write_file"
     ],
-    "fingerprint": "skill-5dccf927",
+    "fingerprint": "skill-ddd7a311",
     "estimatedTokens": 209,
     "path": "builtin://demo-code/SKILL.md"
   },
@@ -43,6 +43,7 @@ export const compiledBuiltinSkills: readonly CompiledSkill[] = [
         "DeepSeek",
         "GPT-4"
       ],
+      "deliverableContract": "drawio",
       "source": "builtin",
       "directory": "builtin://drawio-diagram"
     },
@@ -52,7 +53,7 @@ export const compiledBuiltinSkills: readonly CompiledSkill[] = [
       "reference/xml-checklist.md"
     ],
     "allowedTools": [],
-    "fingerprint": "skill-594f6627",
+    "fingerprint": "skill-d343426d",
     "estimatedTokens": 428,
     "path": "builtin://drawio-diagram/SKILL.md"
   },
@@ -82,7 +83,7 @@ export const compiledBuiltinSkills: readonly CompiledSkill[] = [
       "search_files",
       "write_file"
     ],
-    "fingerprint": "skill-55f4d440",
+    "fingerprint": "skill-1007981a",
     "estimatedTokens": 188,
     "path": "builtin://gap-analysis/SKILL.md"
   },
@@ -108,7 +109,7 @@ export const compiledBuiltinSkills: readonly CompiledSkill[] = [
       "read_file",
       "write_file"
     ],
-    "fingerprint": "skill-bf7257c6",
+    "fingerprint": "skill-08a3a766",
     "estimatedTokens": 168,
     "path": "builtin://glossary/SKILL.md"
   },
@@ -134,7 +135,7 @@ export const compiledBuiltinSkills: readonly CompiledSkill[] = [
       "read_file",
       "write_file"
     ],
-    "fingerprint": "skill-22018c68",
+    "fingerprint": "skill-0db5e42e",
     "estimatedTokens": 163,
     "path": "builtin://meeting-notes/SKILL.md"
   },
@@ -171,7 +172,7 @@ export const compiledBuiltinSkills: readonly CompiledSkill[] = [
       "search_files",
       "generate_pptd"
     ],
-    "fingerprint": "skill-c67a5015",
+    "fingerprint": "skill-7c1d53e7",
     "estimatedTokens": 1164,
     "path": "builtin://pptd-deck/SKILL.md"
   },
@@ -199,7 +200,7 @@ export const compiledBuiltinSkills: readonly CompiledSkill[] = [
       "list_dir",
       "write_file"
     ],
-    "fingerprint": "skill-93fab363",
+    "fingerprint": "skill-364821e5",
     "estimatedTokens": 182,
     "path": "builtin://report-outline/SKILL.md"
   },
@@ -231,7 +232,7 @@ export const compiledBuiltinSkills: readonly CompiledSkill[] = [
       "search_files",
       "write_file"
     ],
-    "fingerprint": "skill-a4f5b9c6",
+    "fingerprint": "skill-1f40bffe",
     "estimatedTokens": 205,
     "path": "builtin://requirement-analysis/SKILL.md"
   },
@@ -263,7 +264,7 @@ export const compiledBuiltinSkills: readonly CompiledSkill[] = [
       "search_files",
       "write_file"
     ],
-    "fingerprint": "skill-c7803104",
+    "fingerprint": "skill-d9843250",
     "estimatedTokens": 207,
     "path": "builtin://solution-design/SKILL.md"
   },
@@ -293,7 +294,7 @@ export const compiledBuiltinSkills: readonly CompiledSkill[] = [
       "search_files",
       "write_file"
     ],
-    "fingerprint": "skill-7a1b1ab2",
+    "fingerprint": "skill-bbf8013e",
     "estimatedTokens": 197,
     "path": "builtin://test-plan/SKILL.md"
   }

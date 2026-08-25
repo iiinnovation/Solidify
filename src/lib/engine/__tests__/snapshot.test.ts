@@ -57,6 +57,7 @@ describe('snapshot serialization (M1-13)', () => {
     expect(parseSnapshotLine('not json')).toBeNull()
     expect(parseSnapshotLine('{"foo":1}')).toBeNull() // wrong shape
     expect(parseSnapshotLine('{"turn":"x","messages":[],"ts":"t"}')).toBeNull()
+    expect(parseSnapshotLine(JSON.stringify({ ...makeSnapshot(1), version: 2 }))).toBeNull()
   })
 
   it('readLatestSnapshot returns the last valid line', () => {
@@ -262,6 +263,9 @@ describe('runQuery snapshot integration (M1-13)', () => {
     expect(conversationId).toBe('conv-snap')
     expect(snapshot.turn).toBe(1)
     expect(snapshot.ts).toBeTruthy()
+    expect(snapshot.version).toBe(2)
+    expect(snapshot.runPlan?.mode).toBe('agent')
+    expect(snapshot.phaseState).toMatchObject({ phase: 'generating', turn: 1, repairAttempts: 0 })
 
     // Snapshot history includes user msg + assistant tool_use + tool_result
     expect(snapshot.messages).toHaveLength(3)
@@ -327,6 +331,74 @@ describe('runQuery snapshot integration (M1-13)', () => {
     expect(events.some((e) => e.type === 'message.completed')).toBe(true)
     expect(events[events.length - 1].type).toBe('run.completed')
     expect(store.appended).toHaveLength(0)
+  })
+
+  it('restores staged generation without reopening attachment tools', async () => {
+    const artifact = '<solidify-artifact type="drawio" title="A"><mxfile><diagram /></mxfile></solidify-artifact>'
+    const finalArtifactTurn: CompletionChunk[] = [
+      { type: 'content_delta', delta: artifact },
+      { type: 'message_end', stopReason: 'end_turn' },
+    ]
+    const prepareTurn: CompletionChunk[] = [
+      { type: 'tool_call_start', id: 'prepare-1', name: 'prepare_attachment_evidence' },
+      { type: 'tool_call_end', id: 'prepare-1', input: {} },
+      { type: 'message_end', stopReason: 'tool_use' },
+    ]
+    const evidenceTool: Tool = {
+      name: 'prepare_attachment_evidence',
+      description: 'prepare evidence',
+      inputSchema: { type: 'object' },
+      readOnly: true,
+      concurrencySafe: true,
+      destructive: false,
+      requiresConfirmation: false,
+      availability: 'always',
+      permissions: [],
+      loopGroup: 'attachment-retrieval',
+      async execute(): Promise<ToolResult> {
+        return { success: true, content: 'complete evidence', data: { truncated: false, entries: [] } }
+      },
+      renderCall: () => 'prepare evidence',
+    }
+    const store = new RecordingSnapshotStore()
+    const initial = makeCtx(makeMockProvider([prepareTurn, finalArtifactTurn]), store)
+    const stagedBase: QueryContext = {
+      ...initial,
+      tools: [evidenceTool],
+      attachments: [{ id: 'att-1', name: 'source.md', size: 100, text: 'architecture' }],
+      attachmentMode: 'retrieval',
+      skill: {
+        metadata: { name: 'diagram-skill', version: '1.0.0', description: 'diagram', deliverableContract: 'drawio' },
+        content: 'Generate a diagram.',
+        path: 'builtin://diagram-skill/SKILL.md',
+      },
+    }
+    for await (const _ of runQuery(stagedBase)) { /* consume */ }
+
+    const latest = await store.loadLatest()
+    expect(latest?.phaseState).toMatchObject({ phase: 'generating', evidenceComplete: true })
+    expect(latest?.phaseState?.closedGroups).toContain('attachment-retrieval')
+
+    const requests: CompletionRequest[] = []
+    const resumedProvider = makeMockProvider([finalArtifactTurn])
+    const originalStream = resumedProvider.stream.bind(resumedProvider)
+    resumedProvider.stream = async function* (request) {
+      requests.push(request)
+      yield* originalStream(request)
+    }
+    const resumedRegistry = new ProviderRegistry()
+    resumedRegistry.register('mock', resumedProvider)
+    const events = []
+    for await (const event of runQuery({
+      ...stagedBase,
+      providerRegistry: resumedRegistry,
+      restoreSnapshot: true,
+    })) events.push(event)
+
+    expect(requests).toHaveLength(1)
+    expect(requests[0].tools ?? []).toEqual([])
+    expect(requests[0].toolChoice).toBe('none')
+    expect(events.at(-1)?.type).toBe('run.completed')
   })
 
   it('feeds an expired in-memory handle back and re-runs the source tool after restart', async () => {

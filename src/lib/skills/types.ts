@@ -14,6 +14,8 @@ export interface SkillMetadata {
   author?: string
   allowedTools?: string[]
   recommendedModels?: string[]
+  /** Structured deliverable contract owned by the Skill, if any. */
+  deliverableContract?: string
   tags?: string[]
   stage?: string
   source?: SkillSource

@@ -2,10 +2,35 @@ import { appendWorkspaceRecord, isTauri } from '@/lib/tauri'
 import { isStorageQuotaError, setStorageItemWithQuotaRecovery } from '@/lib/storage-quota'
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue }
-export type LedgerEventType = 'run.started' | 'skill.activated' | 'model.called' | 'model.completed' | 'model.retrying' | 'model.failed' | 'tool.requested' | 'approval.asked' | 'approval.decided' | 'permission.grant_added' | 'tool.completed' | 'artifact.created' | 'artifact.parse_failed' | 'run.completed' | 'run.failed' | 'run.exhausted'
+export type LedgerEventType =
+  | 'run.started'
+  | 'run.planned'
+  | 'phase.started'
+  | 'capability.bound'
+  | 'phase.completed'
+  | 'phase.transitioned'
+  | 'deliverable.validated'
+  | 'deliverable.repairing'
+  | 'skill.activated'
+  | 'model.called'
+  | 'model.completed'
+  | 'model.retrying'
+  | 'model.failed'
+  | 'tool.requested'
+  | 'approval.asked'
+  | 'approval.decided'
+  | 'permission.grant_added'
+  | 'tool.completed'
+  | 'artifact.created'
+  | 'artifact.parse_failed'
+  | 'run.completed'
+  | 'run.failed'
+  | 'run.exhausted'
 
 const LEDGER_EVENT_TYPES = new Set<LedgerEventType>([
-  'run.started', 'skill.activated', 'model.called', 'model.completed', 'model.retrying', 'model.failed',
+  'run.started', 'run.planned', 'phase.started', 'capability.bound', 'phase.completed', 'phase.transitioned',
+  'deliverable.validated', 'deliverable.repairing',
+  'skill.activated', 'model.called', 'model.completed', 'model.retrying', 'model.failed',
   'tool.requested', 'approval.asked', 'approval.decided',
   'permission.grant_added', 'tool.completed', 'artifact.created', 'artifact.parse_failed',
   'run.completed', 'run.failed', 'run.exhausted',
@@ -144,6 +169,7 @@ function compactLedgerPayload(type: LedgerEventType, payload: JsonValue): JsonVa
         stream: request.stream ?? null,
         messageCount: Array.isArray(request.messages) ? request.messages.length : request.messageCount ?? 0,
         toolCount: Array.isArray(request.tools) ? request.tools.length : request.toolCount ?? 0,
+        toolChoice: request.toolChoice ?? 'auto',
         promptCache: request.promptCache ?? null,
       },
     })

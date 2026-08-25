@@ -18,7 +18,7 @@ export function compileSkill(skill: LoadedSkill): CompiledSkill {
     ...coreInstructions.matchAll(/(?:`|\()((?:reference|examples|assets)\/[^`\s)]+)(?:`|\))/g),
   ].map((match) => match[1]).filter((path): path is string => typeof path === 'string' && !/[<>]/.test(path)))]
   const allowedTools = [...(skill.metadata.allowedTools ?? [])]
-  const fingerprint = stableFingerprint(`${skill.metadata.name}\0${skill.metadata.version}\0${coreInstructions}\0${allowedTools.join(',')}`)
+  const fingerprint = stableFingerprint(`${skill.metadata.name}\0${skill.metadata.version}\0${skill.metadata.deliverableContract ?? ''}\0${coreInstructions}\0${allowedTools.join(',')}`)
   return {
     metadata: { ...skill.metadata },
     coreInstructions,

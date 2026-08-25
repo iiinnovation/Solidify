@@ -38,10 +38,37 @@ export function parseSnapshotLine(line: string): TurnSnapshot | null {
     ) {
       return null
     }
+    if (parsed.version !== undefined && parsed.version !== 2) return null
+    if (parsed.version === 2 && (!isRunPlan(parsed.runPlan) || !isPhaseState(parsed.phaseState))) return null
     return parsed
   } catch {
     return null
   }
+}
+
+const RUN_MODES = new Set(['direct', 'agent', 'staged-delivery'])
+const RUN_PHASES = new Set(['preparing', 'retrieving', 'generating', 'validating', 'repairing', 'completed', 'failed', 'exhausted'])
+
+function isRunPlan(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const plan = value as Record<string, unknown>
+  return RUN_MODES.has(String(plan.mode))
+    && RUN_PHASES.has(String(plan.initialPhase))
+    && ['none', 'inline', 'retrieval'].includes(String(plan.attachmentMode))
+    && typeof plan.maxRepairAttempts === 'number'
+    && typeof plan.reason === 'string'
+    && (plan.contractId === undefined || typeof plan.contractId === 'string')
+}
+
+function isPhaseState(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const state = value as Record<string, unknown>
+  return RUN_PHASES.has(String(state.phase))
+    && typeof state.turn === 'number'
+    && typeof state.repairAttempts === 'number'
+    && typeof state.evidenceComplete === 'boolean'
+    && Array.isArray(state.closedGroups)
+    && state.closedGroups.every((group) => typeof group === 'string')
 }
 
 /**

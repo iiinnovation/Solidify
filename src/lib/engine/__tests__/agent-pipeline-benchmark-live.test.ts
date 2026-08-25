@@ -264,7 +264,7 @@ function createBenchmarkContext(input: {
     model: { provider: input.provider.format, model: input.provider.model, temperature: 0, maxTokens: 8_192 },
     ui: { theme: 'auto' as const, fontSize: 14, codeTheme: 'default', compactMode: false },
     privacy: { allowTelemetry: false, allowCrashReports: false, shareUsageData: false },
-    features: { agentLoop: true, toolCalling: true, harness: true, localWorkspace: false, workbenchV2: false, skillV2: true, pptdEngine: true, subAgents: false },
+    features: { agentLoop: true, toolCalling: true, harness: true, localWorkspace: false, workbenchV2: false, skillV2: true, pptdEngine: true, subAgents: false, stagedRuntime: true },
     disabledTools: [], workspaceRoot: '/',
   }
   const tools = toolRegistry.resolve({

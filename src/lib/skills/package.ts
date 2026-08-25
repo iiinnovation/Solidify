@@ -68,6 +68,7 @@ function renderSkillDocument(skill: LoadedSkill): string {
   if (metadata.author) lines.push(`author: ${JSON.stringify(metadata.author)}`)
   if (metadata.allowedTools) lines.push(`allowed-tools: [${metadata.allowedTools.join(', ')}]`)
   if (metadata.recommendedModels) lines.push(`recommended-models: [${metadata.recommendedModels.join(', ')}]`)
+  if (metadata.deliverableContract) lines.push(`deliverable-contract: ${metadata.deliverableContract}`)
   if (metadata.tags) lines.push(`tags: ${JSON.stringify(metadata.tags)}`)
   if (metadata.stage) lines.push(`stage: ${JSON.stringify(metadata.stage)}`)
   if (metadata.skipConfirmation !== undefined) lines.push(`skip-confirmation: ${metadata.skipConfirmation}`)

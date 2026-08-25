@@ -55,6 +55,12 @@ export async function compileContext(ctx: QueryContext): Promise<CompiledContext
   const finalHistoryTokens = finalMessages.reduce((sum, text) => sum + estimateTokens(text), 0)
   const attachmentTokens = finalMessages.reduce((sum, text) => sum + estimateAttachmentTokens(text), 0)
   const currentTaskText = finalMessages.at(-1) ?? ''
+  const currentTaskRawTokens = estimateTokens(currentTaskText)
+  const currentTaskAttachmentTokens = estimateAttachmentTokens(currentTaskText)
+  const currentTaskTokens = Math.max(0, currentTaskRawTokens - currentTaskAttachmentTokens)
+  const historyRawTokens = Math.max(0, finalHistoryTokens - currentTaskRawTokens)
+  const historyAttachmentTokens = Math.max(0, attachmentTokens - currentTaskAttachmentTokens)
+  const historyTokens = Math.max(0, historyRawTokens - historyAttachmentTokens)
   const runtimeTokens = estimateTokens((ctx.harnessContext ?? []).filter((part) => part.startsWith('Environment:')).join('\n'))
   const fixedPrefixFingerprint = fingerprint([
     system,
@@ -69,10 +75,10 @@ export async function compileContext(ctx: QueryContext): Promise<CompiledContext
       fixedSystemTokens,
       skillTokens: skillTokens.totalTokens,
       toolsTokens: estimateTokens(toolText),
-      historyTokens: Math.max(0, finalHistoryTokens - estimateTokens(currentTaskText)),
+      historyTokens,
       attachmentTokens,
       runtimeTokens,
-      currentTaskTokens: estimateTokens(currentTaskText),
+      currentTaskTokens,
     },
     skillIndexTokens: skillTokens.indexTokens,
     inlineAttachmentPreviewTokens: 0,
@@ -95,10 +101,13 @@ function messageTokenText(message: { role: string; content: string | unknown[] }
 }
 
 function estimateAttachmentTokens(text: string): number {
-  const body = [
-    ...(text.match(/<attachment_full_text\b[^>]*>[\s\S]*?<\/attachment_full_text>/g) ?? []),
-    ...(text.match(/<attachments(?:_inline)?\b[^>]*>[\s\S]*?<\/attachments(?:_inline)?>/g) ?? []),
-  ]
+  const containers = text.match(/<attachments(?:_inline)?\b[^>]*>[\s\S]*?<\/attachments(?:_inline)?>/g) ?? []
+  // Inline containers own their nested attachment_full_text elements. Count
+  // the outer envelope once; only fall back to individual entries when a
+  // caller supplies them without the standard container.
+  const body = containers.length > 0
+    ? containers
+    : text.match(/<attachment_full_text\b[^>]*>[\s\S]*?<\/attachment_full_text>/g) ?? []
   return body.reduce((sum, item) => sum + estimateTokens(item), 0)
 }
 

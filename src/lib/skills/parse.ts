@@ -34,6 +34,10 @@ export function parseSkillDocument(content: string, path: string, source?: Skill
   const version = requiredString(raw.version, path, 'version')
   if (!VERSION_PATTERN.test(version)) throw new SkillParseError(path, 'version 必须是语义化版本（如 1.0.0）')
   const description = requiredString(raw.description, path, 'description')
+  const deliverableContract = optionalString(raw['deliverable-contract'], path, 'deliverable-contract')
+  if (deliverableContract && !NAME_PATTERN.test(deliverableContract)) {
+    throw new SkillParseError(path, 'deliverable-contract 必须是 kebab-case')
+  }
 
   const metadata: SkillMetadata = {
     name,
@@ -46,6 +50,7 @@ export function parseSkillDocument(content: string, path: string, source?: Skill
     author: optionalString(raw.author, path, 'author'),
     allowedTools: optionalStringArray(raw['allowed-tools'], path, 'allowed-tools'),
     recommendedModels: optionalStringArray(raw['recommended-models'], path, 'recommended-models'),
+    deliverableContract,
     tags: optionalStringArray(raw.tags, path, 'tags'),
     stage: optionalString(raw.stage, path, 'stage'),
     source,

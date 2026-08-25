@@ -17,7 +17,7 @@ vi.mock('@/lib/harness/flags', () => ({
   isEnabled: (flag: string) => FILE_DOCUMENT_FLAGS.includes(flag),
   getFlags: () => ({
     agentLoop: true, toolCalling: false, harness: false, localWorkspace: true,
-    workbenchV2: true, skillV2: false, pptdEngine: false, subAgents: false,
+    workbenchV2: true, skillV2: false, pptdEngine: false, subAgents: false, stagedRuntime: true,
   }),
 }))
 

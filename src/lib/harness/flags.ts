@@ -30,6 +30,8 @@ export interface FeatureFlags {
   pptdEngine: boolean
   /** M6 · 子 Agent 并行协作 */
   subAgents: boolean
+  /** Deterministic staged workflow for structured deliverables. */
+  stagedRuntime: boolean
 }
 
 export type FeatureFlag = keyof FeatureFlags
@@ -45,6 +47,7 @@ const DEFAULT_FLAGS: Readonly<FeatureFlags> = Object.freeze({
   skillV2: true,
   pptdEngine: false,
   subAgents: false,
+  stagedRuntime: true,
 })
 
 export const FEATURE_FLAG_KEYS = Object.keys(DEFAULT_FLAGS) as FeatureFlag[]

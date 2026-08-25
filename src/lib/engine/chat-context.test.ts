@@ -28,6 +28,8 @@ vi.mock('@/lib/harness/flags', async (importOriginal) => {
 })
 
 import { createChatQueryContext } from './chat-context'
+import { createRunPlan } from './run-plan'
+import { resolveCapabilityLease } from './capability-policy'
 
 const provider: ModelProvider = {
   id: 'test-provider',
@@ -182,12 +184,12 @@ describe('chat Agent workspace context', () => {
     expect(context.pptdMedia).toBe(media)
   })
 
-  it('keeps a full-inline Draw.io run completely tool-free', () => {
+  it('plans staged generation with zero tools for full-inline Draw.io', () => {
     const context = createChatQueryContext({
       runId: 'run-attachment', conversationId: 'conversation', messages: [{ role: 'user', content: '根据文档绘制架构图' }],
       provider, signal: new AbortController().signal,
       loadedSkill: {
-        metadata: { name: 'drawio-diagram', version: '1.0.0', description: '绘制流程图', allowedTools: ['read_file', 'write_file'] },
+        metadata: { name: 'drawio-diagram', version: '1.0.0', description: '绘制流程图', allowedTools: ['read_file', 'write_file'], deliverableContract: 'drawio' },
         content: '根据材料绘制流程图。',
         path: 'builtin://drawio-diagram/SKILL.md',
       },
@@ -196,7 +198,12 @@ describe('chat Agent workspace context', () => {
     })
 
     expect(context.attachmentMode).toBe('inline')
-    expect(context.tools).toEqual([])
+    const plan = createRunPlan(context)
+    expect(plan.mode).toBe('staged-delivery')
+    expect(plan.initialPhase).toBe('generating')
+    const lease = resolveCapabilityLease({ plan, phase: plan.initialPhase }, context.tools)
+    expect(lease.tools).toEqual([])
+    expect(lease.toolChoice).toBe('none')
   })
 
   it('hides attachment readers when the run has no attachments', () => {
@@ -204,14 +211,13 @@ describe('chat Agent workspace context', () => {
       runId: 'run-no-attachment', conversationId: 'conversation', messages: [{ role: 'user', content: 'hello' }],
       provider, signal: new AbortController().signal,
       loadedSkill: {
-        metadata: { name: 'drawio-diagram', version: '1.0.0', description: '绘制流程图', allowedTools: ['read_file', 'write_file'] },
+        metadata: { name: 'drawio-diagram', version: '1.0.0', description: '绘制流程图', allowedTools: ['read_file', 'write_file'], deliverableContract: 'drawio' },
         content: '根据材料绘制流程图。',
         path: 'builtin://drawio-diagram/SKILL.md',
       },
     })
 
     const names = context.tools.map((tool) => tool.name)
-    expect(names).toEqual([])
     expect(names).not.toContain('search_attachments')
     expect(names).not.toContain('read_attachment')
     expect(names).not.toContain('prepare_attachment_evidence')
@@ -223,7 +229,7 @@ describe('chat Agent workspace context', () => {
       messages: [{ role: 'user', content: '根据附件绘制架构图' }], provider,
       signal: new AbortController().signal,
       loadedSkill: {
-        metadata: { name: 'drawio-diagram', version: '1.0.0', description: '绘制流程图', allowedTools: [] },
+        metadata: { name: 'drawio-diagram', version: '1.0.0', description: '绘制流程图', allowedTools: [], deliverableContract: 'drawio' },
         content: '根据材料绘制流程图。',
         path: 'builtin://drawio-diagram/SKILL.md',
       },
@@ -231,7 +237,10 @@ describe('chat Agent workspace context', () => {
       attachmentMode: 'retrieval',
     })
 
-    expect(context.tools).toEqual([])
+    const names = context.tools.map((tool) => tool.name)
+    expect(names).not.toContain('search_attachments')
+    expect(names).not.toContain('read_attachment')
+    expect(names).not.toContain('prepare_attachment_evidence')
   })
 
   it('keeps runtime Skill activation out of an unselected chat', () => {

@@ -33,6 +33,7 @@ for (const directory of (await readdir(skillsRoot, { withFileTypes: true })).fil
   if (metadata.name !== directory.name) throw new Error(`Skill name must match directory: ${path}`)
   if (typeof metadata.description !== 'string' || !metadata.description.trim()) throw new Error(`Skill description is required: ${path}`)
   if (typeof metadata.version !== 'string' || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(metadata.version)) throw new Error(`Invalid Skill version: ${path}`)
+  if (metadata['deliverable-contract'] !== undefined && (typeof metadata['deliverable-contract'] !== 'string' || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(metadata['deliverable-contract']))) throw new Error(`Invalid deliverable contract: ${path}`)
   const coreInstructions = document.slice(match[0].length).trim()
   const referenceRoutes = [...new Set([...coreInstructions.matchAll(/(?:`|\()((?:reference|examples|assets)\/[^`\s)]+)(?:`|\))/g)].map((item) => item[1]).filter((route) => route && !/[<>]/.test(route)))]
   for (const route of referenceRoutes) {
@@ -55,6 +56,7 @@ for (const directory of (await readdir(skillsRoot, { withFileTypes: true })).fil
       ...(metadata.author ? { author: metadata.author } : {}),
       ...(allowedTools.length ? { allowedTools } : {}),
       ...(metadata['recommended-models'] ? { recommendedModels: metadata['recommended-models'] } : {}),
+      ...(metadata['deliverable-contract'] ? { deliverableContract: metadata['deliverable-contract'] } : {}),
       ...(metadata.tags ? { tags: metadata.tags } : {}),
       ...(metadata.stage ? { stage: metadata.stage } : {}),
       source: 'builtin',
@@ -63,7 +65,7 @@ for (const directory of (await readdir(skillsRoot, { withFileTypes: true })).fil
     coreInstructions,
     referenceRoutes,
     allowedTools,
-    fingerprint: fingerprint(`${metadata.name}\0${metadata.version}\0${coreInstructions}\0${allowedTools.join(',')}`),
+    fingerprint: fingerprint(`${metadata.name}\0${metadata.version}\0${metadata['deliverable-contract'] ?? ''}\0${coreInstructions}\0${allowedTools.join(',')}`),
     estimatedTokens: estimateTokens(coreInstructions),
     path: `builtin://${metadata.name}/SKILL.md`,
   })

@@ -82,8 +82,6 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
     && isEnabled('toolCalling')
     && options.provider.supportsTools !== false
   const attachmentRetrievalActive = hasReadableAttachments && options.attachmentMode === 'retrieval'
-  const deterministicDrawio = skill?.metadata.name === 'drawio-diagram'
-    && (!hasAttachments || !hasReadableAttachments || options.attachmentMode === 'inline')
   // Feature flags describe what the installation supports, not what every
   // conversation should receive. A run earns a tool surface only through an
   // explicitly selected/pre-routed Skill or a retrieval-mode attachment.
@@ -106,7 +104,7 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
   const scopedTools = !skill && attachmentRetrievalActive
     ? resolvedTools.filter((tool) => ATTACHMENT_ONLY_TOOL_NAMES.has(tool.name))
     : resolvedTools
-  const tools = (deterministicDrawio ? [] : scopedTools).filter((tool) =>
+  const tools = scopedTools.filter((tool) =>
     !ATTACHMENT_READER_NAMES.has(tool.name) || attachmentRetrievalActive,
   ).filter((tool) =>
     tool.name !== 'activate_skill' || (skillV2Enabled && Boolean(options.skillRegistry) && !skill),
@@ -164,10 +162,10 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
   // Delegation is a Skill capability, not an ambient chat capability. In
   // particular, an attachment-only run must not gain dispatch_agent in
   // addition to its narrowly scoped readers.
-  const withSubAgents = runToolsActive && Boolean(skill) && !deterministicDrawio && isEnabled('subAgents')
+  const withSubAgents = runToolsActive && Boolean(skill) && isEnabled('subAgents')
     ? enableSubAgents(context)
     : context
-  return runToolsActive && !deterministicDrawio ? enablePptdPipeline(withSubAgents) : withSubAgents
+  return runToolsActive ? enablePptdPipeline(withSubAgents) : withSubAgents
 }
 
 function createRunLimits(
@@ -200,9 +198,6 @@ const ATTACHMENT_READER_NAMES: ReadonlySet<string> = new Set([
 
 const ATTACHMENT_ONLY_TOOL_NAMES: ReadonlySet<string> = new Set([
   ...ATTACHMENT_READER_NAMES,
-  // Hidden by streamModel until a compacted, model-visible result contains
-  // an exact stored handle. It still has to exist in the run tool registry so
-  // that it can become visible on the following model round.
   'read_handle',
 ])
 

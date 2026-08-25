@@ -31,6 +31,7 @@ describe('feature flags', () => {
       skillV2: true,
       pptdEngine: false,
       subAgents: false,
+      stagedRuntime: true,
     })
   })
 
@@ -44,6 +45,7 @@ describe('feature flags', () => {
       'skillV2',
       'pptdEngine',
       'subAgents',
+      'stagedRuntime',
     ])
   })
 
