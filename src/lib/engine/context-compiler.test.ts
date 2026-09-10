@@ -3,6 +3,7 @@ import { compileContext } from './context-compiler'
 import type { QueryContext } from './types'
 import { formatSkillIndex } from '../skills/registry'
 import { compiledBuiltinSkills } from '../skills/generated/manifest'
+import { formatInlineAttachments } from '../attachments/types'
 
 function context(overrides: Partial<QueryContext> = {}): QueryContext {
   return {
@@ -29,6 +30,21 @@ function skill(content: string): NonNullable<QueryContext['skill']> {
 }
 
 describe('Context Compiler', () => {
+  it('reports actual inline reduction without claiming full attachment text on a recovery turn', async () => {
+    const attachment = { id: 'a', name: 'large.md', size: 80_000, text: '审计流程资料'.repeat(5000) }
+    const ctx = context({ attachments: [attachment], attachmentMode: 'inline', model: { provider: 'mock', model: 'deepseek-flash', contextWindow: 128_000 },
+      messages: [{ role: 'user', content: `绘制流程图${formatInlineAttachments([attachment])}` }] })
+    const standard = await compileContext(ctx)
+    const recovered = await compileContext({ ...ctx, inputMode: 'compact_recovery' })
+    expect(standard.stats.inlineRecovery).toBeNull()
+    expect(recovered.stats.inlineRecovery).toMatchObject({ budgetTokens: 6000, compactedEntries: 1 })
+    expect(recovered.stats.slots.attachmentTokens).toBeLessThan(standard.stats.slots.attachmentTokens / 2)
+    expect(recovered.stats.historyTrimmed).toBe(true)
+    expect(recovered.stats.rawHistoryTokens).toBe(standard.stats.rawHistoryTokens)
+    expect(recovered.system).not.toContain('The full text')
+    expect(recovered.system).not.toContain('Emit the single next tool call')
+    expect(recovered.system).toContain('incomplete')
+  })
   it('produces a stable prefix fingerprint and separates equal-sized Skill contents', async () => {
     const first = await compileContext(context({ skill: skill('AAAA') }))
     const second = await compileContext(context({ skill: skill('BBBB') }))

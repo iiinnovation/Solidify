@@ -123,6 +123,8 @@ export interface ToolUseContext {
   readonly messages?: readonly unknown[]
   /** Durable folder task bound by trusted conversation state, never model input. */
   readonly folderTaskId?: string
+  /** Backend-probed, run-local capabilities; never restored from a snapshot. */
+  readonly sandboxCapabilities?: readonly import('../folder-tasks/sandbox').SandboxMethodCapability[]
 }
 
 // ============================================================================

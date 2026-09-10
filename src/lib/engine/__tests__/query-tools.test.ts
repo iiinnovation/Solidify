@@ -18,6 +18,7 @@ import { chooseAttachmentContextMode, formatInlineAttachments } from '../../atta
 import { modelContextWindow } from '../../model/capabilities'
 import { createChatQueryContext } from '../chat-context'
 import type { ModelProvider as ModelProviderConfig } from '../../../stores/model-store'
+import { RunLedger } from '../../harness/ledger'
 
 function makeMockProvider(script: CompletionChunk[][], requests?: CompletionRequest[]): ModelProvider {
   let callIndex = 0
@@ -1277,6 +1278,89 @@ describe('runQuery tool execution (M1-14/15)', () => {
       type: 'run.exhausted',
       reason: 'max_output_tokens',
     })
+  })
+
+  it('shrinks the logged large inline Draw.io retry and keeps it compact through format repair', async () => {
+    const requests: CompletionRequest[] = []
+    const attachment = { id: 'inline-a', name: 'audit.md', size: 80_000,
+      text: `一、背景\n${'技术方案'.repeat(3000)}\n二、总体架构\n${'业务流程'.repeat(3000)}\n三、异常分支\n人工复核` }
+    const thoughtOnly: CompletionChunk[] = [
+      { type: 'reasoning_delta', delta: 'private reasoning'.repeat(100) },
+      { type: 'message_end', usage: { inputTokens: 17536, outputTokens: 8192 }, stopReason: 'max_tokens' },
+    ]
+    const base = makeCtx(makeMockProvider([thoughtOnly, finalTurn, drawioFinalTurn], requests), [])
+    const ctx = { ...base, runId: 'drawio-inline-recovery-regression',
+      model: { ...base.model, model: 'deepseek-flash', contextWindow: 128_000 },
+      limits: { ...base.limits, maxOutputTokens: 8192 },
+      attachments: [attachment], attachmentMode: 'inline' as const,
+      messages: [{ role: 'user' as const, content: `参考附件绘制流程图${formatInlineAttachments([attachment])}` }],
+      skill: { metadata: { name: 'drawio-diagram', version: '2.1.0', description: 'Draw', deliverableContract: 'drawio' }, content: 'Return one Draw.io Artifact.', path: 'builtin://drawio' },
+    }
+    localStorage.removeItem(`solidify-ledger:${ctx.runId}`)
+    const events: QueryEvent[] = []
+    for await (const event of runQuery(ctx)) events.push(event)
+    expect(requests).toHaveLength(3)
+    expect(requests[0].messages[0].content).toContain(attachment.text)
+    for (const request of requests.slice(1)) {
+      expect(JSON.stringify(request.messages)).not.toContain(attachment.text)
+      expect(JSON.stringify(request.messages)).toContain('参考附件绘制流程图')
+      expect(JSON.stringify(request.messages)).toContain('attachment_excerpt')
+      expect(request.tools).toBeUndefined()
+      expect(request.toolChoice).toBe('none')
+      expect(request.maxTokens).toBe(8192)
+      expect(request).not.toHaveProperty('reasoningMode')
+    }
+    const calls = new RunLedger(ctx.runId).events().filter(event => event.type === 'model.called')
+      .map(event => event.payload as { contextStats: { inputMode: string; inlineRecovery: { resultTokens: number } | null; historyTrimmed: boolean } })
+    expect(calls).toHaveLength(3)
+    expect(calls[0].contextStats.inputMode).toBe('standard')
+    for (const call of calls.slice(1)) {
+      expect(call.contextStats.inputMode).toBe('compact_recovery')
+      expect(call.contextStats.inlineRecovery!.resultTokens).toBeLessThanOrEqual(6000)
+      expect(call.contextStats.historyTrimmed).toBe(true)
+    }
+    expect(events.at(-1)?.type).toBe('run.completed')
+    expect(JSON.stringify(events)).not.toContain('private reasoning')
+  })
+
+  it('returns an open agent to normal evidence budgets after recovery obtains a new tool result', async () => {
+    const requests: CompletionRequest[] = []
+    const thought: CompletionChunk[] = [
+      { type: 'reasoning_delta', delta: 'analysis' }, { type: 'message_end', stopReason: 'max_tokens' },
+    ]
+    const call: CompletionChunk[] = [
+      { type: 'tool_call_start', id: 'r1', name: 'reader' },
+      { type: 'tool_call_end', id: 'r1', input: {} }, { type: 'message_end', stopReason: 'tool_use' },
+    ]
+    const ctx = makeCtx(makeMockProvider([thought, call, finalTurn], requests), [makeSlowReadTool('reader', 1, [])])
+    for await (const _event of runQuery(ctx)) { /* drain */ }
+    expect(requests).toHaveLength(3)
+    expect(requests[1].system).toContain('bounded recovery attempt')
+    expect(requests[2].system).not.toContain('bounded recovery attempt')
+  })
+
+  it('does not restore the full attachment when continuing a recovered partial diagram', async () => {
+    const requests: CompletionRequest[] = []
+    const attachment = { id: 'continue-source', name: 'large.md', size: 90_000, text: '技术架构资料'.repeat(5000) }
+    const split = drawioArtifact.indexOf('<mxfile>')
+    const script: CompletionChunk[][] = [
+      [{ type: 'reasoning_delta', delta: 'private' }, { type: 'message_end', stopReason: 'max_tokens' }],
+      [{ type: 'content_delta', delta: drawioArtifact.slice(0, split) }, { type: 'message_end', stopReason: 'max_tokens' }],
+      [{ type: 'content_delta', delta: drawioArtifact.slice(split) }, { type: 'message_end', stopReason: 'end_turn' }],
+    ]
+    const ctx = { ...makeCtx(makeMockProvider(script, requests), []),
+      model: { provider: 'mock', model: 'deepseek-flash', contextWindow: 128_000 },
+      attachments: [attachment], attachmentMode: 'inline' as const,
+      messages: [{ role: 'user' as const, content: `绘制流程图${formatInlineAttachments([attachment])}` }],
+      skill: { metadata: { name: 'drawio-diagram', version: '2.1.0', description: 'Draw', deliverableContract: 'drawio' }, content: 'Return one Draw.io Artifact.', path: 'builtin://drawio' },
+    }
+    const events: QueryEvent[] = []
+    for await (const event of runQuery(ctx)) events.push(event)
+    expect(requests).toHaveLength(3)
+    expect(JSON.stringify(requests[2].messages)).toContain('attachment_excerpt')
+    expect(JSON.stringify(requests[2].messages)).not.toContain(attachment.text)
+    expect(requests[2].tools).toBeUndefined()
+    expect(events.at(-1)?.type).toBe('run.completed')
   })
 
   it('keeps a Draw.io reasoning-only recovery in generation mode instead of reopening retrieval', async () => {

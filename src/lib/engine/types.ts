@@ -65,6 +65,15 @@ export interface Message {
   content: string | MessageContent[]
 }
 
+export type FolderTaskRuntimeStage =
+  | 'context'
+  | 'plan'
+  | 'claim'
+  | 'batch'
+  | 'decision'
+  | 'review'
+  | 'terminal'
+
 export type MessageContent =
   | { type: 'text'; text: string }
   | { type: 'image_url'; image_url: { url: string } }
@@ -96,6 +105,7 @@ export interface QueryContext {
   readonly attachmentMode?: AttachmentContextMode
   /** Durable folder task associated with this conversation. */
   readonly folderTaskId?: string
+  readonly sandboxCapabilities?: readonly import('../folder-tasks/sandbox').SandboxMethodCapability[]
   readonly memory: MemoryState
   readonly model: ModelConfig
   readonly limits: RunLimits
@@ -160,6 +170,14 @@ export interface TurnSnapshot {
   runPlan?: RunPlan
   phaseState?: SerializedPhaseState
   activeSkillName?: string
+  /** Durable FolderTask lease state needed to reject text-only false completion after recovery. */
+  folderTaskState?: {
+    batchOpen: boolean
+    decisionPauseAllowed: boolean
+    checkpointReminders: number
+    /** Current server-derived capability stage. Optional for legacy snapshots. */
+    stage?: FolderTaskRuntimeStage
+  }
   ts: string
 }
 

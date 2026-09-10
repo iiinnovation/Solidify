@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { Document, Packer, Paragraph } from 'docx'
 import JSZip from 'jszip'
-import { extractText, inferFileMimeType } from './file-extractor'
+import { extractText, extractTextResult, inferFileMimeType } from './file-extractor'
 
 describe('workspace rich document extraction', () => {
   it('extracts real Word document text for indexing and Agent reads', async () => {
@@ -43,5 +43,32 @@ describe('workspace rich document extraction', () => {
     expect(inferFileMimeType('report.docx')).toContain('wordprocessingml')
     expect(inferFileMimeType('inventory.xlsx')).toContain('spreadsheetml')
     expect(inferFileMimeType('unknown.bin')).toBe('application/octet-stream')
+  })
+
+  it('returns structured truncation instead of silently overflowing model context', async () => {
+    const file = new File(['abcdefghij'], 'bounded.txt', { type: 'text/plain' })
+    const result = await extractTextResult(file, { maxCharacters: 5 })
+    expect(result).toMatchObject({ status: 'truncated', content: 'abcde', totalCharacters: 10 })
+    expect(result.warnings[0]).toContain('截断')
+  })
+
+  it('parses application/json files through the bounded text path', async () => {
+    const file = new File(['{"ok":true}'], 'record.json', { type: 'application/json' })
+    await expect(extractTextResult(file)).resolves.toMatchObject({
+      status: 'parsed',
+      content: '{"ok":true}',
+      parser: 'browser-text',
+    })
+  })
+
+  it('rejects archives that exceed the confirmed entry budget', async () => {
+    const zip = new JSZip()
+    zip.file('xl/worksheets/sheet1.xml', '<worksheet/>')
+    zip.file('xl/worksheets/sheet2.xml', '<worksheet/>')
+    const blob = await zip.generateAsync({ type: 'blob' })
+    const file = new File([blob], 'oversized.xlsx', { type: inferFileMimeType('oversized.xlsx') })
+    const result = await extractTextResult(file, { maxArchiveEntries: 1 })
+    expect(result.status).toBe('failed')
+    expect(result.warnings.join(' ')).toContain('条目数')
   })
 })

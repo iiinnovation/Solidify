@@ -36,6 +36,8 @@ export interface Message {
   id: string
   role: 'user' | 'assistant'
   content: string
+  /** Internal continuation prompts remain model history but are not rendered as user messages. */
+  transcriptHidden?: boolean
   skill?: { id: string; name: string }
   attachments?: MessageAttachment[]
   metrics?: ExecutionMetrics
@@ -76,6 +78,8 @@ export interface Conversation {
   projectId?: string
   /** Optional durable FolderTask controlled by this conversation. */
   folderTaskId?: string
+  /** Continue bounded FolderTask runs until the durable task pauses or completes. */
+  folderTaskAutoRun?: boolean
 }
 
 export interface ConversationWorkspaceBinding {
@@ -99,6 +103,7 @@ interface ChatState {
   activeConversationId: string | null
   createConversation: (title: string, workspace?: ConversationWorkspaceBinding) => string
   bindConversationToWorkspace: (id: string, workspace: ConversationWorkspaceBinding) => void
+  setFolderTaskAutoRun: (id: string, enabled: boolean) => void
   setActiveConversation: (id: string) => void
   renameConversation: (id: string, title: string) => void
   deleteConversation: (id: string) => void
@@ -180,6 +185,18 @@ export const useChatStore = create<ChatState>()(
             }
           }),
         })),
+
+      setFolderTaskAutoRun: (id, enabled) =>
+        set((state) => {
+          const taskId = state.conversations.find((conversation) => conversation.id === id)?.folderTaskId
+          return {
+            conversations: state.conversations.map((conversation) => {
+              if (!taskId || conversation.folderTaskId !== taskId) return conversation
+              if (conversation.id === id) return { ...conversation, folderTaskAutoRun: enabled }
+              return enabled ? { ...conversation, folderTaskAutoRun: false } : conversation
+            }),
+          }
+        }),
 
       setActiveConversation: (id) => set({ activeConversationId: id }),
 

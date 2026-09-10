@@ -52,12 +52,33 @@ describe('snapshot serialization (M1-13)', () => {
     expect(parseSnapshotLine(line)).toEqual(snapshot)
   })
 
+  it('roundtrips the FolderTask lease invariant needed by crash recovery', () => {
+    const snapshot: TurnSnapshot = {
+      ...makeSnapshot(3),
+      folderTaskState: {
+        batchOpen: true,
+        decisionPauseAllowed: false,
+        checkpointReminders: 1,
+      },
+    }
+
+    expect(parseSnapshotLine(serializeSnapshot(snapshot))?.folderTaskState).toEqual({
+      batchOpen: true,
+      decisionPauseAllowed: false,
+      checkpointReminders: 1,
+    })
+  })
+
   it('rejects corrupt and shape-invalid lines', () => {
     expect(parseSnapshotLine('{"turn":1,"messages"')).toBeNull() // torn write
     expect(parseSnapshotLine('not json')).toBeNull()
     expect(parseSnapshotLine('{"foo":1}')).toBeNull() // wrong shape
     expect(parseSnapshotLine('{"turn":"x","messages":[],"ts":"t"}')).toBeNull()
     expect(parseSnapshotLine(JSON.stringify({ ...makeSnapshot(1), version: 2 }))).toBeNull()
+    expect(parseSnapshotLine(JSON.stringify({
+      ...makeSnapshot(1),
+      folderTaskState: { batchOpen: 'yes', decisionPauseAllowed: false, checkpointReminders: 0 },
+    }))).toBeNull()
   })
 
   it('readLatestSnapshot returns the last valid line', () => {

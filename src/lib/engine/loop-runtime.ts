@@ -1,0 +1,2011 @@
+/**
+ * Shared bounded-loop transport for direct, Agent and staged workflows.
+ * @module lib/engine/loop-runtime
+ * @see docs/specs/agent-loop.md
+ */
+
+import type { QueryContext, QueryEvent, UsageStats, Message, MessageContent, RunError, FolderTaskRuntimeStage } from './types'
+import type { Tool, ToolCall, ToolResult, ToolProgress } from '../tools/types'
+import { prepareCall, executeCall, canRunInParallel } from '../tools/executor'
+import { buildToolUseContext } from './tool-context'
+import { SimpleRunLogger } from './logger'
+import { streamModel } from './model'
+import { isEnabled } from '../harness/flags'
+import { createHarnessRuntime, hardGuard, recordToolCompleted, recordToolRequested, sessionGrantKey, type HarnessRuntime } from '../harness/builtin-hooks'
+import { readWorkspaceFile } from '../tauri'
+import { snapshotJson } from '../harness/ledger'
+import { ToolLoopGuard } from './tool-loop-guard'
+import { newId } from '../id'
+import { createRunPlan, type RunPlan, type RunPhase } from './run-plan'
+import { PhaseController, type SerializedPhaseState } from './phase-controller'
+import { resolveCapabilityLease } from './capability-policy'
+import { deliverableRegistry } from './deliverables/registry'
+import { activateSkillRuntime } from './skill-runtime'
+import { decideOutputRecovery, dropTrailingPrefill } from './recovery'
+import type { StagedDeliveryController, StagedDeliveryFactory } from './staged-delivery'
+
+/**
+ * Main query loop - async generator that yields events
+ * @see docs/specs/agent-loop.md §1
+ */
+export async function* runBoundedLoop(
+  ctx: QueryContext,
+  initialPlan: RunPlan,
+  stagedDeliveryFactory: StagedDeliveryFactory,
+): AsyncGenerator<QueryEvent> {
+  const logger = new SimpleRunLogger(ctx.runId)
+  let turn = 0
+  let totalToolCalls = 0
+  let completed = false
+  let continuations = 0
+  let prefill = ''
+  let compactNextTurn = ctx.inputMode === 'compact_recovery'
+  let reasoningRecoveryUsed = ctx.inputMode === 'compact_recovery'
+  // `usage.totalTokens` remains the provider-reported cost for telemetry. The
+  // run budget deliberately does not charge the same history input again on
+  // every turn: only the first input plus all generated output counts toward
+  // the progress budget.
+  let budgetTokens = 0
+  const usage: UsageStats = {
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    turns: 0,
+    toolCalls: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+  }
+
+  // M1-12: Internal controller so an early generator exit (gen.return())
+  // also cancels in-flight model requests / tools, not just external abort()
+  const internal = new AbortController()
+  const unlink = linkAbort(ctx.signal, internal)
+  const runCtx: QueryContext = { ...ctx, signal: internal.signal }
+  let runPlan = initialPlan
+  let phaseController = new PhaseController(runPlan)
+  let deliverableContract = deliverableRegistry.get(runPlan.contractId)
+  let activeSkill = runCtx.skill
+  let activeSkillResources = runCtx.skillResources
+  let activeTools = [...runCtx.tools]
+  const toolLoopGuard = new ToolLoopGuard(runCtx)
+  const closedToolGroups = new Set<string>()
+  let loopRecoveryTurnUsed = false
+  let folderTaskBatchOpen = false
+  let folderTaskDecisionPauseAllowed = false
+  let folderTaskCheckpointReminders = 0
+  let folderTaskStage: FolderTaskRuntimeStage = 'context'
+  const harness = isEnabled('harness') ? createHarnessRuntime(runCtx, { skillRegistry: runCtx.skillRegistry }) : undefined
+
+  const transitionPhase = (next: RunPhase, reason: string): void => {
+    const transition = phaseController.transitionTo(next, reason)
+    harness?.ledger.append('phase.completed', { phase: transition.from, reason })
+    harness?.ledger.append('phase.transitioned', transition)
+    harness?.ledger.append('phase.started', { phase: transition.to, reason })
+  }
+
+  const transitionTerminal = (next: 'completed' | 'failed' | 'exhausted', reason: string): void => {
+    if (phaseController.phase === 'completed' || phaseController.phase === 'failed' || phaseController.phase === 'exhausted') return
+    transitionPhase(next, reason)
+  }
+
+  const closeRetrieval = (): void => {
+    phaseController.closeGroup('attachment-retrieval')
+    toolLoopGuard.closeGroup('attachment-retrieval')
+    closedToolGroups.add('attachment-retrieval')
+  }
+
+  let stagedDelivery: StagedDeliveryController | undefined
+
+  const buildStagedDelivery = (): StagedDeliveryController | undefined => {
+    if (runPlan.mode !== 'staged-delivery' || !runPlan.contractId) return undefined
+    return stagedDeliveryFactory(runPlan, phaseController, deliverableContract, {
+      transition: transitionPhase,
+      closeRetrieval,
+      harness,
+      logger,
+    })
+  }
+
+  const installRunPlan = (nextPlan: RunPlan, reason: string, restored?: SerializedPhaseState): void => {
+    const previousPhase = phaseController.phase
+    const previousTurn = phaseController.turn
+    runPlan = nextPlan
+    deliverableContract = deliverableRegistry.get(runPlan.contractId)
+    phaseController = new PhaseController(runPlan, restored ?? {
+      phase: runPlan.initialPhase,
+      turn: previousTurn,
+      repairAttempts: 0,
+      evidenceComplete: false,
+      closedGroups: [],
+    })
+    harness?.ledger.append('run.planned', {
+      mode: runPlan.mode,
+      initialPhase: runPlan.initialPhase,
+      contractId: runPlan.contractId ?? null,
+      attachmentMode: runPlan.attachmentMode,
+      maxRepairAttempts: runPlan.maxRepairAttempts,
+      reason: runPlan.reason,
+      replanned: true,
+    })
+    harness?.ledger.append('phase.completed', { phase: previousPhase, reason })
+    harness?.ledger.append('phase.transitioned', { from: previousPhase, to: phaseController.phase, reason })
+    harness?.ledger.append('phase.started', { phase: phaseController.phase, reason })
+    stagedDelivery = buildStagedDelivery()
+  }
+
+  stagedDelivery = buildStagedDelivery()
+
+  // Current conversation state (reconstructed per turn or restored from the
+  // last completed tool turn after a renderer restart).
+  let currentMessages = [...ctx.messages]
+  let harnessContext = [...(ctx.harnessContext ?? [])]
+  let retrievedContext = ctx.retrievedContext
+  let isFirstTurn = true
+  let previousModelCompletedAt = ctx.requestStartedAt
+
+  try {
+    harness?.ledger.append('run.started', {
+      conversationId: ctx.conversationId,
+      parentRunId: ctx.parentRunId ?? null,
+      model: {
+        provider: ctx.model.provider,
+        model: ctx.model.model,
+        temperature: ctx.model.temperature,
+      },
+      skill: ctx.skill ? {
+        name: ctx.skill.metadata.name,
+        version: ctx.skill.metadata.version,
+        source: ctx.skill.source ?? ctx.skill.metadata.source,
+      } : null,
+      startupDelayMs: ctx.requestStartedAt ? Math.max(0, Date.now() - ctx.requestStartedAt) : null,
+    })
+    harness?.ledger.append('run.planned', {
+      mode: runPlan.mode,
+      initialPhase: runPlan.initialPhase,
+      contractId: runPlan.contractId ?? null,
+      attachmentMode: runPlan.attachmentMode,
+      maxRepairAttempts: runPlan.maxRepairAttempts,
+      reason: runPlan.reason,
+    })
+    harness?.ledger.append('phase.started', { phase: phaseController.phase, reason: 'run_started' })
+    yield { type: 'run.started', runId: ctx.runId }
+    logger.log('run.started', { runId: ctx.runId, conversationId: ctx.conversationId })
+    if (harness) {
+      const beforeQuery = await harness.hooks.waterfall('before_query', { messages: currentMessages }, { type: 'before_query', runId: ctx.runId, signal: runCtx.signal, onHookError: (id, error) => logger.warn('hook.failed', { id, error: String(error) }) })
+      if (beforeQuery.action === 'abort') throw new Error(beforeQuery.reason)
+      if (beforeQuery.action === 'continue' && typeof beforeQuery.value === 'object' && beforeQuery.value) {
+        const envelope = beforeQuery.value as { context?: unknown; retrievedContext?: unknown }
+        if (Array.isArray(envelope.context)) {
+          harnessContext = envelope.context.filter((text): text is string => typeof text === 'string')
+        }
+        if (typeof envelope.retrievedContext === 'string') {
+          retrievedContext = envelope.retrievedContext
+        }
+      }
+    }
+
+    if (!ctx.restoreSnapshot && ctx.snapshots) {
+      await clearSnapshot(ctx, logger)
+    } else if (ctx.restoreSnapshot && ctx.snapshots) {
+      try {
+        const snapshot = await ctx.snapshots.loadLatest(ctx.conversationId)
+        if (!snapshot) {
+          logger.warn('snapshot.missing', {
+            fallback: 'conversation_history',
+            messageCount: currentMessages.length,
+          })
+        } else if (snapshot.runId !== ctx.runId) {
+          throw new Error('The recoverable Agent snapshot belongs to a different run')
+        } else {
+          turn = snapshot.turn
+          isFirstTurn = turn === 0
+          currentMessages = [...snapshot.messages]
+          Object.assign(usage, snapshot.usage)
+          // New snapshots persist the de-duplicated progress charge. Older
+          // snapshots predate that field, so use their provider total as a
+          // conservative fallback instead of silently resetting the budget.
+          budgetTokens = snapshot.budgetTokens ?? snapshot.usage.totalTokens
+          totalToolCalls = snapshot.usage.toolCalls
+          if (runCtx.folderTaskId) {
+            const folderTaskState = snapshot.folderTaskState ?? inferFolderTaskState(snapshot.messages)
+            folderTaskBatchOpen = folderTaskState.batchOpen
+            folderTaskDecisionPauseAllowed = folderTaskState.decisionPauseAllowed
+            folderTaskCheckpointReminders = folderTaskState.checkpointReminders
+            folderTaskStage = folderTaskState.stage ?? inferFolderTaskState(snapshot.messages).stage
+          }
+          if (snapshot.activeSkillName && snapshot.activeSkillName !== activeSkill?.metadata.name) {
+            throw new Error(`Snapshot requires active Skill ${snapshot.activeSkillName}`)
+          }
+          if (snapshot.runPlan) {
+            const restoredContract = deliverableRegistry.get(snapshot.runPlan.contractId)
+            const restoredPlan: RunPlan = {
+              ...snapshot.runPlan,
+              maxRepairAttempts: snapshot.runPlan.contractId ? restoredContract.maxRepairAttempts : 0,
+            }
+            const restoredState = snapshot.phaseState ?? legacySafePhaseState(restoredPlan, snapshot.turn)
+            installRunPlan(restoredPlan, 'snapshot_restored', restoredState)
+          } else if (runPlan.mode === 'staged-delivery') {
+            // Legacy snapshots have tool results but no phase. Resume at the
+            // physically isolated generation boundary instead of reopening
+            // retrieval and replaying reads.
+            installRunPlan(runPlan, 'legacy_snapshot_safe_generation', legacySafePhaseState(runPlan, snapshot.turn))
+          }
+          for (const group of phaseController.closedGroups) toolLoopGuard.closeGroup(group)
+          logger.log('snapshot.restored', { turn, messageCount: currentMessages.length })
+        }
+      } catch (snapshotError) {
+        logger.warn('snapshot.restore_failed', {
+          error: snapshotError instanceof Error
+            ? snapshotError.message
+            : String(snapshotError),
+        })
+        throw snapshotError
+      }
+    }
+
+    const consecutiveToolFailures = new Map<string, number>()
+
+    // Main agent loop: continue until completion or limit reached
+    while (turn < ctx.limits.maxTurns) {
+      turn = phaseController.incrementTurn()
+      usage.turns = turn
+      logger.log('turn.started', { turn })
+
+      // Check abort signal
+      if (runCtx.signal.aborted) {
+        throw new Error('Aborted')
+      }
+
+      // Build messages with context assembly (M1-04)
+      // Note: streamModel() will call buildMessages() internally
+      logger.log('turn.preparing', { turn })
+      if (harness) {
+        const beforeModel = await harness.hooks.waterfall('before_model_call', { messages: currentMessages, usage, budgetTokens }, { type: 'before_model_call', runId: ctx.runId, signal: runCtx.signal, onHookError: (id, error) => logger.warn('hook.failed', { id, error: String(error) }) })
+        if (beforeModel.action === 'abort') throw new Error(beforeModel.reason)
+        if (beforeModel.action === 'continue' && isMessageEnvelope(beforeModel.value)) currentMessages = [...beforeModel.value.messages]
+      }
+
+      // Stream model response (M1-05, M1-06, M1-07)
+      yield { type: 'run.phase', phase: visibleRunPhase(phaseController.phase, runCtx, activeSkill, turn) }
+      yield { type: 'model.progress', phase: 'preparing' }
+      // Continuations and format repairs must not reintroduce the large input
+      // that already exhausted a reasoning-only turn in this run.
+      const usingCompactInput = compactNextTurn
+        || (reasoningRecoveryUsed && (stagedDelivery !== undefined || prefill.length > 0))
+      compactNextTurn = false
+      let response: { text: string; toolCalls: ToolCall[]; usage?: UsageStats; stopReason?: string; reasoningLength: number }
+      let exposedTools: readonly Tool[] = activeTools
+      let firstChunkAt: string | undefined
+
+      // Sync closed groups into phaseController
+      for (const group of closedToolGroups) {
+        phaseController.closeGroup(group)
+      }
+      stagedDelivery?.prepareTurn()
+
+      let capabilityLease = resolveCapabilityLease({
+        plan: runPlan,
+        phase: phaseController.phase,
+        skill: activeSkill,
+        attachments: runCtx.attachments,
+        closedGroups: phaseController.closedGroups,
+        platform: runCtx.platform,
+        contract: runPlan.contractId ? deliverableContract : undefined,
+      }, activeTools)
+
+      if (stagedDelivery?.advancePastEmptyRetrievalLease(capabilityLease.tools.length)) {
+        capabilityLease = resolveCapabilityLease({
+          plan: runPlan,
+          phase: phaseController.phase,
+          skill: activeSkill,
+          attachments: runCtx.attachments,
+          closedGroups: phaseController.closedGroups,
+          platform: runCtx.platform,
+          contract: deliverableContract,
+        }, activeTools)
+      }
+
+      if (runCtx.folderTaskId) {
+        capabilityLease = restrictFolderTaskCapabilityLease(capabilityLease, folderTaskStage)
+      }
+
+      harness?.ledger.append('capability.bound', {
+        mode: runPlan.mode,
+        phase: phaseController.phase,
+        contractId: runPlan.contractId ?? null,
+        contractVersion: runPlan.contractId ? deliverableContract.version : null,
+        toolCount: capabilityLease.tools.length,
+        toolNames: capabilityLease.tools.map((t) => t.name),
+        toolChoice: capabilityLease.toolChoice,
+        fingerprint: capabilityLease.fingerprint,
+      })
+
+      const stagedModelPolicy = stagedDelivery?.modelPolicy()
+      // FolderTask turns are validated only after the complete model response:
+      // an end_turn may be rejected when a claimed batch lacks a checkpoint.
+      // Buffer that text until validation so a false "completed" statement is
+      // never committed to the visible transcript before the repair turn.
+      const emitText = stagedModelPolicy === undefined && !runCtx.folderTaskId
+
+      try {
+        const modelContext: QueryContext = {
+          ...runCtx,
+          skill: activeSkill,
+          skillResources: activeSkillResources,
+          tools: capabilityLease.tools as Tool[],
+          toolChoice: capabilityLease.toolChoice,
+          model: {
+            ...runCtx.model,
+            temperature: stagedModelPolicy?.temperatureCeiling !== undefined
+              ? Math.min(runCtx.model.temperature ?? stagedModelPolicy.temperatureCeiling, stagedModelPolicy.temperatureCeiling)
+              : runCtx.model.temperature,
+          },
+        }
+        exposedTools = modelContext.tools
+        response = yield* streamModelResponse({
+          ...modelContext,
+          messages: currentMessages,
+          harnessContext: stagedModelPolicy
+            ? [...harnessContext, ...stagedModelPolicy.extraHarnessContext]
+            : harnessContext,
+          retrievedContext: isFirstTurn ? retrievedContext : undefined,
+          inputMode: usingCompactInput ? 'compact_recovery' : 'standard',
+          recoverTextToolCalls: stagedModelPolicy?.recoverTextToolCalls,
+        }, logger, {
+          onModelPrepared: harness ? (request, contextStats) => {
+            const preparedAt = Date.now()
+            harness.ledger.append('model.called', {
+              turn,
+              request: {
+                model: request.model,
+                temperature: request.temperature ?? null,
+                maxTokens: request.maxTokens ?? null,
+                stream: request.stream,
+                timeout: request.timeout ?? null,
+                stallTimeoutMs: request.stallTimeoutMs ?? null,
+                messageCount: request.messages.length,
+                toolCount: request.tools?.length ?? 0,
+                toolChoice: request.toolChoice ?? 'auto',
+                promptCache: request.promptCache ?? null,
+              },
+              localGapMs: previousModelCompletedAt === undefined
+                ? null
+                : Math.max(0, preparedAt - previousModelCompletedAt),
+              contextStats: contextStats ?? null,
+            })
+          } : undefined,
+          onFirstChunk: (timestamp) => {
+            firstChunkAt = timestamp
+          },
+          onToolRequested: harness ? (call) => recordToolRequested(harness, call) : undefined,
+          emitText,
+        })
+      } catch (error) {
+        harness?.ledger.append('model.failed', { turn, message: error instanceof Error ? error.message : String(error) })
+        throw error
+      }
+      // Retrieved workspace memory is useful for grounding the initial request;
+      // subsequent turns should rely on the conversation and tool results.
+      isFirstTurn = false
+      harness?.ledger.append('model.completed', {
+        turn,
+        textLength: response.text.length,
+        toolCallCount: response.toolCalls.length,
+        toolCallNames: response.toolCalls.map((call) => call.name),
+        usage: response.usage,
+        stopReason: response.stopReason,
+        reasoningLength: response.reasoningLength,
+        firstChunkAt: firstChunkAt ?? null,
+      })
+      previousModelCompletedAt = Date.now()
+      await harness?.hooks.observe('after_model_call', { type: 'after_model_call', runId: ctx.runId, response, onHookError: (id, error) => logger.warn('hook.failed', { id, error: String(error) }) })
+
+      // Accumulate token usage
+      if (response.usage) {
+        usage.inputTokens += response.usage.inputTokens
+        usage.outputTokens += response.usage.outputTokens
+        usage.totalTokens += response.usage.totalTokens
+        usage.cacheReadTokens = (usage.cacheReadTokens ?? 0) + (response.usage.cacheReadTokens ?? 0)
+        usage.cacheWriteTokens = (usage.cacheWriteTokens ?? 0) + (response.usage.cacheWriteTokens ?? 0)
+        const charge = response.usage.outputTokens + (turn === 1 ? response.usage.inputTokens : 0)
+        budgetTokens += charge
+        const providerLimit = runCtx.limits.maxProviderTokens
+        if (providerLimit !== undefined && usage.totalTokens > providerLimit) {
+          transitionTerminal('exhausted', 'provider_token_budget')
+          harness?.ledger.append('run.exhausted', { reason: 'max_tokens', usage, providerLimit })
+          yield { type: 'run.exhausted', reason: 'max_tokens', usage: { ...usage } }
+          logger.log('run.exhausted', { reason: 'provider_token_budget', usage, providerLimit })
+          return
+        }
+        if (runCtx.taskTree && !runCtx.taskTree.budget.consume(runCtx.runId, charge)) {
+          transitionTerminal('exhausted', 'task_tree_token_budget')
+          harness?.ledger.append('run.exhausted', {
+            reason: 'max_tokens',
+            scope: 'task_tree',
+            usage,
+            budget: runCtx.taskTree.budget.snapshot(),
+          })
+          yield { type: 'run.exhausted', reason: 'max_tokens', usage: { ...usage } }
+          logger.log('run.exhausted', { reason: 'task_tree_max_tokens', usage })
+          return
+        }
+      }
+
+      const recovery = decideOutputRecovery({
+        response,
+        messages: currentMessages,
+        prefill,
+        continuations,
+        reasoningRecoveryUsed,
+        turn,
+        maxTurns: ctx.limits.maxTurns,
+      })
+      if (recovery.kind === 'continue_output') {
+        continuations = recovery.continuations
+        currentMessages = recovery.messages
+        prefill = recovery.prefill
+        logger.log('turn.continued', { turn, continuations, reason: 'max_tokens' })
+        continue
+      }
+      if (recovery.kind === 'compact_recovery') {
+        reasoningRecoveryUsed = true
+        compactNextTurn = true
+        stagedDelivery?.recoverFromReasoningExhaustion()
+        harness?.ledger.append('model.retrying', {
+          turn,
+          reason: 'reasoning_exhausted_output',
+          reasoningLength: response.reasoningLength,
+          strategy: 'compact_recovery',
+        })
+        logger.warn('model.retrying', {
+          reason: 'reasoning_exhausted_output',
+          reasoningLength: response.reasoningLength,
+          strategy: 'compact_recovery',
+        })
+        continue
+      }
+      if (recovery.kind === 'exhausted') {
+        if (recovery.reason === 'max_output_tokens') {
+          transitionTerminal('exhausted', 'reasoning_output_budget')
+          harness?.ledger.append('run.exhausted', {
+            reason: 'max_output_tokens',
+            recoveryAttempted: true,
+            reasoningLength: response.reasoningLength,
+            usage,
+          })
+          yield { type: 'run.exhausted', reason: 'max_output_tokens', usage: { ...usage } }
+          logger.warn('run.exhausted', { reason: 'reasoning_exhausted_after_compaction', reasoningLength: response.reasoningLength, usage })
+          return
+        }
+        transitionTerminal('exhausted', 'model_output_budget')
+        harness?.ledger.append('run.exhausted', { reason: 'max_tokens', usage })
+        yield { type: 'run.exhausted', reason: 'max_tokens', usage: { ...usage } }
+        logger.log('run.exhausted', { reason: 'stop_reason_max_tokens', usage })
+        return
+      }
+
+      // Check token budget
+      // Let a tool call already emitted by the model run once so a deliverable
+      // is not discarded merely because the preceding input was large.
+      if (budgetTokens > ctx.limits.maxTokens && response.toolCalls.length === 0) {
+        transitionTerminal('exhausted', 'progress_token_budget')
+        harness?.ledger.append('run.exhausted', { reason: 'max_tokens', usage })
+        yield { type: 'run.exhausted', reason: 'max_tokens', usage: { ...usage } }
+        logger.log('run.exhausted', { reason: 'max_tokens', usage })
+        return
+      }
+
+      // If no tool calls, we're done (stop_reason: end_turn)
+      if (response.toolCalls.length === 0) {
+        const completedText = prefill + response.text
+        const incompleteFolderTask = runCtx.folderTaskId
+          && !folderTaskDecisionPauseAllowed
+          && (folderTaskBatchOpen || ['context', 'plan', 'claim', 'batch'].includes(folderTaskStage))
+        if (incompleteFolderTask) {
+          const checkpointRequired = folderTaskBatchOpen || folderTaskStage === 'batch'
+          if (folderTaskCheckpointReminders >= 2 || turn >= ctx.limits.maxTurns) {
+            const error: RunError = {
+              kind: 'internal',
+              message: checkpointRequired
+                ? 'FolderTask 仍有未提交的活动批次；模型未在自动纠错后保存完整检查点'
+                : `FolderTask 未完成当前 ${folderTaskStage} 阶段；模型在自动纠错后仍提前结束`,
+            }
+            transitionTerminal('failed', checkpointRequired ? 'folder_task_checkpoint_missing' : 'folder_task_stage_incomplete')
+            appendTerminalFact(harness, logger, 'run.failed', { ...error, usage })
+            yield { type: 'run.failed', error, usage: { ...usage } }
+            logger.error('run.failed', error)
+            return
+          }
+          folderTaskCheckpointReminders += 1
+          currentMessages = [
+            ...dropTrailingPrefill(currentMessages, prefill),
+            { role: 'assistant', content: completedText },
+            {
+              role: 'user',
+              content: folderTaskRecoveryInstruction(folderTaskStage),
+            },
+          ]
+          prefill = ''
+          continuations = 0
+          harness?.ledger.append('model.retrying', {
+            turn,
+            reason: checkpointRequired ? 'folder_task_checkpoint_required' : 'folder_task_stage_required',
+            stage: folderTaskStage,
+            attempt: folderTaskCheckpointReminders,
+          })
+          logger.warn('model.retrying', {
+            reason: checkpointRequired ? 'folder_task_checkpoint_required' : 'folder_task_stage_required',
+            stage: folderTaskStage,
+            attempt: folderTaskCheckpointReminders,
+          })
+          continue
+        }
+        if (stagedDelivery) {
+          const decision = stagedDelivery.handleNoToolResponse({
+            text: completedText,
+            messages: dropTrailingPrefill(currentMessages, prefill),
+            turn,
+            maxTurns: ctx.limits.maxTurns,
+          })
+          if (decision.kind === 'continue_generation') {
+            currentMessages = decision.messages
+            prefill = ''
+            continuations = 0
+            continue
+          }
+          if (decision.kind === 'repair') {
+            currentMessages = decision.messages
+            prefill = ''
+            yield decision.event
+            continue
+          }
+          if (decision.kind === 'failed') {
+            appendTerminalFact(harness, logger, 'run.failed', { ...decision.error, usage })
+            yield { type: 'run.failed', error: decision.error, usage: { ...usage } }
+            logger.error('run.failed', decision.error)
+            return
+          }
+          if (decision.text) yield { type: 'message.delta', text: decision.text }
+        } else if (phaseController.phase !== 'completed') {
+          transitionPhase('completed', 'model_end_turn')
+        }
+        yield { type: 'message.completed', content: completedText }
+        logger.log('message.completed', {
+          textLength: completedText.length,
+          stopReason: response.stopReason || 'end_turn'
+        })
+        completed = true
+        break
+      }
+
+      // Check tool call limit
+      totalToolCalls += response.toolCalls.length
+      usage.toolCalls = totalToolCalls
+      if (totalToolCalls > ctx.limits.maxToolCalls) {
+        transitionTerminal('exhausted', 'tool_call_budget')
+        harness?.ledger.append('run.exhausted', { reason: 'max_tool_calls', usage })
+        yield { type: 'run.exhausted', reason: 'max_tool_calls', usage: { ...usage } }
+        logger.log('run.exhausted', { reason: 'max_tool_calls', totalToolCalls })
+        return
+      }
+
+      // Execute tools (M1-14, M1-15, M1-16)
+      // Tool input repairs (for example resolving a mistaken read_handle
+      // placeholder) need the latest tool-result messages, not only the
+      // immutable context from the start of the run.
+      const results = yield* executeTools(
+        { ...runCtx, skill: activeSkill, skillResources: activeSkillResources, tools: exposedTools, messages: currentMessages },
+        response.toolCalls,
+        logger,
+        harness,
+        consecutiveToolFailures,
+        toolLoopGuard,
+        activeTools,
+      )
+
+      if (runCtx.folderTaskId) {
+        for (const result of results) {
+          if (!result.success) continue
+          const call = response.toolCalls.find((candidate) => candidate.id === result.callId)
+          const payload = folderTaskToolPayload(result)
+          if (call?.name === 'claim_folder_task_batch') {
+            const hasBatch = isRecord(payload?.batch)
+            const explicitStage = folderTaskStageFromToolData(payload, 'batch')
+            folderTaskBatchOpen = hasBatch
+            // A successful claim with a legacy/mock payload may omit the
+            // batch object. Keep the lease at the batch boundary in that case
+            // so the next turn can still read and checkpoint instead of being
+            // stranded in review with no way to finish the claim.
+            folderTaskStage = hasBatch
+              ? 'batch'
+              : explicitStage !== 'batch'
+                ? explicitStage
+                : Array.isArray(payload?.items) && payload.items.length === 0
+                  ? 'review'
+                  : 'batch'
+            folderTaskDecisionPauseAllowed = false
+            if (folderTaskBatchOpen) folderTaskCheckpointReminders = 0
+          } else if (call?.name === 'update_folder_task_batch') {
+            folderTaskBatchOpen = false
+            folderTaskDecisionPauseAllowed = false
+            folderTaskCheckpointReminders = 0
+            folderTaskStage = folderTaskStageFromToolData(payload, 'review')
+          } else if (call?.name === 'request_folder_task_decision') {
+            const paused = payload?.paused === true
+              || folderTaskStageFromToolData(payload, 'batch') === 'decision'
+            folderTaskDecisionPauseAllowed = paused
+            if (paused) folderTaskStage = 'decision'
+            else if (folderTaskBatchOpen) folderTaskStage = 'batch'
+          } else if (call?.name === 'get_folder_task_context') {
+            // This is the first authoritative task snapshot. Older bridges
+            // may return a successful payload without a nested status; a
+            // successful context read should then advance to the claim gate.
+            folderTaskStage = folderTaskStageFromToolData(payload, 'claim')
+            folderTaskBatchOpen = isRecord(payload?.activeBatch)
+            if (folderTaskBatchOpen) folderTaskStage = 'batch'
+            folderTaskCheckpointReminders = 0
+          } else if (call?.name === 'prepare_folder_task_plan') {
+            folderTaskStage = 'claim'
+            folderTaskBatchOpen = false
+            folderTaskDecisionPauseAllowed = false
+            folderTaskCheckpointReminders = 0
+          } else if (call?.name === 'resolve_folder_task_decision'
+            || call?.name === 'revise_folder_task_result') {
+            folderTaskStage = folderTaskStageFromToolData(payload, 'review')
+            folderTaskBatchOpen = false
+            folderTaskDecisionPauseAllowed = false
+            folderTaskCheckpointReminders = 0
+          } else if (call?.name === 'complete_folder_task') {
+            folderTaskStage = 'terminal'
+            folderTaskBatchOpen = false
+            folderTaskDecisionPauseAllowed = false
+            folderTaskCheckpointReminders = 0
+          }
+        }
+      }
+
+      closedToolGroups.clear()
+      for (const group of activeTools.flatMap((tool) => tool.loopGroup ? [tool.loopGroup] : [])) {
+        if (toolLoopGuard.isClosed(group)) closedToolGroups.add(group)
+      }
+
+      // Three real executions are enough evidence that repeating the same
+      // strategy is unsafe. A fourth request is reported once and terminates
+      // the run immediately; it is not counted as another execution failure.
+      const circuitFailure = results.find((result) => result.error?.kind === 'circuit_breaker')
+      if (circuitFailure) {
+        const error: RunError = { kind: 'internal', message: circuitFailure.error!.message }
+        transitionTerminal('failed', 'tool_circuit_breaker')
+        appendTerminalFact(harness, logger, 'run.failed', { ...error, usage })
+        yield { type: 'run.failed', error, usage: { ...usage } }
+        logger.error('run.failed', error)
+        return
+      }
+
+      const activation = results.find((result) => {
+        if (!result.success || !result.data || typeof result.data !== 'object' || Array.isArray(result.data)) return false
+        return typeof (result.data as { skillName?: unknown }).skillName === 'string'
+          && response.toolCalls.some((call) => call.id === result.callId && call.name === 'activate_skill')
+      })
+      if (activation && runCtx.skillRegistry) {
+        const skillName = (activation.data as { skillName: string }).skillName
+        const loaded = await runCtx.skillRegistry.resolve(skillName)
+        if (loaded) {
+          const activated = await activateSkillRuntime(runCtx, activeTools, loaded)
+          activeSkill = activated.skill
+          activeSkillResources = activated.skillResources
+          activeTools = [...activated.tools]
+          const activatedPlan = createRunPlan(
+            { ...runCtx, skill: loaded, tools: activeTools },
+            deliverableRegistry,
+            isEnabled('stagedRuntime'),
+          )
+          installRunPlan(activatedPlan, 'skill_activated')
+          harness?.ledger.append('skill.activated', { name: loaded.metadata.name, version: loaded.metadata.version })
+          yield { type: 'skill.activated', name: loaded.metadata.name, version: loaded.metadata.version }
+        }
+      }
+
+      const blockedLoopResult = results.find((result) => result.error?.kind === 'budget_exhausted')
+      if (blockedLoopResult) {
+        if (loopRecoveryTurnUsed) {
+          const error: RunError = { kind: 'internal', message: blockedLoopResult.error?.message ?? '工具无进展循环已停止' }
+          transitionTerminal('exhausted', 'tool_loop')
+          appendTerminalFact(harness, logger, 'run.exhausted', { reason: 'tool_loop', error, usage })
+          yield { type: 'run.exhausted', reason: 'tool_loop', usage: { ...usage } }
+          logger.warn('run.exhausted', { reason: 'tool_loop', message: error.message })
+          return
+        }
+        // Give the model exactly one final turn with the retrieval group
+        // removed. A stubborn model gets a deterministic terminal outcome on
+        // the next blocked request instead of burning the remaining turns.
+        loopRecoveryTurnUsed = true
+      }
+
+      // Some deterministic generators own their final artifact contract. Their
+      // tool result stores the complete assistant payload behind a memory
+      // handle so it bypasses another lossy model round and the normal 24KB tool
+      // result clipping boundary.
+      const directAssistant = await readDirectAssistantContent(results, runCtx)
+      if (directAssistant) {
+        usage.inputTokens += directAssistant.usage.inputTokens
+        usage.outputTokens += directAssistant.usage.outputTokens
+        usage.totalTokens += directAssistant.usage.totalTokens
+        budgetTokens += directAssistant.usage.outputTokens
+        yield { type: 'message.delta', text: directAssistant.content }
+        yield { type: 'message.completed', content: directAssistant.content }
+        harness?.ledger.append('artifact.created', { id: directAssistant.callId, ...directAssistant.artifact })
+        transitionTerminal('completed', 'generator_owned_artifact')
+        completed = true
+        break
+      }
+
+      // A stateful terminal tool owns its failure contract. Validation errors
+      // remain recoverable so the model can correct its arguments; runtime
+      // failures are returned as the terminal run error instead of inviting a
+      // replay that may restart an irreversible pipeline.
+      const terminalFailure = results.find((result) => {
+        if (result.success || result.error?.kind === 'invalid_input') return false
+        const call = response.toolCalls.find((candidate) => candidate.id === result.callId)
+        return call && activeTools.find((tool) => tool.name === call.name)?.terminalOnFailure === true
+      })
+      if (terminalFailure) {
+        const message = terminalFailure.error?.message || terminalFailure.content || '工具执行失败'
+        const error: RunError = { kind: 'internal', message }
+        transitionTerminal('failed', 'terminal_tool_failure')
+        appendTerminalFact(harness, logger, 'run.failed', { ...error, usage })
+        yield { type: 'run.failed', error, usage: { ...usage } }
+        logger.error('run.failed', error)
+        return
+      }
+
+      if (budgetTokens > ctx.limits.maxTokens) {
+        transitionTerminal('exhausted', 'progress_token_budget')
+        harness?.ledger.append('run.exhausted', { reason: 'max_tokens', usage })
+        yield { type: 'run.exhausted', reason: 'max_tokens', usage: { ...usage } }
+        logger.log('run.exhausted', { reason: 'progress_budget', usage, budgetTokens })
+        return
+      }
+
+      // Append assistant message with tool calls
+      // A resumed answer already sits in the trailing prefill message; fold it
+      // in rather than appending a second assistant turn.
+      const assistantMessage: Message = {
+        role: 'assistant',
+        content: buildAssistantContent(prefill + response.text, response.toolCalls)
+      }
+      currentMessages = [...dropTrailingPrefill(currentMessages, prefill), assistantMessage]
+      prefill = ''
+
+      // Update consecutive tool failure counts for safety loop guard
+      for (const call of response.toolCalls) {
+        const matchingResult = results.find((r) => r.callId === call.id)
+        if (matchingResult?.success) {
+          consecutiveToolFailures.set(call.name, 0)
+        } else if (
+          matchingResult
+          && !['invalid_input', 'permission_denied', 'aborted', 'loop_detected'].includes(matchingResult.error?.kind ?? '')
+        ) {
+          const current = (consecutiveToolFailures.get(call.name) ?? 0) + 1
+          consecutiveToolFailures.set(call.name, current)
+        }
+      }
+
+      // Append tool results as next message
+      const toolResultContent: MessageContent[] = results.flatMap((result) => {
+        const call = response.toolCalls.find((c) => c.id === result.callId)
+        let content = modelVisibleToolResult(call?.name, result)
+        if (!result.success && call) {
+          const failCount = consecutiveToolFailures.get(call.name) ?? 0
+          if (failCount >= 3) {
+            content += `\n[安全熔断] 工具 ${call.name} 已连续失败 ${failCount} 次。请勿继续尝试此工具，请根据现有信息直接回答或切换其它策略。`
+          }
+        }
+
+        const itemContent: MessageContent[] = [{
+          type: 'tool_result',
+          tool_use_id: result.callId,
+          content,
+          is_error: !result.success,
+        }]
+        const imageUrl = getToolImageUrl(result)
+        if (imageUrl) itemContent.push({ type: 'image_url', image_url: { url: imageUrl } })
+        return itemContent
+      })
+      const toolResultMessage: Message = {
+        role: 'user',
+        content: toolResultContent,
+      }
+      currentMessages = [...currentMessages, toolResultMessage]
+
+      stagedDelivery?.observeToolResults(response.toolCalls, results, turn)
+
+      logger.log('turn.completed', { turn, toolCalls: response.toolCalls.length })
+
+      // M1-13: Snapshot after each completed turn for crash recovery.
+      // Snapshot failure must not kill the run (tombstone principle)
+      if (ctx.snapshots) {
+        try {
+          await ctx.snapshots.append(ctx.conversationId, {
+            version: 2,
+            runId: ctx.runId,
+            turn,
+            messages: currentMessages,
+            usage: { ...usage },
+            budgetTokens,
+            runPlan,
+            phaseState: phaseController.serialize(),
+            activeSkillName: activeSkill?.metadata.name,
+            ...(runCtx.folderTaskId ? {
+              folderTaskState: {
+                batchOpen: folderTaskBatchOpen,
+                decisionPauseAllowed: folderTaskDecisionPauseAllowed,
+                checkpointReminders: folderTaskCheckpointReminders,
+                stage: folderTaskStage,
+              },
+            } : {}),
+            ts: new Date().toISOString(),
+          })
+          logger.log('snapshot.written', { turn })
+        } catch (snapshotError) {
+          logger.warn('snapshot.failed', {
+            turn,
+            error: snapshotError instanceof Error
+              ? snapshotError.message
+              : String(snapshotError),
+          })
+        }
+      }
+    }
+
+    // Only exhausted if the loop ran out of turns. A run that produced its final
+    // answer on the last allowed turn completed normally — reporting it as
+    // exhausted would suppress run.completed, the usage payload, the
+    // on_run_completed hook and snapshot cleanup.
+    if (!completed && turn >= ctx.limits.maxTurns) {
+      transitionTerminal('exhausted', 'turn_budget')
+      harness?.ledger.append('run.exhausted', { reason: 'max_turns', usage })
+      yield { type: 'run.exhausted', reason: 'max_turns', usage: { ...usage } }
+      logger.log('run.exhausted', { reason: 'max_turns', turns: turn })
+      return
+    }
+
+    transitionTerminal('completed', 'run_completed')
+    harness?.ledger.append('run.completed', usage)
+    yield { type: 'run.completed', usage }
+    logger.log('run.completed', { usage })
+    await harness?.hooks.observe('on_run_completed', { type: 'on_run_completed', runId: ctx.runId, usage, onHookError: (id, error) => logger.warn('hook.failed', { id, error: String(error) }) })
+    // Only the restore path clears here; a normal run's snapshot is cleared when
+    // the next run starts (see the !restoreSnapshot branch above), which keeps it
+    // available as a resume point if the renderer dies right after completion.
+    if (ctx.restoreSnapshot) await clearSnapshot(ctx, logger)
+
+  } catch (error) {
+    await harness?.hooks.observe('on_error', { type: 'on_error', runId: ctx.runId, error, onHookError: (id, hookError) => logger.warn('hook.failed', { id, error: String(hookError) }) })
+    if (ctx.taskTree?.budget.abortReason === 'budget_exhausted') {
+      transitionTerminal('exhausted', 'task_tree_token_budget')
+      appendTerminalFact(harness, logger, 'run.exhausted', {
+        reason: 'max_tokens',
+        scope: 'task_tree',
+        usage,
+        budget: ctx.taskTree.budget.snapshot(),
+      })
+      yield { type: 'run.exhausted', reason: 'max_tokens', usage: { ...usage } }
+      logger.log('run.exhausted', { reason: 'task_tree_max_tokens', usage })
+    } else if (error instanceof Error && error.message === 'Run token budget exhausted') {
+      transitionTerminal('exhausted', 'progress_token_budget')
+      appendTerminalFact(harness, logger, 'run.exhausted', { reason: 'max_tokens', usage, budgetTokens })
+      yield { type: 'run.exhausted', reason: 'max_tokens', usage: { ...usage } }
+      logger.log('run.exhausted', { reason: 'progress_budget', usage, budgetTokens })
+    } else if (ctx.signal.aborted) {
+      transitionTerminal('failed', 'aborted')
+      appendTerminalFact(harness, logger, 'run.failed', { kind: 'aborted', message: 'Run was aborted by user', usage })
+      yield {
+        type: 'run.failed',
+        error: { kind: 'aborted', message: 'Run was aborted by user' },
+        usage: { ...usage },
+      }
+      logger.log('run.aborted')
+    } else {
+      const message = error instanceof Error ? error.message : String(error)
+      const kind = error instanceof ModelStreamError ? error.runErrorKind : 'internal'
+      transitionTerminal('failed', 'unhandled_error')
+      appendTerminalFact(harness, logger, 'run.failed', { kind, message, usage })
+      yield {
+        type: 'run.failed',
+        error: { kind, message },
+        usage: { ...usage },
+      }
+      logger.error('run.failed', error)
+    }
+  } finally {
+    // M1-12: Cancel any in-flight work (model HTTP request, running tools).
+    // Reached on normal completion, throw, AND consumer gen.return()
+    internal.abort()
+    unlink()
+    await logger.flush()
+  }
+}
+
+interface FolderTaskRuntimeState {
+  batchOpen: boolean
+  decisionPauseAllowed: boolean
+  checkpointReminders: number
+  stage: FolderTaskRuntimeStage
+}
+
+const FOLDER_TASK_STAGE_TOOLS: Readonly<Record<FolderTaskRuntimeStage, ReadonlySet<string>>> = {
+  context: new Set(['get_folder_task_context']),
+  plan: new Set(['prepare_folder_task_plan']),
+  claim: new Set(['claim_folder_task_batch']),
+  batch: new Set(['read_folder_task_file', 'extract_document_text', 'read_handle', 'update_folder_task_batch', 'request_folder_task_decision']),
+  decision: new Set(['resolve_folder_task_decision']),
+  review: new Set(['list_folder_task_results', 'revise_folder_task_result', 'write_folder_task_output', 'complete_folder_task']),
+  terminal: new Set(),
+}
+
+function restrictFolderTaskCapabilityLease(
+  lease: ReturnType<typeof resolveCapabilityLease>,
+  stage: FolderTaskRuntimeStage,
+): ReturnType<typeof resolveCapabilityLease> {
+  // Until the first durable context response arrives, the runtime cannot know
+  // whether this is a brand-new task (plan), a resumed task (claim/batch), or a
+  // review conversation. Use a bootstrap lease over the already task-scoped
+  // registry; every later turn is narrowed to the server-derived stage.
+  const allowed = stage === 'context'
+    ? new Set(lease.tools.filter((tool) => tool.name !== 'extract_document_text').map((tool) => tool.name))
+    : FOLDER_TASK_STAGE_TOOLS[stage]
+  const tools = lease.tools.filter((tool) => allowed.has(tool.name))
+  const toolChoice = tools.length > 0 ? 'auto' : 'none'
+  const allowedGroups = new Set(tools
+    .map((tool) => tool.loopGroup)
+    .filter((group): group is string => Boolean(group)))
+  return {
+    ...lease,
+    tools,
+    toolChoice,
+    allowedGroups,
+    fingerprint: `${lease.fingerprint}-${stage}`,
+  }
+}
+
+function folderTaskStageFromStatus(status: unknown, fallback: FolderTaskRuntimeStage): FolderTaskRuntimeStage {
+  switch (status) {
+    case 'awaiting_plan_confirmation': return 'plan'
+    case 'running': return 'claim'
+    case 'awaiting_decision': return 'decision'
+    case 'reviewing': return 'review'
+    case 'paused':
+    case 'completed':
+    case 'failed':
+    case 'cancelled': return 'terminal'
+    default: return fallback
+  }
+}
+
+function folderTaskStageFromToolData(data: unknown, fallback: FolderTaskRuntimeStage): FolderTaskRuntimeStage {
+  const record = isRecord(data)
+    ? data
+    : undefined
+  if (!record) return fallback
+  const task = isRecord(record.task)
+    ? record.task
+    : record
+  return folderTaskStageFromStatus(task.status, fallback)
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+}
+
+/** Prefer structured tool data, but support older bridges that only returned JSON text. */
+function folderTaskToolPayload(result: ToolResult): Record<string, unknown> | undefined {
+  if (isRecord(result.data)) return result.data
+  return parseToolResultObject(result.content)
+}
+
+function folderTaskRecoveryInstruction(stage: FolderTaskRuntimeStage): string {
+  if (stage === 'batch') {
+    return '[FolderTask 系统校验] 当前领取的批次尚未保存完整检查点，不能结束运行。请根据刚才的工具错误修正参数，继续读取尚未成功读取的文件，并调用 update_folder_task_batch 一次性提交全部领取项目。不要查询任务结果，也不要仅用文字声称已完成。'
+  }
+  if (stage === 'plan') {
+    return '[FolderTask 系统校验] 当前任务仍在等待语义方案，不能结束运行。请根据最后的校验错误修正参数，并调用 prepare_folder_task_plan。不要领取、读取或查询文件。'
+  }
+  if (stage === 'claim') {
+    return '[FolderTask 系统校验] 当前任务已可执行但尚未领取批次，不能声称处理完成。请调用 claim_folder_task_batch；领取成功后仅处理返回的文件。'
+  }
+  return '[FolderTask 系统校验] 尚未读取权威任务状态，不能结束运行。请调用 get_folder_task_context，并严格执行其当前阶段。'
+}
+
+/** Recover lease invariants from legacy snapshots written before they were explicit. */
+function inferFolderTaskState(messages: readonly Message[]): FolderTaskRuntimeState {
+  const callNames = new Map<string, string>()
+  let batchOpen = false
+  let decisionPauseAllowed = false
+  let stage: FolderTaskRuntimeStage = 'context'
+
+  for (const message of messages) {
+    if (!Array.isArray(message.content)) continue
+    for (const item of message.content) {
+      if (item.type === 'tool_use') {
+        callNames.set(item.id, item.name)
+        continue
+      }
+      if (item.type !== 'tool_result' || item.is_error) continue
+      const name = callNames.get(item.tool_use_id)
+      const data = parseToolResultObject(item.content)
+      if (name === 'claim_folder_task_batch') {
+        batchOpen = isRecord(data?.batch)
+        stage = batchOpen
+          ? 'batch'
+          : folderTaskStageFromToolData(data, 'batch') !== 'batch'
+            ? folderTaskStageFromToolData(data, 'batch')
+            : Array.isArray(data?.items) && data.items.length === 0
+              ? 'review'
+              : 'batch'
+        decisionPauseAllowed = false
+      } else if (name === 'update_folder_task_batch') {
+        batchOpen = false
+        decisionPauseAllowed = false
+        stage = folderTaskStageFromToolData(data, 'review')
+      } else if (name === 'request_folder_task_decision') {
+        decisionPauseAllowed = data?.paused === true
+        if (decisionPauseAllowed) stage = 'decision'
+      } else if (name === 'get_folder_task_context') {
+        stage = folderTaskStageFromToolData(data, 'claim')
+        batchOpen = isRecord(data?.activeBatch)
+        if (batchOpen) stage = 'batch'
+      } else if (name === 'prepare_folder_task_plan') {
+        stage = 'claim'
+      } else if (name === 'resolve_folder_task_decision' || name === 'revise_folder_task_result') {
+        stage = folderTaskStageFromToolData(data, 'review')
+      } else if (name === 'complete_folder_task') {
+        stage = 'terminal'
+      }
+    }
+  }
+
+  return { batchOpen, decisionPauseAllowed, checkpointReminders: 0, stage }
+}
+
+function parseToolResultObject(content: string): Record<string, unknown> | undefined {
+  try {
+    const value = JSON.parse(content) as unknown
+    return value && typeof value === 'object' && !Array.isArray(value)
+      ? value as Record<string, unknown>
+      : undefined
+  } catch {
+    return undefined
+  }
+}
+
+interface DirectAssistantToolData {
+  directAssistantContent: true
+  contentHandle: string
+  artifact: { title: string; type: string; path: string }
+  usage: { inputTokens: number; outputTokens: number; totalTokens: number }
+}
+
+async function readDirectAssistantContent(
+  results: Array<ToolResult & { callId: string }>,
+  ctx: QueryContext,
+): Promise<{ callId: string; content: string; artifact: DirectAssistantToolData['artifact']; usage: DirectAssistantToolData['usage'] } | undefined> {
+  const direct = results.find((result) => isDirectAssistantToolData(result.data))
+  if (!direct || !isDirectAssistantToolData(direct.data)) return undefined
+  const content = await ctx.memory.retrieve(direct.data.contentHandle)
+  if (!content) throw new Error(`无法读取工具生成的最终 artifact：${direct.data.contentHandle}`)
+  return { callId: direct.callId, content, artifact: direct.data.artifact, usage: direct.data.usage }
+}
+
+function isDirectAssistantToolData(value: unknown): value is DirectAssistantToolData {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const data = value as Record<string, unknown>
+  const artifact = data.artifact as Record<string, unknown> | undefined
+  const usage = data.usage as Record<string, unknown> | undefined
+  return data.directAssistantContent === true
+    && typeof data.contentHandle === 'string'
+    && Boolean(artifact && typeof artifact.title === 'string' && typeof artifact.type === 'string' && typeof artifact.path === 'string')
+    && Boolean(usage && typeof usage.inputTokens === 'number' && typeof usage.outputTokens === 'number' && typeof usage.totalTokens === 'number')
+}
+
+/**
+ * Fatal model-stream failure that preserves the provider's classification.
+ * Without this every API failure surfaced as `kind: 'internal'`, so the UI could
+ * never tell a 429 from a genuine bug and the RunError union's rate_limit /
+ * api_error / timeout variants were unreachable.
+ */
+class ModelStreamError extends Error {
+  readonly runErrorKind: RunError['kind']
+  readonly retryable: boolean
+
+  constructor(error: { message: string; type?: string; retryable?: boolean }) {
+    super(`Model error: ${error.message}`)
+    this.name = 'ModelStreamError'
+    this.retryable = error.retryable === true
+    switch (error.type) {
+      case 'rate_limit': this.runErrorKind = 'rate_limit'; break
+      case 'timeout': this.runErrorKind = 'timeout'; break
+      case 'api_error':
+      case 'network':
+      case 'invalid_request':
+      case 'authentication': this.runErrorKind = 'api_error'; break
+      default: this.runErrorKind = 'internal'
+    }
+  }
+}
+
+async function clearSnapshot(ctx: QueryContext, logger: SimpleRunLogger): Promise<void> {
+  if (!ctx.snapshots) return
+  try {
+    await ctx.snapshots.clear(ctx.conversationId)
+    logger.log('snapshot.cleared')
+  } catch (snapshotError) {
+    logger.warn('snapshot.clear_failed', {
+      error: snapshotError instanceof Error ? snapshotError.message : String(snapshotError),
+    })
+  }
+}
+
+function getToolImageUrl(result: ToolResult): string | undefined {
+  if (!result.success || !result.data || typeof result.data !== 'object') return undefined
+  const imageDataUrl = (result.data as Record<string, unknown>).imageDataUrl
+  return typeof imageDataUrl === 'string' && imageDataUrl.startsWith('data:image/')
+    ? imageDataUrl
+    : undefined
+}
+
+/**
+ * Link an external abort signal into a controller
+ * Returns an unlink function to remove the listener (avoid leaks on reuse)
+ * M1-12
+ */
+function linkAbort(external: AbortSignal, controller: AbortController): () => void {
+  if (external.aborted) {
+    controller.abort()
+    return () => {}
+  }
+  const onAbort = () => controller.abort()
+  external.addEventListener('abort', onAbort, { once: true })
+  return () => external.removeEventListener('abort', onAbort)
+}
+
+/**
+ * Stream model response and yield text/tool_call events
+ * @see docs/specs/agent-loop.md §5
+ */
+async function* streamModelResponse(
+  ctx: QueryContext,
+  logger: SimpleRunLogger,
+  callbacks: {
+    onModelPrepared?: Parameters<typeof streamModel>[1]
+    onFirstChunk?: (timestamp: string) => void
+    onToolRequested?: (call: ToolCall) => void | Promise<void>
+    /** Buffer specialized artifact output until its terminal contract validates. */
+    emitText?: boolean
+  } = {},
+): AsyncGenerator<QueryEvent, {
+  text: string
+  toolCalls: ToolCall[]
+  usage?: UsageStats
+  stopReason?: string
+  reasoningLength: number
+}> {
+  let accumulatedText = ''
+  const toolCalls: ToolCall[] = []
+  const toolCallBuilders = new Map<string, { id: string; name: string; input: string }>()
+  let usage: UsageStats | undefined
+  let stopReason: string | undefined
+  let reasoningLength = 0
+  let progressPhase: Extract<QueryEvent, { type: 'model.progress' }>['phase'] | undefined
+  let lastReasoningProgressAt = 0
+  let firstChunkAt: string | undefined
+
+  try {
+    // Call model gateway (M1-05) - streamModel uses ctx internally
+    for await (const chunk of streamModel(ctx, callbacks.onModelPrepared)) {
+      if (chunk.type !== 'ping' && !firstChunkAt) {
+        firstChunkAt = new Date().toISOString()
+        callbacks.onFirstChunk?.(firstChunkAt)
+      }
+      // Check abort signal
+      if (ctx.signal.aborted) {
+        throw new Error('Aborted')
+      }
+
+      switch (chunk.type) {
+        case 'content_delta':
+          if (progressPhase !== 'generating') {
+            progressPhase = 'generating'
+            yield { type: 'model.progress', phase: 'generating' }
+          }
+          accumulatedText += chunk.delta
+          if (callbacks.emitText !== false) yield { type: 'message.delta', text: chunk.delta }
+          break
+
+        case 'reasoning_delta':
+          // Deliberation is not the answer, so it never joins accumulatedText
+          // or the artifact stream. It is measured because it spends the output
+          // budget: a turn that thinks past max_tokens returns no text at all,
+          // and this length is the only thing that explains why.
+          reasoningLength += chunk.delta.length
+          if (progressPhase !== 'reasoning' || Date.now() - lastReasoningProgressAt >= 500) {
+            progressPhase = 'reasoning'
+            lastReasoningProgressAt = Date.now()
+            yield { type: 'model.progress', phase: 'reasoning', observedChars: reasoningLength }
+          }
+          break
+
+        case 'tool_call_start':
+          if (progressPhase !== 'tool_call') {
+            progressPhase = 'tool_call'
+            yield { type: 'model.progress', phase: 'tool_call' }
+          }
+          // Start building a new tool call
+          toolCallBuilders.set(chunk.id, {
+            id: chunk.id,
+            name: chunk.name,
+            input: ''
+          })
+          logger.log('tool_call.start', { callId: chunk.id, name: chunk.name })
+          break
+
+        case 'tool_call_delta': {
+          // Accumulate input JSON
+          const builder = toolCallBuilders.get(chunk.id)
+          if (builder) {
+            builder.input += chunk.delta
+          }
+          break
+        }
+
+        case 'tool_call_end': {
+          // Finalize tool call
+          const builder = toolCallBuilders.get(chunk.id)
+          if (builder) {
+            const toolCall = snapshotJson({
+              id: builder.id,
+              name: builder.name,
+              input: chunk.input // Use the parsed input from chunk
+            }) as unknown as ToolCall
+            toolCalls.push(toolCall)
+            await callbacks.onToolRequested?.(toolCall)
+            yield { type: 'run.phase', ...toolRunPhase(toolCall.name) }
+            yield { type: 'tool.requested', call: toolCall }
+            logger.log('tool_call.complete', {
+              callId: toolCall.id,
+              name: toolCall.name
+            })
+            toolCallBuilders.delete(chunk.id)
+          }
+          break
+        }
+
+        case 'message_end':
+          if (chunk.usage) {
+            usage = {
+              inputTokens: chunk.usage.inputTokens,
+              outputTokens: chunk.usage.outputTokens,
+              totalTokens: chunk.usage.totalTokens || (chunk.usage.inputTokens + chunk.usage.outputTokens),
+              turns: 0,
+              toolCalls: 0,
+              cacheReadTokens: chunk.usage.cacheReadTokens,
+              cacheWriteTokens: chunk.usage.cacheWriteTokens,
+            }
+            logger.log('usage', usage)
+          }
+          if (chunk.stopReason) {
+            stopReason = chunk.stopReason
+            logger.log('stop_reason', { stopReason })
+          }
+          break
+
+        case 'error': {
+          // M1-11: Distinguish between recoverable and fatal errors
+          if (chunk.error.recoverable) {
+            // Emit tombstone for recoverable parse errors and continue
+            yield {
+              type: 'tombstone',
+              reason: 'sse_parse_error',
+              detail: {
+                message: chunk.error.message,
+                kind: chunk.error.kind,
+              }
+            }
+            logger.warn('stream.recoverable_error', chunk.error)
+            // Continue processing next frames
+            break
+          } else {
+            // Fatal error - throw and stop processing. The provider's
+            // classification is carried on the thrown error so the terminal
+            // run.failed can distinguish "retry in a minute" (rate_limit /
+            // api_error) from "your code is broken" (internal).
+            logger.error('stream.fatal_error', chunk.error)
+            throw new ModelStreamError(chunk.error)
+          }
+        }
+
+        // Ignore other event types (message_start, content_start, content_end, ping)
+        default:
+          break
+      }
+    }
+
+    // Some compatible gateways serialize tool protocol as assistant text.
+    // Recovery is a leased runtime capability, never an ambient behavior for
+    // every tool-enabled conversation. The staged retrieval node opts in and
+    // the call still passes through schema, permission and loop guards.
+    if (
+      toolCalls.length === 0
+      && ctx.tools.length > 0
+      && ctx.recoverTextToolCalls === true
+    ) {
+      const tagged = parseTaggedToolCall(accumulatedText, ctx.tools)
+      if (tagged) {
+        accumulatedText = tagged.prefix
+        toolCalls.push(tagged.call)
+        stopReason = 'tool_use'
+        await callbacks.onToolRequested?.(tagged.call)
+        yield { type: 'run.phase', ...toolRunPhase(tagged.call.name) }
+        yield { type: 'tool.requested', call: tagged.call }
+        logger.warn('tool_call.text_protocol_recovered', {
+          callId: tagged.call.id,
+          name: tagged.call.name,
+        })
+      }
+    }
+
+    return { text: accumulatedText, toolCalls, usage, stopReason, reasoningLength }
+
+  } catch (error) {
+    logger.error('stream.failed', error)
+    throw error
+  }
+}
+
+function parseTaggedToolCall(text: string, tools: readonly Tool[]): { prefix: string; call: ToolCall } | undefined {
+  const match = /<tool_call>\s*<function=([A-Za-z_][\w.-]*)>\s*([\s\S]*?)<\/function>\s*<\/tool_call>\s*$/i.exec(text)
+  if (!match) return undefined
+  const tool = tools.find((candidate) => candidate.name === match[1])
+  if (!tool) return undefined
+
+  const input: Record<string, unknown> = {}
+  const parameterPattern = /<parameter=([A-Za-z_][\w.-]*)>\s*([\s\S]*?)\s*<\/parameter>/gi
+  let parameterMatch: RegExpExecArray | null
+  let remainder = match[2]
+  while ((parameterMatch = parameterPattern.exec(match[2])) !== null) {
+    const name = parameterMatch[1]
+    if (Object.hasOwn(input, name)) return undefined
+    const schema = tool.inputSchema.properties?.[name]
+    if (!schema) return undefined
+    const value = coerceTaggedToolValue(parameterMatch[2].trim(), schema.type)
+    if (value === INVALID_TAGGED_TOOL_VALUE) return undefined
+    input[name] = value
+    remainder = remainder.replace(parameterMatch[0], '')
+  }
+  if (remainder.trim()) return undefined
+
+  return {
+    prefix: text.slice(0, match.index).trimEnd(),
+    call: { id: newId('compat-tool'), name: tool.name, input },
+  }
+}
+
+const INVALID_TAGGED_TOOL_VALUE = Symbol('invalid-tagged-tool-value')
+
+function coerceTaggedToolValue(
+  value: string,
+  type: NonNullable<Tool['inputSchema']['properties']>[string]['type'],
+): unknown | typeof INVALID_TAGGED_TOOL_VALUE {
+  if (type === 'integer') return /^-?\d+$/.test(value) ? Number.parseInt(value, 10) : INVALID_TAGGED_TOOL_VALUE
+  if (type === 'number') return /^-?(?:\d+\.?\d*|\.\d+)$/.test(value) ? Number(value) : INVALID_TAGGED_TOOL_VALUE
+  if (type === 'boolean') return value === 'true' ? true : value === 'false' ? false : INVALID_TAGGED_TOOL_VALUE
+  if (type === 'array' || type === 'object') {
+    try {
+      const parsed: unknown = JSON.parse(value)
+      if (type === 'array' ? Array.isArray(parsed) : Boolean(parsed) && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed
+      return INVALID_TAGGED_TOOL_VALUE
+    } catch {
+      return INVALID_TAGGED_TOOL_VALUE
+    }
+  }
+  if (type === 'null') return value === 'null' ? null : INVALID_TAGGED_TOOL_VALUE
+  return value
+}
+
+/**
+ * Execute tool calls and yield progress events
+ * Dispatch pipeline lives in tools/executor.ts (M1-14/15/16):
+ * prepare (lookup → availability → schema) → execute (timeout/retry) → normalize
+ * Tombstones for recoverable errors per M1-11; abort semantics per M1-12.
+ * @see docs/specs/tool-interface.md §4 (流程), §5 (并发)
+ */
+async function* executeTools(
+  ctx: QueryContext,
+  calls: ToolCall[],
+  logger: SimpleRunLogger,
+  harness?: HarnessRuntime,
+  consecutiveToolFailures?: ReadonlyMap<string, number>,
+  loopGuard?: ToolLoopGuard,
+  knownTools: readonly Tool[] = ctx.tools,
+): AsyncGenerator<QueryEvent, Array<ToolResult & { callId: string }>> {
+  logger.log('tools.executing', { count: calls.length })
+
+  const results: Array<ToolResult & { callId: string }> = []
+  const toolCtx = buildToolUseContext(ctx, logger)
+
+  // Steps ①②③ per call; failures feed back immediately so the model
+  // can self-correct, with tombstones for the recoverable cases (M1-11)
+  const runnable: Array<{ call: ToolCall; tool: Tool; loopWarning?: string }> = []
+  for (const call of calls) {
+    // A model may repeat a tool name from conversation history even after its
+    // schema has been removed from the current request. Enforce the closed
+    // phase before validating arguments: otherwise malformed arguments return
+    // `invalid_input`, the loop recovery path never sees `budget_exhausted`,
+    // and a transiently hidden group can be reopened on the next turn.
+    const declaredTool = knownTools.find((tool) => tool.name === call.name)
+    const closedGroup = declaredTool?.loopGroup
+      ?? (call.name === 'read_handle' && loopGuard?.isClosed('attachment-retrieval')
+        ? 'attachment-retrieval'
+        : undefined)
+    if (closedGroup && loopGuard?.isClosed(closedGroup)) {
+      const message = `${closedGroup} 检索阶段已关闭。请不要继续调用该组工具，依据已有证据直接生成结果。`
+      const result: ToolResult & { callId: string } = {
+        callId: call.id,
+        success: false,
+        content: message,
+        error: { kind: 'budget_exhausted', message, recoverable: true },
+        metadata: { durationMs: 0 },
+      }
+      results.push(result)
+      if (harness) recordToolCompleted(harness, result.callId, result)
+      yield { type: 'tool.completed', callId: call.id, result }
+      logger.warn('tool.loop_closed', { callId: call.id, name: call.name, message })
+      continue
+    }
+
+    const priorFailures = consecutiveToolFailures?.get(call.name) ?? 0
+    if (priorFailures >= 3) {
+      const message = `工具 ${call.name} 已连续失败 ${priorFailures} 次，本次运行已阻止继续执行。请改用其它策略或开始新的运行。`
+      const result: ToolResult & { callId: string } = {
+        callId: call.id,
+        success: false,
+        content: message,
+        error: { kind: 'circuit_breaker', message, recoverable: false },
+        metadata: { durationMs: 0 },
+      }
+      results.push(result)
+      harness?.ledger.append('tool.completed', { callId: result.callId, success: false, content: result.content, error: result.error, metadata: result.metadata })
+      yield { type: 'tool.completed', callId: call.id, result }
+      logger.warn('tool.circuit_breaker', { callId: call.id, name: call.name, priorFailures })
+      continue
+    }
+    const prep = prepareCall(call, ctx.tools, ctx.platform)
+    if (prep.ok) {
+      const loopDecision = loopGuard?.inspect(call, prep.tool) ?? { kind: 'allow' as const }
+      if (loopDecision.kind === 'replay') {
+        loopGuard?.observe(call, prep.tool, loopDecision.result)
+        const result: ToolResult & { callId: string } = {
+          ...loopDecision.result,
+          content: `${loopDecision.result.content}\n\n[循环检测提示] ${loopDecision.message}`,
+          callId: call.id,
+          metadata: { ...loopDecision.result.metadata, durationMs: 0 },
+        }
+        results.push(result)
+        if (harness) recordToolCompleted(harness, result.callId, result)
+        yield { type: 'tool.completed', callId: call.id, result }
+        logger.log('tool.replayed', { callId: call.id, name: call.name })
+        continue
+      }
+      if (loopDecision.kind === 'close') {
+        const result: ToolResult & { callId: string } = {
+          callId: call.id,
+          success: false,
+          content: loopDecision.message,
+          error: { kind: 'budget_exhausted', message: loopDecision.message, recoverable: true },
+          metadata: { durationMs: 0 },
+        }
+        results.push(result)
+        if (harness) recordToolCompleted(harness, result.callId, result)
+        yield { type: 'tool.completed', callId: call.id, result }
+        logger.warn('tool.loop_closed', { callId: call.id, name: call.name, message: loopDecision.message })
+        continue
+      }
+      runnable.push({
+        call,
+        tool: prep.tool,
+        ...(loopDecision.kind === 'warn' ? { loopWarning: loopDecision.message } : {}),
+      })
+      continue
+    }
+
+    if (prep.tombstone) {
+      yield {
+        type: 'tombstone',
+        reason: prep.tombstone.reason,
+        detail: prep.tombstone.detail
+      }
+    }
+    const result = { ...prep.result, callId: call.id }
+    results.push(result)
+    harness?.ledger.append('tool.completed', { callId: call.id, success: result.success, content: result.content, error: result.error, metadata: result.metadata })
+    yield { type: 'tool.completed', callId: call.id, result }
+    logger.log('tool.rejected', {
+      callId: call.id,
+      name: call.name,
+      kind: prep.result.error?.kind,
+      tombstone: prep.tombstone?.reason
+    })
+  }
+
+  const makeOpts = (call: ToolCall, relay?: (progress: ToolProgress) => void) => ({
+    ctx: toolCtx,
+    signal: ctx.signal,
+    defaultTimeoutMs: ctx.limits.toolTimeoutMs,
+    onProgress: (p: ToolProgress) => {
+      logger.log('tool.progress', { callId: call.id, ...p })
+      relay?.(p)
+    },
+  })
+
+  // M1-15: Parallel only when EVERY tool is readOnly + concurrencySafe and the
+  // real Harness policy says every call is immediately allowed. A batch with
+  // one confirmation/denial stays on the serial path, preserving UI approval
+  // ordering. This keeps Harness enabled in production without making safe
+  // attachment/file reads artificially sequential.
+  let runInParallel = canRunInParallel(runnable.map(r => r.call), ctx.tools)
+  if (runInParallel && harness) {
+    runInParallel = runnable.every(({ call, tool }) => {
+      const policy = harness.policy.evaluate(tool, call, {
+        workspace: toolCtx.workspace,
+        platform: toolCtx.platform,
+        settings: toolCtx.settings,
+        permissions: toolCtx.permissions,
+        toolContext: toolCtx,
+        skillResources: toolCtx.skillResources,
+        isOnline: typeof navigator === 'undefined' || navigator.onLine,
+      })
+      return policy.kind === 'allow' && hardGuard(ctx, tool, call).kind !== 'deny'
+    })
+  }
+  if (runInParallel) {
+    const preflightResults = new Map<string, ToolResult & { callId: string }>()
+    const executable: typeof runnable = []
+    for (const item of runnable) {
+      const { call, tool } = item
+      if (!harness) {
+        executable.push(item)
+        continue
+      }
+      const authoritativeName = call.name
+      const authoritativeInput = JSON.stringify(call.input)
+      const hookCall = snapshotJson(call) as unknown as ToolCall
+      const beforeTool = await harness.hooks.waterfall('before_tool_call', hookCall, { type: 'before_tool_call', runId: ctx.runId, callId: call.id, signal: ctx.signal, onHookError: (id, error) => logger.warn('hook.failed', { id, error: String(error) }) })
+      let rejected: ToolResult & { callId: string } | undefined
+      if (beforeTool.action === 'abort') {
+        rejected = { callId: call.id, success: false, content: beforeTool.reason, error: { kind: 'permission_denied', message: beforeTool.reason, recoverable: true }, metadata: { durationMs: 0 } }
+      } else if (beforeTool.action === 'short_circuit') {
+        rejected = { ...beforeTool.result, callId: call.id }
+      } else if (beforeTool.value.name !== authoritativeName || JSON.stringify(beforeTool.value.input) !== authoritativeInput || call.name !== authoritativeName || JSON.stringify(call.input) !== authoritativeInput) {
+        const reason = '工具请求落账后不可修改名称或参数，请发起新的工具调用。'
+        rejected = { callId: call.id, success: false, content: reason, error: { kind: 'permission_denied', message: reason, recoverable: true }, metadata: { durationMs: 0 } }
+      } else {
+        const policy = Object.freeze(harness.policy.evaluate(tool, call, {
+          workspace: toolCtx.workspace,
+          platform: toolCtx.platform,
+          settings: toolCtx.settings,
+          permissions: toolCtx.permissions,
+          toolContext: toolCtx,
+          skillResources: toolCtx.skillResources,
+          isOnline: typeof navigator === 'undefined' || navigator.onLine,
+        }))
+        await harness.hooks.observe('on_permission', { type: 'on_permission', runId: ctx.runId, callId: call.id, call, decision: policy, onHookError: (id, error) => logger.warn('hook.failed', { id, error: String(error) }) })
+        const guard = hardGuard(ctx, tool, call)
+        if (policy.kind !== 'allow' || guard.kind === 'deny') {
+          const reason = policy.kind !== 'allow'
+            ? policy.reason
+            : guard.kind === 'deny'
+              ? guard.reason
+              : '工具未通过并行执行安全检查。'
+          rejected = { callId: call.id, success: false, content: reason, error: { kind: 'permission_denied', message: reason, recoverable: true }, metadata: { durationMs: 0 } }
+        }
+      }
+      if (rejected) preflightResults.set(call.id, rejected)
+      else executable.push(item)
+    }
+
+    for (const { call } of executable) {
+      yield { type: 'run.phase', ...toolRunPhase(call.name) }
+      yield {
+        type: 'tool.progress',
+        callId: call.id,
+        progress: { phase: 'executing', current: 0 }
+      }
+    }
+
+    // Every promise gets a handler at creation time. Awaiting them one at a time
+    // would leave the later ones unhandled if an earlier one rejects (or if the
+    // consumer abandons the generator at the yield below), producing
+    // unhandledrejection and discarding results that already completed.
+    const promises = new Map(executable.map(({ tool, call }) => [call.id,
+      (harness
+        ? harness.hooks.around('execute_tool', { type: 'execute_tool', runId: ctx.runId, callId: call.id, call, signal: ctx.signal }, () => executeCall(tool, call, makeOpts(call)))
+        : executeCall(tool, call, makeOpts(call)))
+        .catch((error): ToolResult => ({
+          success: false,
+          content: `工具执行失败：${error instanceof Error ? error.message : String(error)}`,
+          error: {
+            kind: 'runtime',
+            message: error instanceof Error ? error.message : String(error),
+            recoverable: true,
+          },
+          metadata: { durationMs: 0 },
+        })),
+    ]))
+    for (const { call, tool, loopWarning } of runnable) {
+      const preflight = preflightResults.get(call.id)
+      const executed = preflight ?? await promises.get(call.id)!
+      if (!preflight) loopGuard?.observe(call, tool, executed)
+      const result = {
+        ...executed,
+        ...(loopWarning ? { content: `${executed.content}\n\n[循环检测提示] ${loopWarning}` } : {}),
+        callId: call.id,
+      }
+      results.push(result)
+      if (harness) recordToolCompleted(harness, result.callId, result)
+      yield { type: 'tool.completed', callId: call.id, result }
+      if (harness && !preflight) {
+        await harness.hooks.observe('after_tool_call', { type: 'after_tool_call', runId: ctx.runId, callId: call.id, result: Object.freeze({ ...result }), onHookError: (id, error) => logger.warn('hook.failed', { id, error: String(error) }) })
+      }
+      logger.log('tool.completed', {
+        callId: call.id,
+        name: call.name,
+        success: result.success,
+        durationMs: result.metadata?.durationMs
+      })
+    }
+    return results
+  }
+
+  // Serial path, model-returned order
+  for (let i = 0; i < runnable.length; i++) {
+    const { call, tool, loopWarning } = runnable[i]
+
+    // Cancellation may happen while the previous tool or approval is active.
+    // Stop before invoking any hook or policy for the next tool.
+    if (ctx.signal.aborted) {
+      for (const { call: remaining } of runnable.slice(i)) {
+        const result: ToolResult & { callId: string } = {
+          callId: remaining.id,
+          success: false,
+          content: 'Tool execution aborted by user',
+          error: {
+            kind: 'aborted',
+            message: 'Run was aborted before this tool executed',
+            recoverable: false
+          },
+          metadata: { durationMs: 0 }
+        }
+        results.push(result)
+        if (harness) recordToolCompleted(harness, remaining.id, result)
+        yield { type: 'tool.completed', callId: remaining.id, result }
+        logger.log('tool.aborted', { callId: remaining.id, name: remaining.name })
+      }
+      break
+    }
+
+    if (harness) {
+      const authoritativeName = call.name
+      const authoritativeInput = JSON.stringify(call.input)
+      const hookCall = snapshotJson(call) as unknown as ToolCall
+      const beforeTool = await harness.hooks.waterfall('before_tool_call', hookCall, { type: 'before_tool_call', runId: ctx.runId, callId: call.id, signal: ctx.signal, onHookError: (id, error) => logger.warn('hook.failed', { id, error: String(error) }) })
+      if (beforeTool.action === 'abort') {
+        const result: ToolResult & { callId: string } = { callId: call.id, success: false, content: beforeTool.reason, error: { kind: 'permission_denied', message: beforeTool.reason, recoverable: true }, metadata: { durationMs: 0 } }
+        results.push(result); recordToolCompleted(harness, call.id, result); yield { type: 'tool.completed', callId: call.id, result }; continue
+      }
+      if (beforeTool.action === 'short_circuit') {
+        const result = { ...beforeTool.result, callId: call.id }; results.push(result); recordToolCompleted(harness, call.id, result); yield { type: 'tool.completed', callId: call.id, result }; continue
+      }
+      if (beforeTool.value.name !== authoritativeName || JSON.stringify(beforeTool.value.input) !== authoritativeInput || call.name !== authoritativeName || JSON.stringify(call.input) !== authoritativeInput) {
+        const reason = '工具请求落账后不可修改名称或参数，请发起新的工具调用。'
+        const result: ToolResult & { callId: string } = { callId: call.id, success: false, content: reason, error: { kind: 'permission_denied', message: reason, recoverable: true }, metadata: { durationMs: 0 } }
+        results.push(result); recordToolCompleted(harness, call.id, result); yield { type: 'tool.completed', callId: call.id, result }; continue
+      }
+      const policy = Object.freeze(harness.policy.evaluate(tool, call, {
+        workspace: toolCtx.workspace,
+        platform: toolCtx.platform,
+        settings: toolCtx.settings,
+        permissions: toolCtx.permissions,
+        toolContext: toolCtx,
+        skillResources: toolCtx.skillResources,
+        isOnline: typeof navigator === 'undefined' || navigator.onLine,
+      }))
+      // `observe` is the least-privileged hook mode and its exceptions are
+      // swallowed, so it must not be able to widen a decision. The decision is
+      // frozen and re-read from the frozen object after the await.
+      await harness.hooks.observe('on_permission', { type: 'on_permission', runId: ctx.runId, callId: call.id, call, decision: policy, onHookError: (id, error) => logger.warn('hook.failed', { id, error: String(error) }) })
+      let denied = policy.kind === 'deny' ? policy.reason : undefined
+      const grantKey = sessionGrantKey(tool, call)
+      if (policy.kind === 'ask' && !harness.approvals.hasSessionGrant(grantKey)) {
+        const prompt = await enrichConfirmationPrompt(policy.prompt, tool, call, ctx)
+        const requestId = `approval_${ctx.runId}_${call.id}`
+        harness.ledger.append('approval.asked', { requestId, callId: call.id, toolName: tool.name, reason: policy.reason, prompt }, { requirePersistence: true })
+        yield { type: 'permission.required', requestId, callId: call.id, prompt }
+        const approval = await harness.approvals.request({ requestId, askedAlready: true, runId: ctx.runId, callId: call.id, toolName: tool.name, grantKey, reason: policy.reason, prompt, signal: ctx.signal })
+        yield { type: 'permission.resolved', requestId, callId: call.id, outcome: approval.outcome }
+        if (approval.outcome !== 'allowed_once') denied = approval.outcome === 'cancelled' ? '用户已停止运行，未执行该操作。' : '用户未授权该操作，已跳过执行。'
+      }
+      const guard = hardGuard(ctx, tool, call)
+      if (guard.kind === 'deny') denied = guard.reason
+      if (denied) {
+        const result: ToolResult & { callId: string } = { callId: call.id, success: false, content: denied, error: { kind: 'permission_denied', message: denied, recoverable: true }, metadata: { durationMs: 0 } }
+        results.push(result)
+        recordToolCompleted(harness, call.id, result)
+        yield { type: 'tool.completed', callId: call.id, result }
+        continue
+      }
+    }
+
+    // M1-12: Stop between tools on abort. Completed results are preserved
+    // (already yielded + in results); remaining calls get synthetic aborted
+    // results so every tool_use in history has a matching tool_result.
+    if (ctx.signal.aborted) {
+      for (const { call: remaining } of runnable.slice(i)) {
+        const result: ToolResult & { callId: string } = {
+          callId: remaining.id,
+          success: false,
+          content: 'Tool execution aborted by user',
+          error: {
+            kind: 'aborted',
+            message: 'Run was aborted before this tool executed',
+            recoverable: false
+          },
+          metadata: { durationMs: 0 }
+        }
+        results.push(result)
+        if (harness) recordToolCompleted(harness, remaining.id, result)
+        yield { type: 'tool.completed', callId: remaining.id, result }
+        logger.log('tool.aborted', { callId: remaining.id, name: remaining.name })
+      }
+      break
+    }
+
+    yield { type: 'run.phase', ...toolRunPhase(call.name) }
+    yield {
+      type: 'tool.progress',
+      callId: call.id,
+      progress: { phase: 'executing', current: 0 }
+    }
+
+    // A throw here would leave every tool_use in this turn without a matching
+    // tool_result, which the APIs reject outright. Tools tombstone instead.
+    let executed: ToolResult
+    try {
+      executed = yield* relayExecutionProgress(call.id, (onProgress) => harness
+        ? harness.hooks.around('execute_tool', { type: 'execute_tool', runId: ctx.runId, callId: call.id, call, signal: ctx.signal }, () => executeCall(tool, call, makeOpts(call, onProgress)))
+        : executeCall(tool, call, makeOpts(call, onProgress)))
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      logger.warn('tool.threw', { callId: call.id, name: call.name, error: message })
+      executed = {
+        success: false,
+        content: `工具执行失败：${message}`,
+        error: { kind: 'runtime', message, recoverable: true },
+        metadata: { durationMs: 0 },
+      }
+    }
+    const result = { ...executed, callId: call.id }
+    loopGuard?.observe(call, tool, executed)
+    if (loopWarning) result.content = `${result.content}\n\n[循环检测提示] ${loopWarning}`
+    results.push(result)
+    if (harness) recordToolCompleted(harness, call.id, result)
+    yield { type: 'tool.completed', callId: call.id, result }
+    // Frozen: an after_tool_call observer must not be able to rewrite the result
+    // after it has been ledgered, which would diverge the audit trail from what
+    // the model actually sees.
+    await harness?.hooks.observe('after_tool_call', { type: 'after_tool_call', runId: ctx.runId, callId: call.id, result: Object.freeze({ ...result }), onHookError: (id, error) => logger.warn('hook.failed', { id, error: String(error) }) })
+    logger.log('tool.completed', {
+      callId: call.id,
+      name: call.name,
+      success: result.success,
+      durationMs: result.metadata?.durationMs
+    })
+  }
+
+  return results
+}
+
+/**
+ * Tool `data` is primarily for the UI/ledger and is not sent to the model.
+ * Retrieval tools therefore need a compact, model-visible pagination hint or
+ * the model can only guess the next offset and repeatedly request page zero.
+ */
+function modelVisibleToolResult(toolName: string | undefined, result: ToolResult): string {
+  // A handle marker is itself the pagination instruction. Appending a second
+  // read_attachment offset hint creates two mutually exclusive next actions.
+  if (result.handle) return result.content
+  if (!result.success || !result.data || typeof result.data !== 'object' || Array.isArray(result.data)) {
+    return result.content
+  }
+  if (toolName !== 'read_handle' && toolName !== 'read_attachment') return result.content
+
+  const data = result.data as Record<string, unknown>
+  const nextOffset = typeof data.nextOffset === 'number' ? data.nextOffset : undefined
+  const offset = typeof data.offset === 'number' ? data.offset : 0
+  const total = typeof data.total === 'number' ? data.total : undefined
+  if (nextOffset !== undefined) {
+    return `${result.content}\n\n[分页提示] 当前已读取 offset=${offset}；请继续调用 ${toolName} 并使用 offset=${nextOffset}。${total === undefined ? '' : `总长度为 ${total}。`}`
+  }
+  if (total !== undefined) {
+    return `${result.content}\n\n[分页提示] 当前内容已读取到末尾（总长度 ${total}，当前 offset=${offset}）。请不要重复读取这一页。`
+  }
+  return result.content
+}
+
+/** Relay progress emitted during a pending tool promise without buffering it until completion. */
+async function* relayExecutionProgress(
+  callId: string,
+  execute: (onProgress: (progress: ToolProgress) => void) => Promise<ToolResult>,
+): AsyncGenerator<QueryEvent, ToolResult> {
+  const queue: ToolProgress[] = []
+  let wake: (() => void) | undefined
+  let settled = false
+  let result: ToolResult | undefined
+  let failure: unknown
+
+  const notify = () => {
+    const current = wake
+    wake = undefined
+    current?.()
+  }
+  const promise = Promise.resolve()
+    .then(() => execute((progress) => {
+      queue.push(progress)
+      notify()
+    }))
+    .then(
+      (value) => { result = value },
+      (error) => { failure = error },
+    )
+    .finally(() => {
+      settled = true
+      notify()
+    })
+
+  while (!settled || queue.length > 0) {
+    if (queue.length === 0) {
+      await new Promise<void>((resolve) => { wake = resolve })
+    }
+    while (queue.length > 0) {
+      const progress = queue.shift()!
+      const phase = toolProgressRunPhase(progress)
+      if (phase) yield { type: 'run.phase', ...phase }
+      yield { type: 'tool.progress', callId, progress }
+    }
+  }
+  await promise
+  if (failure) throw failure
+  if (!result) throw new Error('Tool execution completed without a result')
+  return result
+}
+
+function preparationRunPhase(
+  ctx: QueryContext,
+  activeSkill: QueryContext['skill'],
+  turn: number,
+): Extract<QueryEvent, { type: 'run.phase' }>['phase'] {
+  if (turn === 1 && ctx.attachments?.length && ctx.attachmentMode === 'retrieval') return 'reading_sources'
+  if (turn === 1 && !activeSkill && ctx.skillRegistry) return 'selecting_skill'
+  return 'generating'
+}
+
+function visibleRunPhase(
+  phase: RunPhase,
+  ctx: QueryContext,
+  activeSkill: QueryContext['skill'],
+  turn: number,
+): Extract<QueryEvent, { type: 'run.phase' }>['phase'] {
+  if (phase === 'retrieving') return 'reading_sources'
+  if (phase === 'validating') return 'validating'
+  if (phase === 'repairing') return 'repairing'
+  if (phase === 'generating') return 'generating'
+  return preparationRunPhase(ctx, activeSkill, turn)
+}
+
+function legacySafePhaseState(plan: RunPlan, turn: number): SerializedPhaseState {
+  const staged = plan.mode === 'staged-delivery'
+  return {
+    phase: staged ? 'generating' : plan.initialPhase,
+    turn,
+    repairAttempts: 0,
+    evidenceComplete: staged,
+    closedGroups: staged ? ['attachment-retrieval'] : [],
+  }
+}
+
+function toolRunPhase(name: string): Pick<Extract<QueryEvent, { type: 'run.phase' }>, 'phase'> {
+  if (name === 'activate_skill') return { phase: 'selecting_skill' }
+  if (name === 'search_attachments' || name === 'read_attachment' || name === 'prepare_attachment_evidence') {
+    return { phase: 'reading_sources' }
+  }
+  if (name === 'capture_preview' || name.includes('validate') || name.includes('review')) return { phase: 'validating' }
+  if (name.startsWith('generate_')) return { phase: 'generating' }
+  return { phase: 'reading_sources' }
+}
+
+function toolProgressRunPhase(progress: ToolProgress): Pick<Extract<QueryEvent, { type: 'run.phase' }>, 'phase' | 'detail'> | undefined {
+  const detail = progress.detail && typeof progress.detail === 'object' && !Array.isArray(progress.detail)
+    ? progress.detail as { stage?: unknown }
+    : undefined
+  const stage = typeof detail?.stage === 'string'
+    ? detail.stage
+    : progress.phase.replace(/^[^_]+_/, '')
+  if (stage === 'repair') return { phase: 'repairing', ...(progress.message ? { detail: progress.message } : {}) }
+  if (stage === 'assemble' || stage === 'review' || stage === 'validate' || stage === 'validation') {
+    return { phase: 'validating', ...(progress.message ? { detail: progress.message } : {}) }
+  }
+  if (stage === 'source') return { phase: 'reading_sources', ...(progress.message ? { detail: progress.message } : {}) }
+  if (stage === 'design' || stage === 'outline' || stage === 'planning' || stage === 'page') {
+    return { phase: 'generating', ...(progress.message ? { detail: progress.message } : {}) }
+  }
+  return undefined
+}
+
+function isMessageEnvelope(value: unknown): value is { messages: Message[] } {
+  if (!value || typeof value !== 'object') return false
+  const messages = (value as { messages?: unknown }).messages
+  return Array.isArray(messages) && messages.every((message) => message && typeof message === 'object' && ((message as Message).role === 'user' || (message as Message).role === 'assistant'))
+}
+
+function appendTerminalFact(
+  harness: HarnessRuntime | undefined,
+  logger: SimpleRunLogger,
+  type: 'run.failed' | 'run.exhausted',
+  payload: unknown,
+): void {
+  try { harness?.ledger.append(type, payload) }
+  catch (error) { logger.error('ledger.terminal_write_failed', error) }
+}
+
+async function enrichConfirmationPrompt(prompt: import('../harness/policy').ConfirmationPrompt, tool: Tool, call: ToolCall, ctx: QueryContext) {
+  if (tool.name !== 'write_file' || typeof call.input?.path !== 'string' || typeof call.input?.content !== 'string') return prompt
+  const bytes = new TextEncoder().encode(call.input.content).byteLength
+  const previewLimit = 8_000
+  const after = call.input.content.length > previewLimit
+    ? `${call.input.content.slice(0, previewLimit)}\n\n[预览已截断，共 ${bytes} 字节]`
+    : call.input.content
+  try {
+    const existing = await readWorkspaceFile(call.input.path, ctx.cwd, 0, previewLimit)
+    const before = !existing.binary && existing.content
+      ? existing.truncated ? `${existing.content}\n\n[预览已截断，共 ${existing.bytes} 字节]` : existing.content
+      : undefined
+    return { ...prompt, detail: `将写入 ${call.input.path}，约 ${bytes} 字节，覆盖已有文件（当前 ${existing.bytes} 字节）`, diff: { before, after } }
+  } catch {
+    return { ...prompt, detail: `将写入 ${call.input.path}，约 ${bytes} 字节；若文件已存在将被覆盖`, diff: { after } }
+  }
+}
+
+/**
+ * Build assistant message content with text and tool calls
+ */
+function buildAssistantContent(text: string, toolCalls: ToolCall[]) {
+  if (toolCalls.length === 0) {
+    return text
+  }
+
+  const content = []
+
+  if (text.trim()) {
+    content.push({ type: 'text' as const, text })
+  }
+
+  for (const call of toolCalls) {
+    content.push({
+      type: 'tool_use' as const,
+      id: call.id,
+      name: call.name,
+      input: call.input
+    })
+  }
+
+  return content
+}

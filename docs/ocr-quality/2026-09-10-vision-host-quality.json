@@ -1,0 +1,4022 @@
+{
+  "amountExactCount": 25,
+  "baselineSha256": "06eafa5f18a06f0e57d6b4b7bc1b14b778cde4739f6b6ca512261aeca5dff6ca",
+  "binarySha256": "045b0013151c161eb9ae1755317d4b1fef795b754bf7c06f74f2e4fe38e03118",
+  "completed": true,
+  "durationMs": 338916,
+  "engine": "Apple Vision",
+  "experimentSha256": "b7456574061222ebf99b67146ee04ed88a5dd8d3320dfda8f933a444cb3f70c4",
+  "generatorSha256": "b357acb069339fe9c6ff21d7641b135074c57f46fd903af8722cdcd3dd1c3cc6",
+  "hostRunnerSha256": "96bc0a4cd18ab50855289ba64eb7b1917fe486d7319eddcf3b51d8e20186495e",
+  "inputEncoding": "png-data",
+  "isolation": "HOST-ONLY-no-confinement",
+  "manifestSha256": "3b7a7beafcd79d70deb56ffba9a46e2362581ca9f524059529e192ead2a10a6c",
+  "processFailure": null,
+  "rows": [
+    {
+      "amountExact": true,
+      "durationMs": 9382,
+      "expected": {
+        "amount": "一百万元",
+        "amountStyle": "han",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "PingFangSC-Regular",
+        "fontSize": 52,
+        "id": "f0-lines-han-sharp",
+        "layout": "lines"
+      },
+      "file": "f0-lines-han-sharp.png",
+      "inputSha256": "70d58930a5138b8ce58b8781e21ae43006247bb3082bd781c7eaeab4d01cf528",
+      "missingControlLines": [],
+      "payload": {
+        "automaticallyDetectsLanguage": false,
+        "durationMs": 8904,
+        "engine": "Apple Vision",
+        "inputEncoding": "png-data",
+        "minimumTextHeight": 0,
+        "modelSource": "OS-managed Vision assets; independent model hash unavailable",
+        "observations": [
+          {
+            "boundingBox": [
+              0.06390239242845518,
+              0.7834854927811769,
+              0.16143939971923826,
+              0.07754728589739124
+            ],
+            "confidence": 1,
+            "text": "项目结算单"
+          },
+          {
+            "boundingBox": [
+              0.06104651410194421,
+              0.6013289035701961,
+              0.27325580596923826,
+              0.08009966714041572
+            ],
+            "confidence": 0.5,
+            "text": "合同金额 一百万元"
+          },
+          {
+            "boundingBox": [
+              0.06389824357351649,
+              0.4278287390314142,
+              0.1948779296875,
+              0.07789734159197126
+            ],
+            "confidence": 1,
+            "text": "中文识别测试"
+          },
+          {
+            "boundingBox": [
+              0.05833334327449538,
+              0.2471428575238096,
+              0.35833332061767575,
+              0.07714285714285707
+            ],
+            "confidence": 1,
+            "text": "SOLIDIFY OCR CHECK"
+          }
+        ],
+        "osVersion": "Version 26.6.2 (Build 25G83)",
+        "recognitionLanguages": [
+          "zh-Hans",
+          "en-US"
+        ],
+        "recognitionLevel": "accurate",
+        "requestRevision": 3,
+        "schemaVersion": 1,
+        "success": true,
+        "supportedLanguages": [
+          "en-US",
+          "fr-FR",
+          "it-IT",
+          "de-DE",
+          "es-ES",
+          "pt-BR",
+          "zh-Hans",
+          "zh-Hant",
+          "yue-Hans",
+          "yue-Hant",
+          "ko-KR",
+          "ja-JP",
+          "ru-RU",
+          "uk-UA",
+          "th-TH",
+          "vi-VT",
+          "ar-SA",
+          "ars-SA",
+          "tr-TR",
+          "id-ID",
+          "cs-CZ",
+          "da-DK",
+          "nl-NL",
+          "no-NO",
+          "nn-NO",
+          "nb-NO",
+          "ms-MY",
+          "pl-PL",
+          "ro-RO",
+          "sv-SE"
+        ],
+        "text": "项目结算单\n合同金额 一百万元\n中文识别测试\nSOLIDIFY OCR CHECK\n",
+        "usesCPUOnly": true,
+        "usesLanguageCorrection": false
+      },
+      "sourceSha256": "70d58930a5138b8ce58b8781e21ae43006247bb3082bd781c7eaeab4d01cf528",
+      "stderr": "",
+      "strictImprovement": true,
+      "strictRegression": false,
+      "workEmpty": true
+    },
+    {
+      "amountExact": true,
+      "durationMs": 8656,
+      "expected": {
+        "amount": "一百万元",
+        "amountStyle": "han",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "blur-binomial-7",
+        "font": "PingFangSC-Regular",
+        "fontSize": 52,
+        "id": "f0-lines-han-blur-binomial-7",
+        "layout": "lines"
+      },
+      "file": "f0-lines-han-blur-binomial-7.png",
+      "inputSha256": "d87fce4fc3872100c5bbdd486c4a11edf061d3e8acba7c4529c0302b34f4da2c",
+      "missingControlLines": [],
+      "payload": {
+        "automaticallyDetectsLanguage": false,
+        "durationMs": 8624,
+        "engine": "Apple Vision",
+        "inputEncoding": "png-data",
+        "minimumTextHeight": 0,
+        "modelSource": "OS-managed Vision assets; independent model hash unavailable",
+        "observations": [
+          {
+            "boundingBox": [
+              0.061011027334139475,
+              0.7770516238042883,
+              0.16576864242553707,
+              0.08709276471819194
+            ],
+            "confidence": 1,
+            "text": "项目结算单"
+          },
+          {
+            "boundingBox": [
+              0.06104651702507074,
+              0.5980066452423648,
+              0.2732558059692382,
+              0.08637873513357974
+            ],
+            "confidence": 0.5,
+            "text": "合同金额 一百万元"
+          },
+          {
+            "boundingBox": [
+              0.06242272045447113,
+              0.42099329720412226,
+              0.19782897949218753,
+              0.08824596677507668
+            ],
+            "confidence": 1,
+            "text": "中文识别测试"
+          },
+          {
+            "boundingBox": [
+              0.061046514855121144,
+              0.248571429566243,
+              0.3531976699829102,
+              0.07714285714285718
+            ],
+            "confidence": 1,
+            "text": "SOLIDIFY OCR CHECK"
+          }
+        ],
+        "osVersion": "Version 26.6.2 (Build 25G83)",
+        "recognitionLanguages": [
+          "zh-Hans",
+          "en-US"
+        ],
+        "recognitionLevel": "accurate",
+        "requestRevision": 3,
+        "schemaVersion": 1,
+        "success": true,
+        "supportedLanguages": [
+          "en-US",
+          "fr-FR",
+          "it-IT",
+          "de-DE",
+          "es-ES",
+          "pt-BR",
+          "zh-Hans",
+          "zh-Hant",
+          "yue-Hans",
+          "yue-Hant",
+          "ko-KR",
+          "ja-JP",
+          "ru-RU",
+          "uk-UA",
+          "th-TH",
+          "vi-VT",
+          "ar-SA",
+          "ars-SA",
+          "tr-TR",
+          "id-ID",
+          "cs-CZ",
+          "da-DK",
+          "nl-NL",
+          "no-NO",
+          "nn-NO",
+          "nb-NO",
+          "ms-MY",
+          "pl-PL",
+          "ro-RO",
+          "sv-SE"
+        ],
+        "text": "项目结算单\n合同金额 一百万元\n中文识别测试\nSOLIDIFY OCR CHECK\n",
+        "usesCPUOnly": true,
+        "usesLanguageCorrection": false
+      },
+      "sourceSha256": "d87fce4fc3872100c5bbdd486c4a11edf061d3e8acba7c4529c0302b34f4da2c",
+      "stderr": "",
+      "strictImprovement": false,
+      "strictRegression": false,
+      "workEmpty": true
+    },
+    {
+      "amountExact": true,
+      "durationMs": 8628,
+      "expected": {
+        "amount": "壹佰万元整",
+        "amountStyle": "financial",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "PingFangSC-Regular",
+        "fontSize": 52,
+        "id": "f0-lines-financial-sharp",
+        "layout": "lines"
+      },
+      "file": "f0-lines-financial-sharp.png",
+      "inputSha256": "a6ca5bdaceeacfa84f93ad21bfa2ea766fb5f260ed6e7cc0e7789b79e8315bcf",
+      "missingControlLines": [],
+      "payload": {
+        "automaticallyDetectsLanguage": false,
+        "durationMs": 8594,
+        "engine": "Apple Vision",
+        "inputEncoding": "png-data",
+        "minimumTextHeight": 0,
+        "modelSource": "OS-managed Vision assets; independent model hash unavailable",
+        "observations": [
+          {
+            "boundingBox": [
+              0.06389530519922333,
+              0.7834002513041873,
+              0.16290706634521485,
+              0.07771777289254332
+            ],
+            "confidence": 1,
+            "text": "项目结算单"
+          },
+          {
+            "boundingBox": [
+              0.06250000276629172,
+              0.6042857154255479,
+              0.3037790679931641,
+              0.08009966714041582
+            ],
+            "confidence": 0.5,
+            "text": "合同金额 壹佰万元整"
+          },
+          {
+            "boundingBox": [
+              0.06389433350883734,
+              0.4277755784997506,
+              0.19488574981689455,
+              0.0780036626543318
+            ],
+            "confidence": 1,
+            "text": "中文识别测试"
+          },
+          {
+            "boundingBox": [
+              0.06250001046361937,
+              0.25571428589549994,
+              0.35029067993164065,
+              0.05999999999999994
+            ],
+            "confidence": 1,
+            "text": "SOLIDIFY OCR CHECK"
+          }
+        ],
+        "osVersion": "Version 26.6.2 (Build 25G83)",
+        "recognitionLanguages": [
+          "zh-Hans",
+          "en-US"
+        ],
+        "recognitionLevel": "accurate",
+        "requestRevision": 3,
+        "schemaVersion": 1,
+        "success": true,
+        "supportedLanguages": [
+          "en-US",
+          "fr-FR",
+          "it-IT",
+          "de-DE",
+          "es-ES",
+          "pt-BR",
+          "zh-Hans",
+          "zh-Hant",
+          "yue-Hans",
+          "yue-Hant",
+          "ko-KR",
+          "ja-JP",
+          "ru-RU",
+          "uk-UA",
+          "th-TH",
+          "vi-VT",
+          "ar-SA",
+          "ars-SA",
+          "tr-TR",
+          "id-ID",
+          "cs-CZ",
+          "da-DK",
+          "nl-NL",
+          "no-NO",
+          "nn-NO",
+          "nb-NO",
+          "ms-MY",
+          "pl-PL",
+          "ro-RO",
+          "sv-SE"
+        ],
+        "text": "项目结算单\n合同金额 壹佰万元整\n中文识别测试\nSOLIDIFY OCR CHECK\n",
+        "usesCPUOnly": true,
+        "usesLanguageCorrection": false
+      },
+      "sourceSha256": "a6ca5bdaceeacfa84f93ad21bfa2ea766fb5f260ed6e7cc0e7789b79e8315bcf",
+      "stderr": "",
+      "strictImprovement": true,
+      "strictRegression": false,
+      "workEmpty": true
+    },
+    {
+      "amountExact": true,
+      "durationMs": 9017,
+      "expected": {
+        "amount": "壹佰万元整",
+        "amountStyle": "financial",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "blur-binomial-7",
+        "font": "PingFangSC-Regular",
+        "fontSize": 52,
+        "id": "f0-lines-financial-blur-binomial-7",
+        "layout": "lines"
+      },
+      "file": "f0-lines-financial-blur-binomial-7.png",
+      "inputSha256": "3be8aaf13777a446433fedfce20996684a58efef06c06badcc7c12167ba62ca9",
+      "missingControlLines": [],
+      "payload": {
+        "automaticallyDetectsLanguage": false,
+        "durationMs": 8984,
+        "engine": "Apple Vision",
+        "inputEncoding": "png-data",
+        "minimumTextHeight": 0,
+        "modelSource": "OS-managed Vision assets; independent model hash unavailable",
+        "observations": [
+          {
+            "boundingBox": [
+              0.06101171402320537,
+              0.7770585393536709,
+              0.1657672691345215,
+              0.08707893371582032
+            ],
+            "confidence": 1,
+            "text": "项目结算单"
+          },
+          {
+            "boundingBox": [
+              0.06104650791647273,
+              0.6013289041082,
+              0.30523256301879886,
+              0.08305647713797437
+            ],
+            "confidence": 0.5,
+            "text": "合同金额 壹佰万元整"
+          },
+          {
+            "boundingBox": [
+              0.0624376549194237,
+              0.42117517653305697,
+              0.19779911041259765,
+              0.08788220541817804
+            ],
+            "confidence": 1,
+            "text": "中文识别测试"
+          },
+          {
+            "boundingBox": [
+              0.06104651488499837,
+              0.2485714287596724,
+              0.3531976699829102,
+              0.07714285714285707
+            ],
+            "confidence": 1,
+            "text": "SOLIDIFY OCR CHECK"
+          }
+        ],
+        "osVersion": "Version 26.6.2 (Build 25G83)",
+        "recognitionLanguages": [
+          "zh-Hans",
+          "en-US"
+        ],
+        "recognitionLevel": "accurate",
+        "requestRevision": 3,
+        "schemaVersion": 1,
+        "success": true,
+        "supportedLanguages": [
+          "en-US",
+          "fr-FR",
+          "it-IT",
+          "de-DE",
+          "es-ES",
+          "pt-BR",
+          "zh-Hans",
+          "zh-Hant",
+          "yue-Hans",
+          "yue-Hant",
+          "ko-KR",
+          "ja-JP",
+          "ru-RU",
+          "uk-UA",
+          "th-TH",
+          "vi-VT",
+          "ar-SA",
+          "ars-SA",
+          "tr-TR",
+          "id-ID",
+          "cs-CZ",
+          "da-DK",
+          "nl-NL",
+          "no-NO",
+          "nn-NO",
+          "nb-NO",
+          "ms-MY",
+          "pl-PL",
+          "ro-RO",
+          "sv-SE"
+        ],
+        "text": "项目结算单\n合同金额 壹佰万元整\n中文识别测试\nSOLIDIFY OCR CHECK\n",
+        "usesCPUOnly": true,
+        "usesLanguageCorrection": false
+      },
+      "sourceSha256": "3be8aaf13777a446433fedfce20996684a58efef06c06badcc7c12167ba62ca9",
+      "stderr": "",
+      "strictImprovement": false,
+      "strictRegression": false,
+      "workEmpty": true
+    },
+    {
+      "amountExact": true,
+      "durationMs": 9139,
+      "expected": {
+        "amount": "1,234,567.89元",
+        "amountStyle": "decimal",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "PingFangSC-Regular",
+        "fontSize": 52,
+        "id": "f0-lines-decimal-sharp",
+        "layout": "lines"
+      },
+      "file": "f0-lines-decimal-sharp.png",
+      "inputSha256": "bb73b4dad0dcd3bdc63fd280d8de17985c371ef61b8bd310272fa822c86252e4",
+      "missingControlLines": [],
+      "payload": {
+        "automaticallyDetectsLanguage": false,
+        "durationMs": 9102,
+        "engine": "Apple Vision",
+        "inputEncoding": "png-data",
+        "minimumTextHeight": 0,
+        "modelSource": "OS-managed Vision assets; independent model hash unavailable",
+        "observations": [
+          {
+            "boundingBox": [
+              0.06390367035202281,
+              0.7834997270516749,
+              0.1614368438720703,
+              0.07751881735665456
+            ],
+            "confidence": 1,
+            "text": "项目结算单"
+          },
+          {
+            "boundingBox": [
+              0.06249999859789476,
+              0.5913621279578326,
+              0.366279067993164,
+              0.0900664438520159
+            ],
+            "confidence": 0.5,
+            "text": "合同金额 1,234,567.89元"
+          },
+          {
+            "boundingBox": [
+              0.06395348992641843,
+              0.4285714278983791,
+              0.1947674369812012,
+              0.07641196114676341
+            ],
+            "confidence": 1,
+            "text": "中文识别测试"
+          },
+          {
+            "boundingBox": [
+              0.06250001046361937,
+              0.25571428589549994,
+              0.35029067993164065,
+              0.05999999999999994
+            ],
+            "confidence": 1,
+            "text": "SOLIDIFY OCR CHECK"
+          }
+        ],
+        "osVersion": "Version 26.6.2 (Build 25G83)",
+        "recognitionLanguages": [
+          "zh-Hans",
+          "en-US"
+        ],
+        "recognitionLevel": "accurate",
+        "requestRevision": 3,
+        "schemaVersion": 1,
+        "success": true,
+        "supportedLanguages": [
+          "en-US",
+          "fr-FR",
+          "it-IT",
+          "de-DE",
+          "es-ES",
+          "pt-BR",
+          "zh-Hans",
+          "zh-Hant",
+          "yue-Hans",
+          "yue-Hant",
+          "ko-KR",
+          "ja-JP",
+          "ru-RU",
+          "uk-UA",
+          "th-TH",
+          "vi-VT",
+          "ar-SA",
+          "ars-SA",
+          "tr-TR",
+          "id-ID",
+          "cs-CZ",
+          "da-DK",
+          "nl-NL",
+          "no-NO",
+          "nn-NO",
+          "nb-NO",
+          "ms-MY",
+          "pl-PL",
+          "ro-RO",
+          "sv-SE"
+        ],
+        "text": "项目结算单\n合同金额 1,234,567.89元\n中文识别测试\nSOLIDIFY OCR CHECK\n",
+        "usesCPUOnly": true,
+        "usesLanguageCorrection": false
+      },
+      "sourceSha256": "bb73b4dad0dcd3bdc63fd280d8de17985c371ef61b8bd310272fa822c86252e4",
+      "stderr": "",
+      "strictImprovement": false,
+      "strictRegression": false,
+      "workEmpty": true
+    },
+    {
+      "amountExact": true,
+      "durationMs": 9161,
+      "expected": {
+        "amount": "1,234,567.89元",
+        "amountStyle": "decimal",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "blur-binomial-7",
+        "font": "PingFangSC-Regular",
+        "fontSize": 52,
+        "id": "f0-lines-decimal-blur-binomial-7",
+        "layout": "lines"
+      },
+      "file": "f0-lines-decimal-blur-binomial-7.png",
+      "inputSha256": "9f041572bb722a73f62c785365e0b650e53ea30406e7ff3efc3de527117883ef",
+      "missingControlLines": [],
+      "payload": {
+        "automaticallyDetectsLanguage": false,
+        "durationMs": 9130,
+        "engine": "Apple Vision",
+        "inputEncoding": "png-data",
+        "minimumTextHeight": 0,
+        "modelSource": "OS-managed Vision assets; independent model hash unavailable",
+        "observations": [
+          {
+            "boundingBox": [
+              0.0610019578914925,
+              0.7769598721603773,
+              0.16578678131103514,
+              0.08727626800537103
+            ],
+            "confidence": 1,
+            "text": "项目结算单"
+          },
+          {
+            "boundingBox": [
+              0.061046508168916915,
+              0.5842857144081496,
+              0.3691860580444335,
+              0.10009966714041574
+            ],
+            "confidence": 0.5,
+            "text": "合同金额 1,234,567.89元"
+          },
+          {
+            "boundingBox": [
+              0.0624068511559328,
+              0.4207990013293156,
+              0.1978607177734375,
+              0.08863455636160722
+            ],
+            "confidence": 1,
+            "text": "中文识别测试"
+          },
+          {
+            "boundingBox": [
+              0.062499997473475725,
+              0.25249169560935525,
+              0.35174419403076174,
+              0.07036544799804689
+            ],
+            "confidence": 0.5,
+            "text": "SOLIDIFY OCR CHECK"
+          }
+        ],
+        "osVersion": "Version 26.6.2 (Build 25G83)",
+        "recognitionLanguages": [
+          "zh-Hans",
+          "en-US"
+        ],
+        "recognitionLevel": "accurate",
+        "requestRevision": 3,
+        "schemaVersion": 1,
+        "success": true,
+        "supportedLanguages": [
+          "en-US",
+          "fr-FR",
+          "it-IT",
+          "de-DE",
+          "es-ES",
+          "pt-BR",
+          "zh-Hans",
+          "zh-Hant",
+          "yue-Hans",
+          "yue-Hant",
+          "ko-KR",
+          "ja-JP",
+          "ru-RU",
+          "uk-UA",
+          "th-TH",
+          "vi-VT",
+          "ar-SA",
+          "ars-SA",
+          "tr-TR",
+          "id-ID",
+          "cs-CZ",
+          "da-DK",
+          "nl-NL",
+          "no-NO",
+          "nn-NO",
+          "nb-NO",
+          "ms-MY",
+          "pl-PL",
+          "ro-RO",
+          "sv-SE"
+        ],
+        "text": "项目结算单\n合同金额 1,234,567.89元\n中文识别测试\nSOLIDIFY OCR CHECK\n",
+        "usesCPUOnly": true,
+        "usesLanguageCorrection": false
+      },
+      "sourceSha256": "9f041572bb722a73f62c785365e0b650e53ea30406e7ff3efc3de527117883ef",
+      "stderr": "",
+      "strictImprovement": false,
+      "strictRegression": false,
+      "workEmpty": true
+    },
+    {
+      "amountExact": false,
+      "durationMs": 11286,
+      "expected": {
+        "amount": "￥98,765.40",
+        "amountStyle": "currency",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "PingFangSC-Regular",
+        "fontSize": 52,
+        "id": "f0-lines-currency-sharp",
+        "layout": "lines"
+      },
+      "file": "f0-lines-currency-sharp.png",
+      "inputSha256": "d5ca075b5e7181103c19281f27adb0eee5093aec4703a31825b25f89e94eef1a",
+      "missingControlLines": [],
+      "payload": {
+        "automaticallyDetectsLanguage": false,
+        "durationMs": 11251,
+        "engine": "Apple Vision",
+        "inputEncoding": "png-data",
+        "minimumTextHeight": 0,
+        "modelSource": "OS-managed Vision assets; independent model hash unavailable",
+        "observations": [
+          {
+            "boundingBox": [
+              0.06390151504809534,
+              0.7834756072656012,
+              0.16144115447998048,
+              0.07756705692836219
+            ],
+            "confidence": 1,
+            "text": "项目结算单"
+          },
+          {
+            "boundingBox": [
+              0.06250000283529594,
+              0.5913621279578326,
+              0.32703487396240233,
+              0.0900664438520159
+            ],
+            "confidence": 0.5,
+            "text": "合同金额 ¥98,765.40"
+          },
+          {
+            "boundingBox": [
+              0.06392219987223555,
+              0.42815247876737295,
+              0.19483001708984377,
+              0.07724985940115792
+            ],
+            "confidence": 1,
+            "text": "中文识别测试"
+          },
+          {
+            "boundingBox": [
+              0.06250001046361937,
+              0.25571428589549994,
+              0.35029067993164065,
+              0.05999999999999994
+            ],
+            "confidence": 1,
+            "text": "SOLIDIFY OCR CHECK"
+          }
+        ],
+        "osVersion": "Version 26.6.2 (Build 25G83)",
+        "recognitionLanguages": [
+          "zh-Hans",
+          "en-US"
+        ],
+        "recognitionLevel": "accurate",
+        "requestRevision": 3,
+        "schemaVersion": 1,
+        "success": true,
+        "supportedLanguages": [
+          "en-US",
+          "fr-FR",
+          "it-IT",
+          "de-DE",
+          "es-ES",
+          "pt-BR",
+          "zh-Hans",
+          "zh-Hant",
+          "yue-Hans",
+          "yue-Hant",
+          "ko-KR",
+          "ja-JP",
+          "ru-RU",
+          "uk-UA",
+          "th-TH",
+          "vi-VT",
+          "ar-SA",
+          "ars-SA",
+          "tr-TR",
+          "id-ID",
+          "cs-CZ",
+          "da-DK",
+          "nl-NL",
+          "no-NO",
+          "nn-NO",
+          "nb-NO",
+          "ms-MY",
+          "pl-PL",
+          "ro-RO",
+          "sv-SE"
+        ],
+        "text": "项目结算单\n合同金额 ¥98,765.40\n中文识别测试\nSOLIDIFY OCR CHECK\n",
+        "usesCPUOnly": true,
+        "usesLanguageCorrection": false
+      },
+      "sourceSha256": "d5ca075b5e7181103c19281f27adb0eee5093aec4703a31825b25f89e94eef1a",
+      "stderr": "",
+      "strictImprovement": false,
+      "strictRegression": false,
+      "workEmpty": true
+    },
+    {
+      "amountExact": true,
+      "durationMs": 16717,
+      "expected": {
+        "amount": "￥98,765.40",
+        "amountStyle": "currency",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "blur-binomial-7",
+        "font": "PingFangSC-Regular",
+        "fontSize": 52,
+        "id": "f0-lines-currency-blur-binomial-7",
+        "layout": "lines"
+      },
+      "file": "f0-lines-currency-blur-binomial-7.png",
+      "inputSha256": "3c7e8f73e088641f5bd9048e6b3d178a6ed07638aa853568a1450b1aea081827",
+      "missingControlLines": [],
+      "payload": {
+        "automaticallyDetectsLanguage": false,
+        "durationMs": 16677,
+        "engine": "Apple Vision",
+        "inputEncoding": "png-data",
+        "minimumTextHeight": 0,
+        "modelSource": "OS-managed Vision assets; independent model hash unavailable",
+        "observations": [
+          {
+            "boundingBox": [
+              0.060991467437870296,
+              0.776853594633956,
+              0.16580776214599613,
+              0.0874888256617955
+            ],
+            "confidence": 1,
+            "text": "项目结算单"
+          },
+          {
+            "boundingBox": [
+              0.06104652332760832,
+              0.5813953469281837,
+              0.3284883499145508,
+              0.1029900360107422
+            ],
+            "confidence": 0.5,
+            "text": "合同金额 ￥98,765.40"
+          },
+          {
+            "boundingBox": [
+              0.062423712118022605,
+              0.42100525928413773,
+              0.1978269958496094,
+              0.08822204044887005
+            ],
+            "confidence": 1,
+            "text": "中文识别测试"
+          },
+          {
+            "boundingBox": [
+              0.061046514999460545,
+              0.2485714296193068,
+              0.3531976699829102,
+              0.07714285714285718
+            ],
+            "confidence": 1,
+            "text": "SOLIDIFY OCR CHECK"
+          }
+        ],
+        "osVersion": "Version 26.6.2 (Build 25G83)",
+        "recognitionLanguages": [
+          "zh-Hans",
+          "en-US"
+        ],
+        "recognitionLevel": "accurate",
+        "requestRevision": 3,
+        "schemaVersion": 1,
+        "success": true,
+        "supportedLanguages": [
+          "en-US",
+          "fr-FR",
+          "it-IT",
+          "de-DE",
+          "es-ES",
+          "pt-BR",
+          "zh-Hans",
+          "zh-Hant",
+          "yue-Hans",
+          "yue-Hant",
+          "ko-KR",
+          "ja-JP",
+          "ru-RU",
+          "uk-UA",
+          "th-TH",
+          "vi-VT",
+          "ar-SA",
+          "ars-SA",
+          "tr-TR",
+          "id-ID",
+          "cs-CZ",
+          "da-DK",
+          "nl-NL",
+          "no-NO",
+          "nn-NO",
+          "nb-NO",
+          "ms-MY",
+          "pl-PL",
+          "ro-RO",
+          "sv-SE"
+        ],
+        "text": "项目结算单\n合同金额 ￥98,765.40\n中文识别测试\nSOLIDIFY OCR CHECK\n",
+        "usesCPUOnly": true,
+        "usesLanguageCorrection": false
+      },
+      "sourceSha256": "3c7e8f73e088641f5bd9048e6b3d178a6ed07638aa853568a1450b1aea081827",
+      "stderr": "",
+      "strictImprovement": true,
+      "strictRegression": false,
+      "workEmpty": true
+    },
+    {
+      "amountExact": true,
+      "durationMs": 10527,
+      "expected": {
+        "amount": "一百万元",
+        "amountStyle": "han",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "PingFangSC-Regular",
+        "fontSize": 52,
+        "id": "f0-table-han-sharp",
+        "layout": "table"
+      },
+      "file": "f0-table-han-sharp.png",
+      "inputSha256": "96274e670da450e0dfeb8f0990f34cf98f91a9835160f9b5125a87bc2686e017",
+      "missingControlLines": [],
+      "payload": {
+        "automaticallyDetectsLanguage": false,
+        "durationMs": 10491,
+        "engine": "Apple Vision",
+        "inputEncoding": "png-data",
+        "minimumTextHeight": 0,
+        "modelSource": "OS-managed Vision assets; independent model hash unavailable",
+        "observations": [
+          {
+            "boundingBox": [
+              0.06249999817185513,
+              0.7840531559722422,
+              0.16279069900512694,
+              0.08023255756923131
+            ],
+            "confidence": 1,
+            "text": "项目结算单"
+          },
+          {
+            "boundingBox": [
+              0.06101300129057645,
+              0.6010491968807952,
+              0.1323344612121582,
+              0.0836158915928431
+            ],
+            "confidence": 1,
+            "text": "合同金额"
+          },
+          {
+            "boundingBox": [
+              0.2581160813367171,
+              0.5886046735806009,
+              0.15460117340087892,
+              0.09898112705775663
+            ],
+            "confidence": 1,
+            "text": "一百万元"
+          },
+          {
+            "boundingBox": [
+              0.062425277912867616,
+              0.420994560613941,
+              0.1963703727722168,
+              0.08492118018014094
+            ],
+            "confidence": 1,
+            "text": "中文识别测试"
+          },
+          {
+            "boundingBox": [
+              0.06104650958991627,
+              0.25249169504366586,
+              0.35174419403076174,
+              0.0664451817103795
+            ],
+            "confidence": 0.5,
+            "text": "SOLIDIFY OCR CHECK"
+          }
+        ],
+        "osVersion": "Version 26.6.2 (Build 25G83)",
+        "recognitionLanguages": [
+          "zh-Hans",
+          "en-US"
+        ],
+        "recognitionLevel": "accurate",
+        "requestRevision": 3,
+        "schemaVersion": 1,
+        "success": true,
+        "supportedLanguages": [
+          "en-US",
+          "fr-FR",
+          "it-IT",
+          "de-DE",
+          "es-ES",
+          "pt-BR",
+          "zh-Hans",
+          "zh-Hant",
+          "yue-Hans",
+          "yue-Hant",
+          "ko-KR",
+          "ja-JP",
+          "ru-RU",
+          "uk-UA",
+          "th-TH",
+          "vi-VT",
+          "ar-SA",
+          "ars-SA",
+          "tr-TR",
+          "id-ID",
+          "cs-CZ",
+          "da-DK",
+          "nl-NL",
+          "no-NO",
+          "nn-NO",
+          "nb-NO",
+          "ms-MY",
+          "pl-PL",
+          "ro-RO",
+          "sv-SE"
+        ],
+        "text": "项目结算单\n合同金额\n一百万元\n中文识别测试\nSOLIDIFY OCR CHECK\n",
+        "usesCPUOnly": true,
+        "usesLanguageCorrection": false
+      },
+      "sourceSha256": "96274e670da450e0dfeb8f0990f34cf98f91a9835160f9b5125a87bc2686e017",
+      "stderr": "",
+      "strictImprovement": true,
+      "strictRegression": false,
+      "workEmpty": true
+    },
+    {
+      "amountExact": true,
+      "durationMs": 8954,
+      "expected": {
+        "amount": "一百万元",
+        "amountStyle": "han",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "blur-binomial-7",
+        "font": "PingFangSC-Regular",
+        "fontSize": 52,
+        "id": "f0-table-han-blur-binomial-7",
+        "layout": "table"
+      },
+      "file": "f0-table-han-blur-binomial-7.png",
+      "inputSha256": "a90ebdd7722e41edfc3ecb857ed7fb865708fc3a256dbaa1087763b0b1f01ab5",
+      "missingControlLines": [],
+      "payload": {
+        "automaticallyDetectsLanguage": false,
+        "durationMs": 8924,
+        "engine": "Apple Vision",
+        "inputEncoding": "png-data",
+        "minimumTextHeight": 0,
+        "modelSource": "OS-managed Vision assets; independent model hash unavailable",
+        "observations": [
+          {
+            "boundingBox": [
+              0.061046513598661194,
+              0.7771428577882035,
+              0.1656976699829101,
+              0.08714285714285719
+            ],
+            "confidence": 1,
+            "text": "项目结算单"
+          },
+          {
+            "boundingBox": [
+              0.06100472616903638,
+              0.597667451185244,
+              0.13380450248718262,
+              0.08705712454659607
+            ],
+            "confidence": 1,
+            "text": "合同金额"
+          },
+          {
+            "boundingBox": [
+              0.2581160813367171,
+              0.5886046735806009,
+              0.15460117340087892,
+              0.09898112705775663
+            ],
+            "confidence": 1,
+            "text": "一百万元"
+          },
+          {
+            "boundingBox": [
+              0.06250000622135346,
+              0.4214285705023432,
+              0.19767440795898436,
+              0.08714285714285708
+            ],
+            "confidence": 1,
+            "text": "中文识别测试"
+          },
+          {
+            "boundingBox": [
+              0.061046515611742576,
+              0.2485714293244564,
+              0.3531976699829102,
+              0.07714285714285718
+            ],
+            "confidence": 1,
+            "text": "SOLIDIFY OCR CHECK"
+          }
+        ],
+        "osVersion": "Version 26.6.2 (Build 25G83)",
+        "recognitionLanguages": [
+          "zh-Hans",
+          "en-US"
+        ],
+        "recognitionLevel": "accurate",
+        "requestRevision": 3,
+        "schemaVersion": 1,
+        "success": true,
+        "supportedLanguages": [
+          "en-US",
+          "fr-FR",
+          "it-IT",
+          "de-DE",
+          "es-ES",
+          "pt-BR",
+          "zh-Hans",
+          "zh-Hant",
+          "yue-Hans",
+          "yue-Hant",
+          "ko-KR",
+          "ja-JP",
+          "ru-RU",
+          "uk-UA",
+          "th-TH",
+          "vi-VT",
+          "ar-SA",
+          "ars-SA",
+          "tr-TR",
+          "id-ID",
+          "cs-CZ",
+          "da-DK",
+          "nl-NL",
+          "no-NO",
+          "nn-NO",
+          "nb-NO",
+          "ms-MY",
+          "pl-PL",
+          "ro-RO",
+          "sv-SE"
+        ],
+        "text": "项目结算单\n合同金额\n一百万元\n中文识别测试\nSOLIDIFY OCR CHECK\n",
+        "usesCPUOnly": true,
+        "usesLanguageCorrection": false
+      },
+      "sourceSha256": "a90ebdd7722e41edfc3ecb857ed7fb865708fc3a256dbaa1087763b0b1f01ab5",
+      "stderr": "",
+      "strictImprovement": true,
+      "strictRegression": false,
+      "workEmpty": true
+    },
+    {
+      "amountExact": true,
+      "durationMs": 9929,
+      "expected": {
+        "amount": "壹佰万元整",
+        "amountStyle": "financial",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "PingFangSC-Regular",
+        "fontSize": 52,
+        "id": "f0-table-financial-sharp",
+        "layout": "table"
+      },
+      "file": "f0-table-financial-sharp.png",
+      "inputSha256": "2ad0e0dd604126d8179ba9e2e430651a026f39730ffa6ff744d4a59b1902ddb2",
+      "missingControlLines": [],
+      "payload": {
+        "automaticallyDetectsLanguage": false,
+        "durationMs": 9896,
+        "engine": "Apple Vision",
+        "inputEncoding": "png-data",
+        "minimumTextHeight": 0,
+        "modelSource": "OS-managed Vision assets; independent model hash unavailable",
+        "observations": [
+          {
+            "boundingBox": [
+              0.06395349041298201,
+              0.7840531560306557,
+              0.16133720397949222,
+              0.08023255756923131
+            ],
+            "confidence": 1,
+            "text": "项目结算单"
+          },
+          {
+            "boundingBox": [
+              0.06100847610592531,
+              0.6010113060381916,
+              0.1323435115814209,
+              0.08369167327880855
+            ],
+            "confidence": 1,
+            "text": "合同金额"
+          },
+          {
+            "boundingBox": [
+              0.2790963095235686,
+              0.589828777017261,
+              0.16680738449096685,
+              0.0965329197474889
+            ],
+            "confidence": 1,
+            "text": "壹佰万元整"
+          },
+          {
+            "boundingBox": [
+              0.06245804616225218,
+              0.4214059293961441,
+              0.19630483627319337,
+              0.08409843989780974
+            ],
+            "confidence": 1,
+            "text": "中文识别测试"
+          },
+          {
+            "boundingBox": [
+              0.06104650958991627,
+              0.25249169504366586,
+              0.35174419403076174,
+              0.0664451817103795
+            ],
+            "confidence": 0.5,
+            "text": "SOLIDIFY OCR CHECK"
+          }
+        ],
+        "osVersion": "Version 26.6.2 (Build 25G83)",
+        "recognitionLanguages": [
+          "zh-Hans",
+          "en-US"
+        ],
+        "recognitionLevel": "accurate",
+        "requestRevision": 3,
+        "schemaVersion": 1,
+        "success": true,
+        "supportedLanguages": [
+          "en-US",
+          "fr-FR",
+          "it-IT",
+          "de-DE",
+          "es-ES",
+          "pt-BR",
+          "zh-Hans",
+          "zh-Hant",
+          "yue-Hans",
+          "yue-Hant",
+          "ko-KR",
+          "ja-JP",
+          "ru-RU",
+          "uk-UA",
+          "th-TH",
+          "vi-VT",
+          "ar-SA",
+          "ars-SA",
+          "tr-TR",
+          "id-ID",
+          "cs-CZ",
+          "da-DK",
+          "nl-NL",
+          "no-NO",
+          "nn-NO",
+          "nb-NO",
+          "ms-MY",
+          "pl-PL",
+          "ro-RO",
+          "sv-SE"
+        ],
+        "text": "项目结算单\n合同金额\n壹佰万元整\n中文识别测试\nSOLIDIFY OCR CHECK\n",
+        "usesCPUOnly": true,
+        "usesLanguageCorrection": false
+      },
+      "sourceSha256": "2ad0e0dd604126d8179ba9e2e430651a026f39730ffa6ff744d4a59b1902ddb2",
+      "stderr": "",
+      "strictImprovement": true,
+      "strictRegression": false,
+      "workEmpty": true
+    },
+    {
+      "amountExact": true,
+      "durationMs": 10304,
+      "expected": {
+        "amount": "壹佰万元整",
+        "amountStyle": "financial",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "blur-binomial-7",
+        "font": "PingFangSC-Regular",
+        "fontSize": 52,
+        "id": "f0-table-financial-blur-binomial-7",
+        "layout": "table"
+      },
+      "file": "f0-table-financial-blur-binomial-7.png",
+      "inputSha256": "65ea7a5ed3ad72cf24d4b8631e15fdd9069bc5381d1e1345a336cd857349d45d",
+      "missingControlLines": [],
+      "payload": {
+        "automaticallyDetectsLanguage": false,
+        "durationMs": 10272,
+        "engine": "Apple Vision",
+        "inputEncoding": "png-data",
+        "minimumTextHeight": 0,
+        "modelSource": "OS-managed Vision assets; independent model hash unavailable",
+        "observations": [
+          {
+            "boundingBox": [
+              0.060877760930105274,
+              0.7756847551480999,
+              0.1660351753234863,
+              0.08982650211879184
+            ],
+            "confidence": 1,
+            "text": "项目结算单"
+          },
+          {
+            "boundingBox": [
+              0.06100472616903638,
+              0.597667451185244,
+              0.13380450248718262,
+              0.08705712454659607
+            ],
+            "confidence": 1,
+            "text": "合同金额"
+          },
+          {
+            "boundingBox": [
+              0.27916667103605725,
+              0.5899999987276952,
+              0.16666666030883792,
+              0.09571428571428577
+            ],
+            "confidence": 1,
+            "text": "壹佰万元整"
+          },
+          {
+            "boundingBox": [
+              0.06246061947194541,
+              0.42145348865414334,
+              0.19775318145751952,
+              0.0873255811418806
+            ],
+            "confidence": 1,
+            "text": "中文识别测试"
+          },
+          {
+            "boundingBox": [
+              0.061046515451198186,
+              0.24857142930784515,
+              0.35319766998291013,
+              0.07714285714285718
+            ],
+            "confidence": 1,
+            "text": "SOLIDIFY OCR CHECK"
+          }
+        ],
+        "osVersion": "Version 26.6.2 (Build 25G83)",
+        "recognitionLanguages": [
+          "zh-Hans",
+          "en-US"
+        ],
+        "recognitionLevel": "accurate",
+        "requestRevision": 3,
+        "schemaVersion": 1,
+        "success": true,
+        "supportedLanguages": [
+          "en-US",
+          "fr-FR",
+          "it-IT",
+          "de-DE",
+          "es-ES",
+          "pt-BR",
+          "zh-Hans",
+          "zh-Hant",
+          "yue-Hans",
+          "yue-Hant",
+          "ko-KR",
+          "ja-JP",
+          "ru-RU",
+          "uk-UA",
+          "th-TH",
+          "vi-VT",
+          "ar-SA",
+          "ars-SA",
+          "tr-TR",
+          "id-ID",
+          "cs-CZ",
+          "da-DK",
+          "nl-NL",
+          "no-NO",
+          "nn-NO",
+          "nb-NO",
+          "ms-MY",
+          "pl-PL",
+          "ro-RO",
+          "sv-SE"
+        ],
+        "text": "项目结算单\n合同金额\n壹佰万元整\n中文识别测试\nSOLIDIFY OCR CHECK\n",
+        "usesCPUOnly": true,
+        "usesLanguageCorrection": false
+      },
+      "sourceSha256": "65ea7a5ed3ad72cf24d4b8631e15fdd9069bc5381d1e1345a336cd857349d45d",
+      "stderr": "",
+      "strictImprovement": true,
+      "strictRegression": false,
+      "workEmpty": true
+    },
+    {
+      "amountExact": true,
+      "durationMs": 9136,
+      "expected": {
+        "amount": "1,234,567.89元",
+        "amountStyle": "decimal",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "PingFangSC-Regular",
+        "fontSize": 52,
+        "id": "f0-table-decimal-sharp",
+        "layout": "table"
+      },
+      "file": "f0-table-decimal-sharp.png",
+      "inputSha256": "d3069a8549db9d564f91365b8f16a6e0caa2134b8352a70a76ece85986b988ce",
+      "missingControlLines": [],
+      "payload": {
+        "automaticallyDetectsLanguage": false,
+        "durationMs": 9103,
+        "engine": "Apple Vision",
+        "inputEncoding": "png-data",
+        "minimumTextHeight": 0,
+        "modelSource": "OS-managed Vision assets; independent model hash unavailable",
+        "observations": [
+          {
+            "boundingBox": [
+              0.06395349041298201,
+              0.7840531560306557,
+              0.16133720397949222,
+              0.08023255756923131
+            ],
+            "confidence": 1,
+            "text": "项目结算单"
+          },
+          {
+            "boundingBox": [
+              0.060994743195709376,
+              0.6008960749340855,
+              0.1323709774017334,
+              0.08392213548932759
+            ],
+            "confidence": 1,
+            "text": "合同金额"
+          },
+          {
+            "boundingBox": [
+              0.2788023876658312,
+              0.5844808897654534,
+              0.22873243331909177,
+              0.10014120919363843
+            ],
+            "confidence": 1,
+            "text": "1,234,567.89元"
+          },
+          {
+            "boundingBox": [
+              0.06243983104575292,
+              0.4211777069681677,
+              0.1963412666320801,
+              0.08455488477434425
+            ],
+            "confidence": 1,
+            "text": "中文识别测试"
+          },
+          {
+            "boundingBox": [
+              0.06104650568164757,
+              0.25249169467452603,
+              0.35174419403076174,
+              0.06644518171037939
+            ],
+            "confidence": 0.5,
+            "text": "SOLIDIFY OCR CHECK"
+          }
+        ],
+        "osVersion": "Version 26.6.2 (Build 25G83)",
+        "recognitionLanguages": [
+          "zh-Hans",
+          "en-US"
+        ],
+        "recognitionLevel": "accurate",
+        "requestRevision": 3,
+        "schemaVersion": 1,
+        "success": true,
+        "supportedLanguages": [
+          "en-US",
+          "fr-FR",
+          "it-IT",
+          "de-DE",
+          "es-ES",
+          "pt-BR",
+          "zh-Hans",
+          "zh-Hant",
+          "yue-Hans",
+          "yue-Hant",
+          "ko-KR",
+          "ja-JP",
+          "ru-RU",
+          "uk-UA",
+          "th-TH",
+          "vi-VT",
+          "ar-SA",
+          "ars-SA",
+          "tr-TR",
+          "id-ID",
+          "cs-CZ",
+          "da-DK",
+          "nl-NL",
+          "no-NO",
+          "nn-NO",
+          "nb-NO",
+          "ms-MY",
+          "pl-PL",
+          "ro-RO",
+          "sv-SE"
+        ],
+        "text": "项目结算单\n合同金额\n1,234,567.89元\n中文识别测试\nSOLIDIFY OCR CHECK\n",
+        "usesCPUOnly": true,
+        "usesLanguageCorrection": false
+      },
+      "sourceSha256": "d3069a8549db9d564f91365b8f16a6e0caa2134b8352a70a76ece85986b988ce",
+      "stderr": "",
+      "strictImprovement": true,
+      "strictRegression": false,
+      "workEmpty": true
+    },
+    {
+      "amountExact": true,
+      "durationMs": 9077,
+      "expected": {
+        "amount": "1,234,567.89元",
+        "amountStyle": "decimal",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "blur-binomial-7",
+        "font": "PingFangSC-Regular",
+        "fontSize": 52,
+        "id": "f0-table-decimal-blur-binomial-7",
+        "layout": "table"
+      },
+      "file": "f0-table-decimal-blur-binomial-7.png",
+      "inputSha256": "0168c856a26b526b3c95ce2c357e0edf0144497765880715a5b3b0426d3f9bec",
+      "missingControlLines": [],
+      "payload": {
+        "automaticallyDetectsLanguage": false,
+        "durationMs": 9042,
+        "engine": "Apple Vision",
+        "inputEncoding": "png-data",
+        "minimumTextHeight": 0,
+        "modelSource": "OS-managed Vision assets; independent model hash unavailable",
+        "observations": [
+          {
+            "boundingBox": [
+              0.061046513598661194,
+              0.7771428577882035,
+              0.1656976699829101,
+              0.08714285714285719
+            ],
+            "confidence": 1,
+            "text": "项目结算单"
+          },
+          {
+            "boundingBox": [
+              0.061046511354463144,
+              0.5980066452423648,
+              0.13372093200683594,
+              0.08637873513357974
+            ],
+            "confidence": 1,
+            "text": "合同金额"
+          },
+          {
+            "boundingBox": [
+              0.2771845790930495,
+              0.5761036213709229,
+              0.2305145645141602,
+              0.113573488507952
+            ],
+            "confidence": 1,
+            "text": "1,234,567.89元"
+          },
+          {
+            "boundingBox": [
+              0.06250000622135346,
+              0.4214285705023432,
+              0.19767440795898436,
+              0.08714285714285708
+            ],
+            "confidence": 1,
+            "text": "中文识别测试"
+          },
+          {
+            "boundingBox": [
+              0.06104651516427577,
+              0.2485714275567822,
+              0.3531976699829102,
+              0.0803322274344308
+            ],
+            "confidence": 0.5,
+            "text": "SOLIDIFY OCR CHECK"
+          }
+        ],
+        "osVersion": "Version 26.6.2 (Build 25G83)",
+        "recognitionLanguages": [
+          "zh-Hans",
+          "en-US"
+        ],
+        "recognitionLevel": "accurate",
+        "requestRevision": 3,
+        "schemaVersion": 1,
+        "success": true,
+        "supportedLanguages": [
+          "en-US",
+          "fr-FR",
+          "it-IT",
+          "de-DE",
+          "es-ES",
+          "pt-BR",
+          "zh-Hans",
+          "zh-Hant",
+          "yue-Hans",
+          "yue-Hant",
+          "ko-KR",
+          "ja-JP",
+          "ru-RU",
+          "uk-UA",
+          "th-TH",
+          "vi-VT",
+          "ar-SA",
+          "ars-SA",
+          "tr-TR",
+          "id-ID",
+          "cs-CZ",
+          "da-DK",
+          "nl-NL",
+          "no-NO",
+          "nn-NO",
+          "nb-NO",
+          "ms-MY",
+          "pl-PL",
+          "ro-RO",
+          "sv-SE"
+        ],
+        "text": "项目结算单\n合同金额\n1,234,567.89元\n中文识别测试\nSOLIDIFY OCR CHECK\n",
+        "usesCPUOnly": true,
+        "usesLanguageCorrection": false
+      },
+      "sourceSha256": "0168c856a26b526b3c95ce2c357e0edf0144497765880715a5b3b0426d3f9bec",
+      "stderr": "",
+      "strictImprovement": true,
+      "strictRegression": false,
+      "workEmpty": true
+    },
+    {
+      "amountExact": false,
+      "durationMs": 9835,
+      "expected": {
+        "amount": "￥98,765.40",
+        "amountStyle": "currency",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "PingFangSC-Regular",
+        "fontSize": 52,
+        "id": "f0-table-currency-sharp",
+        "layout": "table"
+      },
+      "file": "f0-table-currency-sharp.png",
+      "inputSha256": "9a454c4dc2a0bde1898f04198d45858a34e40cc8f23601b50a214feca56d5352",
+      "missingControlLines": [],
+      "payload": {
+        "automaticallyDetectsLanguage": false,
+        "durationMs": 9802,
+        "engine": "Apple Vision",
+        "inputEncoding": "png-data",
+        "minimumTextHeight": 0,
+        "modelSource": "OS-managed Vision assets; independent model hash unavailable",
+        "observations": [
+          {
+            "boundingBox": [
+              0.06249999817185513,
+              0.7840531559722422,
+              0.16279069900512694,
+              0.08023255756923131
+            ],
+            "confidence": 1,
+            "text": "项目结算单"
+          },
+          {
+            "boundingBox": [
+              0.061006029931293074,
+              0.6009907965910266,
+              0.13234840393066405,
+              0.08373269217354906
+            ],
+            "confidence": 1,
+            "text": "合同金额"
+          },
+          {
+            "boundingBox": [
+              0.2833423792153842,
+              0.587189675308545,
+              0.18331523895263668,
+              0.10136815752301898
+            ],
+            "confidence": 1,
+            "text": "¥98,765.40"
+          },
+          {
+            "boundingBox": [
+              0.062451341894710806,
+              0.4213221205086205,
+              0.1963182449340821,
+              0.08426606042044504
+            ],
+            "confidence": 1,
+            "text": "中文识别测试"
+          },
+          {
+            "boundingBox": [
+              0.06104650568164757,
+              0.25249169467452603,
+              0.35174419403076174,
+              0.06644518171037939
+            ],
+            "confidence": 0.5,
+            "text": "SOLIDIFY OCR CHECK"
+          }
+        ],
+        "osVersion": "Version 26.6.2 (Build 25G83)",
+        "recognitionLanguages": [
+          "zh-Hans",
+          "en-US"
+        ],
+        "recognitionLevel": "accurate",
+        "requestRevision": 3,
+        "schemaVersion": 1,
+        "success": true,
+        "supportedLanguages": [
+          "en-US",
+          "fr-FR",
+          "it-IT",
+          "de-DE",
+          "es-ES",
+          "pt-BR",
+          "zh-Hans",
+          "zh-Hant",
+          "yue-Hans",
+          "yue-Hant",
+          "ko-KR",
+          "ja-JP",
+          "ru-RU",
+          "uk-UA",
+          "th-TH",
+          "vi-VT",
+          "ar-SA",
+          "ars-SA",
+          "tr-TR",
+          "id-ID",
+          "cs-CZ",
+          "da-DK",
+          "nl-NL",
+          "no-NO",
+          "nn-NO",
+          "nb-NO",
+          "ms-MY",
+          "pl-PL",
+          "ro-RO",
+          "sv-SE"
+        ],
+        "text": "项目结算单\n合同金额\n¥98,765.40\n中文识别测试\nSOLIDIFY OCR CHECK\n",
+        "usesCPUOnly": true,
+        "usesLanguageCorrection": false
+      },
+      "sourceSha256": "9a454c4dc2a0bde1898f04198d45858a34e40cc8f23601b50a214feca56d5352",
+      "stderr": "",
+      "strictImprovement": false,
+      "strictRegression": false,
+      "workEmpty": true
+    },
+    {
+      "amountExact": false,
+      "durationMs": 9633,
+      "expected": {
+        "amount": "￥98,765.40",
+        "amountStyle": "currency",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "blur-binomial-7",
+        "font": "PingFangSC-Regular",
+        "fontSize": 52,
+        "id": "f0-table-currency-blur-binomial-7",
+        "layout": "table"
+      },
+      "file": "f0-table-currency-blur-binomial-7.png",
+      "inputSha256": "a3fb44ce0a726838627bf7927058874c90240c7f0e1196f91d68654ffc4ca0bc",
+      "missingControlLines": [],
+      "payload": {
+        "automaticallyDetectsLanguage": false,
+        "durationMs": 9600,
+        "engine": "Apple Vision",
+        "inputEncoding": "png-data",
+        "minimumTextHeight": 0,
+        "modelSource": "OS-managed Vision assets; independent model hash unavailable",
+        "observations": [
+          {
+            "boundingBox": [
+              0.061046513598661194,
+              0.7771428577882035,
+              0.1656976699829101,
+              0.08714285714285719
+            ],
+            "confidence": 1,
+            "text": "项目结算单"
+          },
+          {
+            "boundingBox": [
+              0.06095594572755605,
+              0.5972683412126054,
+              0.13390206336975097,
+              0.08785534449986043
+            ],
+            "confidence": 1,
+            "text": "合同金额"
+          },
+          {
+            "boundingBox": [
+              0.2848236335722803,
+              0.5874443898507772,
+              0.1818062210083008,
+              0.0975364685058594
+            ],
+            "confidence": 1,
+            "text": "¥98,765.40"
+          },
+          {
+            "boundingBox": [
+              0.06245644246829457,
+              0.42140311283477994,
+              0.19776153564453125,
+              0.08742633274623324
+            ],
+            "confidence": 1,
+            "text": "中文识别测试"
+          },
+          {
+            "boundingBox": [
+              0.061046515451198186,
+              0.24857142930784515,
+              0.35319766998291013,
+              0.07714285714285718
+            ],
+            "confidence": 1,
+            "text": "SOLIDIFY OCR CHECK"
+          }
+        ],
+        "osVersion": "Version 26.6.2 (Build 25G83)",
+        "recognitionLanguages": [
+          "zh-Hans",
+          "en-US"
+        ],
+        "recognitionLevel": "accurate",
+        "requestRevision": 3,
+        "schemaVersion": 1,
+        "success": true,
+        "supportedLanguages": [
+          "en-US",
+          "fr-FR",
+          "it-IT",
+          "de-DE",
+          "es-ES",
+          "pt-BR",
+          "zh-Hans",
+          "zh-Hant",
+          "yue-Hans",
+          "yue-Hant",
+          "ko-KR",
+          "ja-JP",
+          "ru-RU",
+          "uk-UA",
+          "th-TH",
+          "vi-VT",
+          "ar-SA",
+          "ars-SA",
+          "tr-TR",
+          "id-ID",
+          "cs-CZ",
+          "da-DK",
+          "nl-NL",
+          "no-NO",
+          "nn-NO",
+          "nb-NO",
+          "ms-MY",
+          "pl-PL",
+          "ro-RO",
+          "sv-SE"
+        ],
+        "text": "项目结算单\n合同金额\n¥98,765.40\n中文识别测试\nSOLIDIFY OCR CHECK\n",
+        "usesCPUOnly": true,
+        "usesLanguageCorrection": false
+      },
+      "sourceSha256": "a3fb44ce0a726838627bf7927058874c90240c7f0e1196f91d68654ffc4ca0bc",
+      "stderr": "",
+      "strictImprovement": false,
+      "strictRegression": false,
+      "workEmpty": true
+    },
+    {
+      "amountExact": true,
+      "durationMs": 9347,
+      "expected": {
+        "amount": "一百万元",
+        "amountStyle": "han",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "STSongti-SC-Regular",
+        "fontSize": 52,
+        "id": "f1-lines-han-sharp",
+        "layout": "lines"
+      },
+      "file": "f1-lines-han-sharp.png",
+      "inputSha256": "989bd97cfd529d5302f4513d2ef2d8b17bb604f48f0375850545a1351a2efb6d",
+      "missingControlLines": [],
+      "payload": {
+        "automaticallyDetectsLanguage": false,
+        "durationMs": 9315,
+        "engine": "Apple Vision",
+        "inputEncoding": "png-data",
+        "minimumTextHeight": 0,
+        "modelSource": "OS-managed Vision assets; independent model hash unavailable",
+        "observations": [
+          {
+            "boundingBox": [
+              0.06238194917507844,
+              0.7793822890997554,
+              0.16448028564453124,
+              0.07910917554582875
+            ],
+            "confidence": 1,
+            "text": "项目结算单"
+          },
+          {
+            "boundingBox": [
+              0.0625000019187243,
+              0.601328903148322,
+              0.2703488349914551,
+              0.08009966714041572
+            ],
+            "confidence": 0.5,
+            "text": "合同金额一百万元"
+          },
+          {
+            "boundingBox": [
+              0.06536408675710029,
+              0.4246781555495722,
+              0.1933997344970703,
+              0.07755398886544361
+            ],
+            "confidence": 1,
+            "text": "中文识别测试"
+          },
+          {
+            "boundingBox": [
+              0.05833333583333331,
+              0.2471428575510204,
+              0.3499999999999999,
+              0.07714285714285707
+            ],
+            "confidence": 0.5,
+            "text": "SOLIDIFY OCR CHECK"
+          }
+        ],
+        "osVersion": "Version 26.6.2 (Build 25G83)",
+        "recognitionLanguages": [
+          "zh-Hans",
+          "en-US"
+        ],
+        "recognitionLevel": "accurate",
+        "requestRevision": 3,
+        "schemaVersion": 1,
+        "success": true,
+        "supportedLanguages": [
+          "en-US",
+          "fr-FR",
+          "it-IT",
+          "de-DE",
+          "es-ES",
+          "pt-BR",
+          "zh-Hans",
+          "zh-Hant",
+          "yue-Hans",
+          "yue-Hant",
+          "ko-KR",
+          "ja-JP",
+          "ru-RU",
+          "uk-UA",
+          "th-TH",
+          "vi-VT",
+          "ar-SA",
+          "ars-SA",
+          "tr-TR",
+          "id-ID",
+          "cs-CZ",
+          "da-DK",
+          "nl-NL",
+          "no-NO",
+          "nn-NO",
+          "nb-NO",
+          "ms-MY",
+          "pl-PL",
+          "ro-RO",
+          "sv-SE"
+        ],
+        "text": "项目结算单\n合同金额一百万元\n中文识别测试\nSOLIDIFY OCR CHECK\n",
+        "usesCPUOnly": true,
+        "usesLanguageCorrection": false
+      },
+      "sourceSha256": "989bd97cfd529d5302f4513d2ef2d8b17bb604f48f0375850545a1351a2efb6d",
+      "stderr": "",
+      "strictImprovement": false,
+      "strictRegression": false,
+      "workEmpty": true
+    },
+    {
+      "amountExact": true,
+      "durationMs": 9241,
+      "expected": {
+        "amount": "壹佰万元整",
+        "amountStyle": "financial",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "STSongti-SC-Regular",
+        "fontSize": 52,
+        "id": "f1-lines-financial-sharp",
+        "layout": "lines"
+      },
+      "file": "f1-lines-financial-sharp.png",
+      "inputSha256": "4d3b6f86b5387d2caacfd18f14f3b8098274b0754afd8af8500af2705a8de024",
+      "missingControlLines": [],
+      "payload": {
+        "automaticallyDetectsLanguage": false,
+        "durationMs": 9206,
+        "engine": "Apple Vision",
+        "inputEncoding": "png-data",
+        "minimumTextHeight": 0,
+        "modelSource": "OS-managed Vision assets; independent model hash unavailable",
+        "observations": [
+          {
+            "boundingBox": [
+              0.06242183183477451,
+              0.7798431481317482,
+              0.16440052032470703,
+              0.0781874574933733
+            ],
+            "confidence": 1,
+            "text": "项目结算单"
+          },
+          {
+            "boundingBox": [
+              0.0583333343396287,
+              0.5899999976392598,
+              0.3041666603088379,
+              0.09571428571428577
+            ],
+            "confidence": 0.5,
+            "text": "合同金额 壹佰万元整"
+          },
+          {
+            "boundingBox": [
+              0.06540698057501401,
+              0.4252491690469315,
+              0.19476743698120116,
+              0.07641196114676341
+            ],
+            "confidence": 1,
+            "text": "中文识别测试"
+          },
+          {
+            "boundingBox": [
+              0.05833333583333331,
+              0.2471428575510204,
+              0.3499999999999999,
+              0.07714285714285707
+            ],
+            "confidence": 0.5,
+            "text": "SOLIDIFY OCR CHECK"
+          }
+        ],
+        "osVersion": "Version 26.6.2 (Build 25G83)",
+        "recognitionLanguages": [
+          "zh-Hans",
+          "en-US"
+        ],
+        "recognitionLevel": "accurate",
+        "requestRevision": 3,
+        "schemaVersion": 1,
+        "success": true,
+        "supportedLanguages": [
+          "en-US",
+          "fr-FR",
+          "it-IT",
+          "de-DE",
+          "es-ES",
+          "pt-BR",
+          "zh-Hans",
+          "zh-Hant",
+          "yue-Hans",
+          "yue-Hant",
+          "ko-KR",
+          "ja-JP",
+          "ru-RU",
+          "uk-UA",
+          "th-TH",
+          "vi-VT",
+          "ar-SA",
+          "ars-SA",
+          "tr-TR",
+          "id-ID",
+          "cs-CZ",
+          "da-DK",
+          "nl-NL",
+          "no-NO",
+          "nn-NO",
+          "nb-NO",
+          "ms-MY",
+          "pl-PL",
+          "ro-RO",
+          "sv-SE"
+        ],
+        "text": "项目结算单\n合同金额 壹佰万元整\n中文识别测试\nSOLIDIFY OCR CHECK\n",
+        "usesCPUOnly": true,
+        "usesLanguageCorrection": false
+      },
+      "sourceSha256": "4d3b6f86b5387d2caacfd18f14f3b8098274b0754afd8af8500af2705a8de024",
+      "stderr": "",
+      "strictImprovement": true,
+      "strictRegression": false,
+      "workEmpty": true
+    },
+    {
+      "amountExact": true,
+      "durationMs": 10096,
+      "expected": {
+        "amount": "1,234,567.89元",
+        "amountStyle": "decimal",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "STSongti-SC-Regular",
+        "fontSize": 52,
+        "id": "f1-lines-decimal-sharp",
+        "layout": "lines"
+      },
+      "file": "f1-lines-decimal-sharp.png",
+      "inputSha256": "d065e0bad6cdcb4911904c611cd30757a18fc2e91c4b6033fdd8fdd385ad22e0",
+      "missingControlLines": [],
+      "payload": {
+        "automaticallyDetectsLanguage": false,
+        "durationMs": 10063,
+        "engine": "Apple Vision",
+        "inputEncoding": "png-data",
+        "minimumTextHeight": 0,
+        "modelSource": "OS-managed Vision assets; independent model hash unavailable",
+        "observations": [
+          {
+            "boundingBox": [
+              0.06236705278233906,
+              0.7792088348129171,
+              0.1645100784301758,
+              0.0794560841151647
+            ],
+            "confidence": 1,
+            "text": "项目结算单"
+          },
+          {
+            "boundingBox": [
+              0.05833334207211447,
+              0.5899999985916407,
+              0.3333333206176758,
+              0.09571428571428577
+            ],
+            "confidence": 0.5,
+            "text": "合同金额 1,234,567.89元"
+          },
+          {
+            "boundingBox": [
+              0.0654069830283941,
+              0.42524916940585406,
+              0.1933139419555664,
+              0.07641196114676341
+            ],
+            "confidence": 1,
+            "text": "中文识别测试"
+          },
+          {
+            "boundingBox": [
+              0.05833333583333331,
+              0.2471428575510204,
+              0.3499999999999999,
+              0.07714285714285707
+            ],
+            "confidence": 0.5,
+            "text": "SOLIDIFY OCR CHECK"
+          }
+        ],
+        "osVersion": "Version 26.6.2 (Build 25G83)",
+        "recognitionLanguages": [
+          "zh-Hans",
+          "en-US"
+        ],
+        "recognitionLevel": "accurate",
+        "requestRevision": 3,
+        "schemaVersion": 1,
+        "success": true,
+        "supportedLanguages": [
+          "en-US",
+          "fr-FR",
+          "it-IT",
+          "de-DE",
+          "es-ES",
+          "pt-BR",
+          "zh-Hans",
+          "zh-Hant",
+          "yue-Hans",
+          "yue-Hant",
+          "ko-KR",
+          "ja-JP",
+          "ru-RU",
+          "uk-UA",
+          "th-TH",
+          "vi-VT",
+          "ar-SA",
+          "ars-SA",
+          "tr-TR",
+          "id-ID",
+          "cs-CZ",
+          "da-DK",
+          "nl-NL",
+          "no-NO",
+          "nn-NO",
+          "nb-NO",
+          "ms-MY",
+          "pl-PL",
+          "ro-RO",
+          "sv-SE"
+        ],
+        "text": "项目结算单\n合同金额 1,234,567.89元\n中文识别测试\nSOLIDIFY OCR CHECK\n",
+        "usesCPUOnly": true,
+        "usesLanguageCorrection": false
+      },
+      "sourceSha256": "d065e0bad6cdcb4911904c611cd30757a18fc2e91c4b6033fdd8fdd385ad22e0",
+      "stderr": "",
+      "strictImprovement": true,
+      "strictRegression": false,
+      "workEmpty": true
+    },
+    {
+      "amountExact": false,
+      "durationMs": 9642,
+      "expected": {
+        "amount": "￥98,765.40",
+        "amountStyle": "currency",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "STSongti-SC-Regular",
+        "fontSize": 52,
+        "id": "f1-lines-currency-sharp",
+        "layout": "lines"
+      },
+      "file": "f1-lines-currency-sharp.png",
+      "inputSha256": "c2eb9e62eeb9461ce9b699664dad6349488544792826ae368526913915003af1",
+      "missingControlLines": [],
+      "payload": {
+        "automaticallyDetectsLanguage": false,
+        "durationMs": 9607,
+        "engine": "Apple Vision",
+        "inputEncoding": "png-data",
+        "minimumTextHeight": 0,
+        "modelSource": "OS-managed Vision assets; independent model hash unavailable",
+        "observations": [
+          {
+            "boundingBox": [
+              0.06235355829083817,
+              0.7790510071611446,
+              0.16453706741333007,
+              0.07977173941476001
+            ],
+            "confidence": 1,
+            "text": "项目结算单"
+          },
+          {
+            "boundingBox": [
+              0.05833333633333328,
+              0.5899999987549062,
+              0.3,
+              0.09571428571428565
+            ],
+            "confidence": 0.5,
+            "text": "合同金额 ¥98,765.40"
+          },
+          {
+            "boundingBox": [
+              0.0654069829708602,
+              0.42524916935279033,
+              0.1933139419555664,
+              0.07641196114676341
+            ],
+            "confidence": 1,
+            "text": "中文识别测试"
+          },
+          {
+            "boundingBox": [
+              0.05833333583333331,
+              0.2471428575510204,
+              0.3499999999999999,
+              0.07714285714285707
+            ],
+            "confidence": 0.5,
+            "text": "SOLIDIFY OCR CHECK"
+          }
+        ],
+        "osVersion": "Version 26.6.2 (Build 25G83)",
+        "recognitionLanguages": [
+          "zh-Hans",
+          "en-US"
+        ],
+        "recognitionLevel": "accurate",
+        "requestRevision": 3,
+        "schemaVersion": 1,
+        "success": true,
+        "supportedLanguages": [
+          "en-US",
+          "fr-FR",
+          "it-IT",
+          "de-DE",
+          "es-ES",
+          "pt-BR",
+          "zh-Hans",
+          "zh-Hant",
+          "yue-Hans",
+          "yue-Hant",
+          "ko-KR",
+          "ja-JP",
+          "ru-RU",
+          "uk-UA",
+          "th-TH",
+          "vi-VT",
+          "ar-SA",
+          "ars-SA",
+          "tr-TR",
+          "id-ID",
+          "cs-CZ",
+          "da-DK",
+          "nl-NL",
+          "no-NO",
+          "nn-NO",
+          "nb-NO",
+          "ms-MY",
+          "pl-PL",
+          "ro-RO",
+          "sv-SE"
+        ],
+        "text": "项目结算单\n合同金额 ¥98,765.40\n中文识别测试\nSOLIDIFY OCR CHECK\n",
+        "usesCPUOnly": true,
+        "usesLanguageCorrection": false
+      },
+      "sourceSha256": "c2eb9e62eeb9461ce9b699664dad6349488544792826ae368526913915003af1",
+      "stderr": "",
+      "strictImprovement": false,
+      "strictRegression": false,
+      "workEmpty": true
+    },
+    {
+      "amountExact": true,
+      "durationMs": 9331,
+      "expected": {
+        "amount": "一百万元",
+        "amountStyle": "han",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "STSongti-SC-Regular",
+        "fontSize": 52,
+        "id": "f1-table-han-sharp",
+        "layout": "table"
+      },
+      "file": "f1-table-han-sharp.png",
+      "inputSha256": "c33da996cfb871d92267b8b71a0f4458a82167ef9d381b15c084cf79fcbb28cf",
+      "missingControlLines": [],
+      "payload": {
+        "automaticallyDetectsLanguage": false,
+        "durationMs": 9295,
+        "engine": "Apple Vision",
+        "inputEncoding": "png-data",
+        "minimumTextHeight": 0,
+        "modelSource": "OS-managed Vision assets; independent model hash unavailable",
+        "observations": [
+          {
+            "boundingBox": [
+              0.060975921837643075,
+              0.7766665761097945,
+              0.16583885192871092,
+              0.08454060145786835
+            ],
+            "confidence": 1,
+            "text": "项目结算单"
+          },
+          {
+            "boundingBox": [
+              0.06100008865090585,
+              0.5976187692755696,
+              0.1323602867126465,
+              0.08383222852434435
+            ],
+            "confidence": 1,
+            "text": "合同金额"
+          },
+          {
+            "boundingBox": [
+              0.25416666627695716,
+              0.5899999979453823,
+              0.15833333015441897,
+              0.09571428571428565
+            ],
+            "confidence": 1,
+            "text": "一百万元"
+          },
+          {
+            "boundingBox": [
+              0.06389828330093618,
+              0.41792281296632217,
+              0.19487785339355468,
+              0.08442015511649004
+            ],
+            "confidence": 1,
+            "text": "中文识别测试"
+          },
+          {
+            "boundingBox": [
+              0.0610465162986965,
+              0.25571428645070227,
+              0.3444767379760742,
+              0.06322259085518978
+            ],
+            "confidence": 1,
+            "text": "SOLIDIFY OCR CHECK"
+          }
+        ],
+        "osVersion": "Version 26.6.2 (Build 25G83)",
+        "recognitionLanguages": [
+          "zh-Hans",
+          "en-US"
+        ],
+        "recognitionLevel": "accurate",
+        "requestRevision": 3,
+        "schemaVersion": 1,
+        "success": true,
+        "supportedLanguages": [
+          "en-US",
+          "fr-FR",
+          "it-IT",
+          "de-DE",
+          "es-ES",
+          "pt-BR",
+          "zh-Hans",
+          "zh-Hant",
+          "yue-Hans",
+          "yue-Hant",
+          "ko-KR",
+          "ja-JP",
+          "ru-RU",
+          "uk-UA",
+          "th-TH",
+          "vi-VT",
+          "ar-SA",
+          "ars-SA",
+          "tr-TR",
+          "id-ID",
+          "cs-CZ",
+          "da-DK",
+          "nl-NL",
+          "no-NO",
+          "nn-NO",
+          "nb-NO",
+          "ms-MY",
+          "pl-PL",
+          "ro-RO",
+          "sv-SE"
+        ],
+        "text": "项目结算单\n合同金额\n一百万元\n中文识别测试\nSOLIDIFY OCR CHECK\n",
+        "usesCPUOnly": true,
+        "usesLanguageCorrection": false
+      },
+      "sourceSha256": "c33da996cfb871d92267b8b71a0f4458a82167ef9d381b15c084cf79fcbb28cf",
+      "stderr": "",
+      "strictImprovement": false,
+      "strictRegression": false,
+      "workEmpty": true
+    },
+    {
+      "amountExact": true,
+      "durationMs": 9392,
+      "expected": {
+        "amount": "壹佰万元整",
+        "amountStyle": "financial",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "STSongti-SC-Regular",
+        "fontSize": 52,
+        "id": "f1-table-financial-sharp",
+        "layout": "table"
+      },
+      "file": "f1-table-financial-sharp.png",
+      "inputSha256": "03470bf0120cec3501f7e66e50a0214c88ae0fe88a036aeed945be682ee2e785",
+      "missingControlLines": [],
+      "payload": {
+        "automaticallyDetectsLanguage": false,
+        "durationMs": 9362,
+        "engine": "Apple Vision",
+        "inputEncoding": "png-data",
+        "minimumTextHeight": 0,
+        "modelSource": "OS-managed Vision assets; independent model hash unavailable",
+        "observations": [
+          {
+            "boundingBox": [
+              0.06099160024331404,
+              0.7768325018190053,
+              0.1658074951171875,
+              0.08420875004359651
+            ],
+            "confidence": 1,
+            "text": "项目结算单"
+          },
+          {
+            "boundingBox": [
+              0.061046513516424594,
+              0.5980066449719873,
+              0.13226743698120116,
+              0.0834219251360212
+            ],
+            "confidence": 1,
+            "text": "合同金额"
+          },
+          {
+            "boundingBox": [
+              0.27916667026224773,
+              0.5899999991358584,
+              0.16666666030883787,
+              0.09571428571428565
+            ],
+            "confidence": 1,
+            "text": "壹佰万元整"
+          },
+          {
+            "boundingBox": [
+              0.063953491507323,
+              0.41857142866230934,
+              0.1947674369812012,
+              0.08308970042637409
+            ],
+            "confidence": 1,
+            "text": "中文识别测试"
+          },
+          {
+            "boundingBox": [
+              0.0610465228647,
+              0.25571428645070227,
+              0.34593021392822265,
+              0.06322259085518978
+            ],
+            "confidence": 1,
+            "text": "SOLIDIFY OCR CHECK"
+          }
+        ],
+        "osVersion": "Version 26.6.2 (Build 25G83)",
+        "recognitionLanguages": [
+          "zh-Hans",
+          "en-US"
+        ],
+        "recognitionLevel": "accurate",
+        "requestRevision": 3,
+        "schemaVersion": 1,
+        "success": true,
+        "supportedLanguages": [
+          "en-US",
+          "fr-FR",
+          "it-IT",
+          "de-DE",
+          "es-ES",
+          "pt-BR",
+          "zh-Hans",
+          "zh-Hant",
+          "yue-Hans",
+          "yue-Hant",
+          "ko-KR",
+          "ja-JP",
+          "ru-RU",
+          "uk-UA",
+          "th-TH",
+          "vi-VT",
+          "ar-SA",
+          "ars-SA",
+          "tr-TR",
+          "id-ID",
+          "cs-CZ",
+          "da-DK",
+          "nl-NL",
+          "no-NO",
+          "nn-NO",
+          "nb-NO",
+          "ms-MY",
+          "pl-PL",
+          "ro-RO",
+          "sv-SE"
+        ],
+        "text": "项目结算单\n合同金额\n壹佰万元整\n中文识别测试\nSOLIDIFY OCR CHECK\n",
+        "usesCPUOnly": true,
+        "usesLanguageCorrection": false
+      },
+      "sourceSha256": "03470bf0120cec3501f7e66e50a0214c88ae0fe88a036aeed945be682ee2e785",
+      "stderr": "",
+      "strictImprovement": true,
+      "strictRegression": false,
+      "workEmpty": true
+    },
+    {
+      "amountExact": true,
+      "durationMs": 9591,
+      "expected": {
+        "amount": "1,234,567.89元",
+        "amountStyle": "decimal",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "STSongti-SC-Regular",
+        "fontSize": 52,
+        "id": "f1-table-decimal-sharp",
+        "layout": "table"
+      },
+      "file": "f1-table-decimal-sharp.png",
+      "inputSha256": "e6f74558f1881b97d721b8e2b2a3e2f12b98ad2b6db983824865853aa5722e2e",
+      "missingControlLines": [],
+      "payload": {
+        "automaticallyDetectsLanguage": false,
+        "durationMs": 9557,
+        "engine": "Apple Vision",
+        "inputEncoding": "png-data",
+        "minimumTextHeight": 0,
+        "modelSource": "OS-managed Vision assets; independent model hash unavailable",
+        "observations": [
+          {
+            "boundingBox": [
+              0.0609922868888179,
+              0.7768396897986571,
+              0.16580612182617188,
+              0.08419437408447261
+            ],
+            "confidence": 1,
+            "text": "项目结算单"
+          },
+          {
+            "boundingBox": [
+              0.060983399350443473,
+              0.5974784347363484,
+              0.1323936653137207,
+              0.08411289760044649
+            ],
+            "confidence": 1,
+            "text": "合同金额"
+          },
+          {
+            "boundingBox": [
+              0.2790697718274494,
+              0.5942857130739159,
+              0.1933139419555664,
+              0.09009966714041573
+            ],
+            "confidence": 1,
+            "text": "1,234,567.89元"
+          },
+          {
+            "boundingBox": [
+              0.063953491507323,
+              0.41857142866230934,
+              0.1947674369812012,
+              0.08308970042637409
+            ],
+            "confidence": 1,
+            "text": "中文识别测试"
+          },
+          {
+            "boundingBox": [
+              0.06104651616821286,
+              0.25571428643685956,
+              0.3444767379760742,
+              0.06322259085518978
+            ],
+            "confidence": 1,
+            "text": "SOLIDIFY OCR CHECK"
+          }
+        ],
+        "osVersion": "Version 26.6.2 (Build 25G83)",
+        "recognitionLanguages": [
+          "zh-Hans",
+          "en-US"
+        ],
+        "recognitionLevel": "accurate",
+        "requestRevision": 3,
+        "schemaVersion": 1,
+        "success": true,
+        "supportedLanguages": [
+          "en-US",
+          "fr-FR",
+          "it-IT",
+          "de-DE",
+          "es-ES",
+          "pt-BR",
+          "zh-Hans",
+          "zh-Hant",
+          "yue-Hans",
+          "yue-Hant",
+          "ko-KR",
+          "ja-JP",
+          "ru-RU",
+          "uk-UA",
+          "th-TH",
+          "vi-VT",
+          "ar-SA",
+          "ars-SA",
+          "tr-TR",
+          "id-ID",
+          "cs-CZ",
+          "da-DK",
+          "nl-NL",
+          "no-NO",
+          "nn-NO",
+          "nb-NO",
+          "ms-MY",
+          "pl-PL",
+          "ro-RO",
+          "sv-SE"
+        ],
+        "text": "项目结算单\n合同金额\n1,234,567.89元\n中文识别测试\nSOLIDIFY OCR CHECK\n",
+        "usesCPUOnly": true,
+        "usesLanguageCorrection": false
+      },
+      "sourceSha256": "e6f74558f1881b97d721b8e2b2a3e2f12b98ad2b6db983824865853aa5722e2e",
+      "stderr": "",
+      "strictImprovement": true,
+      "strictRegression": false,
+      "workEmpty": true
+    },
+    {
+      "amountExact": false,
+      "durationMs": 9660,
+      "expected": {
+        "amount": "￥98,765.40",
+        "amountStyle": "currency",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "STSongti-SC-Regular",
+        "fontSize": 52,
+        "id": "f1-table-currency-sharp",
+        "layout": "table"
+      },
+      "file": "f1-table-currency-sharp.png",
+      "inputSha256": "5854d2099369a96a448826cad1ec448720a290ae0c737d7da6933ebb61f39698",
+      "missingControlLines": [],
+      "payload": {
+        "automaticallyDetectsLanguage": false,
+        "durationMs": 9627,
+        "engine": "Apple Vision",
+        "inputEncoding": "png-data",
+        "minimumTextHeight": 0,
+        "modelSource": "OS-managed Vision assets; independent model hash unavailable",
+        "observations": [
+          {
+            "boundingBox": [
+              0.0609922868888179,
+              0.7768396897986571,
+              0.16580612182617188,
+              0.08419437408447261
+            ],
+            "confidence": 1,
+            "text": "项目结算单"
+          },
+          {
+            "boundingBox": [
+              0.06096281905878853,
+              0.597304808788856,
+              0.1324348258972168,
+              0.08446014949253633
+            ],
+            "confidence": 1,
+            "text": "合同金额"
+          },
+          {
+            "boundingBox": [
+              0.28488372294634445,
+              0.5913621269099543,
+              0.15116278648376463,
+              0.08637873513357985
+            ],
+            "confidence": 0.5,
+            "text": "¥98,765.40"
+          },
+          {
+            "boundingBox": [
+              0.06390856391010696,
+              0.41805065436991495,
+              0.19485729217529296,
+              0.0841644723074777
+            ],
+            "confidence": 1,
+            "text": "中文识别测试"
+          },
+          {
+            "boundingBox": [
+              0.06104652341379559,
+              0.25571428645070227,
+              0.3459302139282227,
+              0.06322259085518978
+            ],
+            "confidence": 1,
+            "text": "SOLIDIFY OCR CHECK"
+          }
+        ],
+        "osVersion": "Version 26.6.2 (Build 25G83)",
+        "recognitionLanguages": [
+          "zh-Hans",
+          "en-US"
+        ],
+        "recognitionLevel": "accurate",
+        "requestRevision": 3,
+        "schemaVersion": 1,
+        "success": true,
+        "supportedLanguages": [
+          "en-US",
+          "fr-FR",
+          "it-IT",
+          "de-DE",
+          "es-ES",
+          "pt-BR",
+          "zh-Hans",
+          "zh-Hant",
+          "yue-Hans",
+          "yue-Hant",
+          "ko-KR",
+          "ja-JP",
+          "ru-RU",
+          "uk-UA",
+          "th-TH",
+          "vi-VT",
+          "ar-SA",
+          "ars-SA",
+          "tr-TR",
+          "id-ID",
+          "cs-CZ",
+          "da-DK",
+          "nl-NL",
+          "no-NO",
+          "nn-NO",
+          "nb-NO",
+          "ms-MY",
+          "pl-PL",
+          "ro-RO",
+          "sv-SE"
+        ],
+        "text": "项目结算单\n合同金额\n¥98,765.40\n中文识别测试\nSOLIDIFY OCR CHECK\n",
+        "usesCPUOnly": true,
+        "usesLanguageCorrection": false
+      },
+      "sourceSha256": "5854d2099369a96a448826cad1ec448720a290ae0c737d7da6933ebb61f39698",
+      "stderr": "",
+      "strictImprovement": false,
+      "strictRegression": false,
+      "workEmpty": true
+    },
+    {
+      "amountExact": true,
+      "durationMs": 9480,
+      "expected": {
+        "amount": "一百万元",
+        "amountStyle": "han",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "STHeitiSC-Light",
+        "fontSize": 52,
+        "id": "f2-lines-han-sharp",
+        "layout": "lines"
+      },
+      "file": "f2-lines-han-sharp.png",
+      "inputSha256": "95df921e5bb399a4487e437bc41eab62fa5546490b86e4d3e5b223a066aea3c5",
+      "missingControlLines": [],
+      "payload": {
+        "automaticallyDetectsLanguage": false,
+        "durationMs": 9447,
+        "engine": "Apple Vision",
+        "inputEncoding": "png-data",
+        "minimumTextHeight": 0,
+        "modelSource": "OS-managed Vision assets; independent model hash unavailable",
+        "observations": [
+          {
+            "boundingBox": [
+              0.06395348872418069,
+              0.7707641192397412,
+              0.16279069900512694,
+              0.07641196114676341
+            ],
+            "confidence": 1,
+            "text": "项目结算单"
+          },
+          {
+            "boundingBox": [
+              0.06249999941924341,
+              0.5913621255520336,
+              0.2703488349914551,
+              0.0764119611467633
+            ],
+            "confidence": 0.5,
+            "text": "合同金额一百万元"
+          },
+          {
+            "boundingBox": [
+              0.0654069722303305,
+              0.4114285705020538,
+              0.1933139610290527,
+              0.07714285714285718
+            ],
+            "confidence": 1,
+            "text": "中文识别测试"
+          },
+          {
+            "boundingBox": [
+              0.06104651050586657,
+              0.24571428516825988,
+              0.3386627960205078,
+              0.05999999999999994
+            ],
+            "confidence": 0.5,
+            "text": "SOLIDIFY OCR CHECK"
+          }
+        ],
+        "osVersion": "Version 26.6.2 (Build 25G83)",
+        "recognitionLanguages": [
+          "zh-Hans",
+          "en-US"
+        ],
+        "recognitionLevel": "accurate",
+        "requestRevision": 3,
+        "schemaVersion": 1,
+        "success": true,
+        "supportedLanguages": [
+          "en-US",
+          "fr-FR",
+          "it-IT",
+          "de-DE",
+          "es-ES",
+          "pt-BR",
+          "zh-Hans",
+          "zh-Hant",
+          "yue-Hans",
+          "yue-Hant",
+          "ko-KR",
+          "ja-JP",
+          "ru-RU",
+          "uk-UA",
+          "th-TH",
+          "vi-VT",
+          "ar-SA",
+          "ars-SA",
+          "tr-TR",
+          "id-ID",
+          "cs-CZ",
+          "da-DK",
+          "nl-NL",
+          "no-NO",
+          "nn-NO",
+          "nb-NO",
+          "ms-MY",
+          "pl-PL",
+          "ro-RO",
+          "sv-SE"
+        ],
+        "text": "项目结算单\n合同金额一百万元\n中文识别测试\nSOLIDIFY OCR CHECK\n",
+        "usesCPUOnly": true,
+        "usesLanguageCorrection": false
+      },
+      "sourceSha256": "95df921e5bb399a4487e437bc41eab62fa5546490b86e4d3e5b223a066aea3c5",
+      "stderr": "",
+      "strictImprovement": false,
+      "strictRegression": false,
+      "workEmpty": true
+    },
+    {
+      "amountExact": true,
+      "durationMs": 9272,
+      "expected": {
+        "amount": "壹佰万元整",
+        "amountStyle": "financial",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "STHeitiSC-Light",
+        "fontSize": 52,
+        "id": "f2-lines-financial-sharp",
+        "layout": "lines"
+      },
+      "file": "f2-lines-financial-sharp.png",
+      "inputSha256": "6b21498abec106c64a909e0d8f0d3f40fbe875b249ee08e1b8861d6fb49a41f0",
+      "missingControlLines": [],
+      "payload": {
+        "automaticallyDetectsLanguage": false,
+        "durationMs": 9242,
+        "engine": "Apple Vision",
+        "inputEncoding": "png-data",
+        "minimumTextHeight": 0,
+        "modelSource": "OS-managed Vision assets; independent model hash unavailable",
+        "observations": [
+          {
+            "boundingBox": [
+              0.06395348872418069,
+              0.7671428565485653,
+              0.16279069900512694,
+              0.0800332232883999
+            ],
+            "confidence": 1,
+            "text": "项目结算单"
+          },
+          {
+            "boundingBox": [
+              0.06249999649957701,
+              0.5913621255561865,
+              0.30087209701538087,
+              0.0764119611467633
+            ],
+            "confidence": 1,
+            "text": "合同金额 壹佰万元整"
+          },
+          {
+            "boundingBox": [
+              0.06536363726958541,
+              0.41138308023272174,
+              0.19340063095092772,
+              0.07756606510707309
+            ],
+            "confidence": 1,
+            "text": "中文识别测试"
+          },
+          {
+            "boundingBox": [
+              0.05416666956616219,
+              0.22857142809523812,
+              0.3458333206176758,
+              0.08571428571428574
+            ],
+            "confidence": 0.5,
+            "text": "SOLIDIFY OCR CHECK"
+          }
+        ],
+        "osVersion": "Version 26.6.2 (Build 25G83)",
+        "recognitionLanguages": [
+          "zh-Hans",
+          "en-US"
+        ],
+        "recognitionLevel": "accurate",
+        "requestRevision": 3,
+        "schemaVersion": 1,
+        "success": true,
+        "supportedLanguages": [
+          "en-US",
+          "fr-FR",
+          "it-IT",
+          "de-DE",
+          "es-ES",
+          "pt-BR",
+          "zh-Hans",
+          "zh-Hant",
+          "yue-Hans",
+          "yue-Hant",
+          "ko-KR",
+          "ja-JP",
+          "ru-RU",
+          "uk-UA",
+          "th-TH",
+          "vi-VT",
+          "ar-SA",
+          "ars-SA",
+          "tr-TR",
+          "id-ID",
+          "cs-CZ",
+          "da-DK",
+          "nl-NL",
+          "no-NO",
+          "nn-NO",
+          "nb-NO",
+          "ms-MY",
+          "pl-PL",
+          "ro-RO",
+          "sv-SE"
+        ],
+        "text": "项目结算单\n合同金额 壹佰万元整\n中文识别测试\nSOLIDIFY OCR CHECK\n",
+        "usesCPUOnly": true,
+        "usesLanguageCorrection": false
+      },
+      "sourceSha256": "6b21498abec106c64a909e0d8f0d3f40fbe875b249ee08e1b8861d6fb49a41f0",
+      "stderr": "",
+      "strictImprovement": true,
+      "strictRegression": false,
+      "workEmpty": true
+    },
+    {
+      "amountExact": true,
+      "durationMs": 9242,
+      "expected": {
+        "amount": "1,234,567.89元",
+        "amountStyle": "decimal",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "STHeitiSC-Light",
+        "fontSize": 52,
+        "id": "f2-lines-decimal-sharp",
+        "layout": "lines"
+      },
+      "file": "f2-lines-decimal-sharp.png",
+      "inputSha256": "4b271dbba9f8fd495eb04d3db0479e71dfa2e1b633c1a017bd9bb78c13c7c648",
+      "missingControlLines": [],
+      "payload": {
+        "automaticallyDetectsLanguage": false,
+        "durationMs": 9209,
+        "engine": "Apple Vision",
+        "inputEncoding": "png-data",
+        "minimumTextHeight": 0,
+        "modelSource": "OS-managed Vision assets; independent model hash unavailable",
+        "observations": [
+          {
+            "boundingBox": [
+              0.0639534913696289,
+              0.7707641195719672,
+              0.1613372039794922,
+              0.0764119611467633
+            ],
+            "confidence": 1,
+            "text": "项目结算单"
+          },
+          {
+            "boundingBox": [
+              0.06250000574042741,
+              0.5842857138868972,
+              0.3590116119384766,
+              0.08348837171282086
+            ],
+            "confidence": 1,
+            "text": "合同金额 1,234,567.89元"
+          },
+          {
+            "boundingBox": [
+              0.0654069736642527,
+              0.4114285708224143,
+              0.1933139610290527,
+              0.07714285714285707
+            ],
+            "confidence": 1,
+            "text": "中文识别测试"
+          },
+          {
+            "boundingBox": [
+              0.06104651050586657,
+              0.24571428516825988,
+              0.3386627960205078,
+              0.05999999999999994
+            ],
+            "confidence": 0.5,
+            "text": "SOLIDIFY OCR CHECK"
+          }
+        ],
+        "osVersion": "Version 26.6.2 (Build 25G83)",
+        "recognitionLanguages": [
+          "zh-Hans",
+          "en-US"
+        ],
+        "recognitionLevel": "accurate",
+        "requestRevision": 3,
+        "schemaVersion": 1,
+        "success": true,
+        "supportedLanguages": [
+          "en-US",
+          "fr-FR",
+          "it-IT",
+          "de-DE",
+          "es-ES",
+          "pt-BR",
+          "zh-Hans",
+          "zh-Hant",
+          "yue-Hans",
+          "yue-Hant",
+          "ko-KR",
+          "ja-JP",
+          "ru-RU",
+          "uk-UA",
+          "th-TH",
+          "vi-VT",
+          "ar-SA",
+          "ars-SA",
+          "tr-TR",
+          "id-ID",
+          "cs-CZ",
+          "da-DK",
+          "nl-NL",
+          "no-NO",
+          "nn-NO",
+          "nb-NO",
+          "ms-MY",
+          "pl-PL",
+          "ro-RO",
+          "sv-SE"
+        ],
+        "text": "项目结算单\n合同金额 1,234,567.89元\n中文识别测试\nSOLIDIFY OCR CHECK\n",
+        "usesCPUOnly": true,
+        "usesLanguageCorrection": false
+      },
+      "sourceSha256": "4b271dbba9f8fd495eb04d3db0479e71dfa2e1b633c1a017bd9bb78c13c7c648",
+      "stderr": "",
+      "strictImprovement": true,
+      "strictRegression": false,
+      "workEmpty": true
+    },
+    {
+      "amountExact": false,
+      "durationMs": 9097,
+      "expected": {
+        "amount": "￥98,765.40",
+        "amountStyle": "currency",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "STHeitiSC-Light",
+        "fontSize": 52,
+        "id": "f2-lines-currency-sharp",
+        "layout": "lines"
+      },
+      "file": "f2-lines-currency-sharp.png",
+      "inputSha256": "9c563c11b1feda87b9c3ae442d7861d5b9115343417f99536622e0d98cfffc93",
+      "missingControlLines": [],
+      "payload": {
+        "automaticallyDetectsLanguage": false,
+        "durationMs": 9061,
+        "engine": "Apple Vision",
+        "inputEncoding": "png-data",
+        "minimumTextHeight": 0,
+        "modelSource": "OS-managed Vision assets; independent model hash unavailable",
+        "observations": [
+          {
+            "boundingBox": [
+              0.06395349036127135,
+              0.7707641188867512,
+              0.1613372039794922,
+              0.07641196114676341
+            ],
+            "confidence": 1,
+            "text": "项目结算单"
+          },
+          {
+            "boundingBox": [
+              0.0624999975760527,
+              0.5842857138868972,
+              0.31686046600341794,
+              0.08348837171282086
+            ],
+            "confidence": 0.5,
+            "text": "合同金额 ¥98,765.40"
+          },
+          {
+            "boundingBox": [
+              0.0654069736642527,
+              0.4114285708224143,
+              0.1933139610290527,
+              0.07714285714285707
+            ],
+            "confidence": 1,
+            "text": "中文识别测试"
+          },
+          {
+            "boundingBox": [
+              0.05416666956616219,
+              0.22857142809523812,
+              0.3458333206176758,
+              0.08571428571428574
+            ],
+            "confidence": 0.5,
+            "text": "SOLIDIFY OCR CHECK"
+          }
+        ],
+        "osVersion": "Version 26.6.2 (Build 25G83)",
+        "recognitionLanguages": [
+          "zh-Hans",
+          "en-US"
+        ],
+        "recognitionLevel": "accurate",
+        "requestRevision": 3,
+        "schemaVersion": 1,
+        "success": true,
+        "supportedLanguages": [
+          "en-US",
+          "fr-FR",
+          "it-IT",
+          "de-DE",
+          "es-ES",
+          "pt-BR",
+          "zh-Hans",
+          "zh-Hant",
+          "yue-Hans",
+          "yue-Hant",
+          "ko-KR",
+          "ja-JP",
+          "ru-RU",
+          "uk-UA",
+          "th-TH",
+          "vi-VT",
+          "ar-SA",
+          "ars-SA",
+          "tr-TR",
+          "id-ID",
+          "cs-CZ",
+          "da-DK",
+          "nl-NL",
+          "no-NO",
+          "nn-NO",
+          "nb-NO",
+          "ms-MY",
+          "pl-PL",
+          "ro-RO",
+          "sv-SE"
+        ],
+        "text": "项目结算单\n合同金额 ¥98,765.40\n中文识别测试\nSOLIDIFY OCR CHECK\n",
+        "usesCPUOnly": true,
+        "usesLanguageCorrection": false
+      },
+      "sourceSha256": "9c563c11b1feda87b9c3ae442d7861d5b9115343417f99536622e0d98cfffc93",
+      "stderr": "",
+      "strictImprovement": false,
+      "strictRegression": false,
+      "workEmpty": true
+    },
+    {
+      "amountExact": true,
+      "durationMs": 9525,
+      "expected": {
+        "amount": "一百万元",
+        "amountStyle": "han",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "STHeitiSC-Light",
+        "fontSize": 52,
+        "id": "f2-table-han-sharp",
+        "layout": "table"
+      },
+      "file": "f2-table-han-sharp.png",
+      "inputSha256": "993068393b6e8849c12117ca273cbe3ca680f0160d53ac4c7333bb22bedd6848",
+      "missingControlLines": [],
+      "payload": {
+        "automaticallyDetectsLanguage": false,
+        "durationMs": 9491,
+        "engine": "Apple Vision",
+        "inputEncoding": "png-data",
+        "minimumTextHeight": 0,
+        "modelSource": "OS-managed Vision assets; independent model hash unavailable",
+        "observations": [
+          {
+            "boundingBox": [
+              0.06395349036127135,
+              0.767142856188654,
+              0.1613372039794922,
+              0.08003322328839979
+            ],
+            "confidence": 1,
+            "text": "项目结算单"
+          },
+          {
+            "boundingBox": [
+              0.06104651340620173,
+              0.588039866973666,
+              0.13226743698120116,
+              0.07973421914236889
+            ],
+            "confidence": 1,
+            "text": "合同金额"
+          },
+          {
+            "boundingBox": [
+              0.2761627925691522,
+              0.5880398660568984,
+              0.13662790298461913,
+              0.0764119611467633
+            ],
+            "confidence": 1,
+            "text": "一百万元"
+          },
+          {
+            "boundingBox": [
+              0.0639534914609498,
+              0.4085714279549883,
+              0.1947674369812011,
+              0.08312292371477392
+            ],
+            "confidence": 1,
+            "text": "中文识别测试"
+          },
+          {
+            "boundingBox": [
+              0.059593030879530814,
+              0.23857142762522143,
+              0.34156974792480466,
+              0.07428571428571429
+            ],
+            "confidence": 0.5,
+            "text": "SOLIDIFY OCR CHECK"
+          }
+        ],
+        "osVersion": "Version 26.6.2 (Build 25G83)",
+        "recognitionLanguages": [
+          "zh-Hans",
+          "en-US"
+        ],
+        "recognitionLevel": "accurate",
+        "requestRevision": 3,
+        "schemaVersion": 1,
+        "success": true,
+        "supportedLanguages": [
+          "en-US",
+          "fr-FR",
+          "it-IT",
+          "de-DE",
+          "es-ES",
+          "pt-BR",
+          "zh-Hans",
+          "zh-Hant",
+          "yue-Hans",
+          "yue-Hant",
+          "ko-KR",
+          "ja-JP",
+          "ru-RU",
+          "uk-UA",
+          "th-TH",
+          "vi-VT",
+          "ar-SA",
+          "ars-SA",
+          "tr-TR",
+          "id-ID",
+          "cs-CZ",
+          "da-DK",
+          "nl-NL",
+          "no-NO",
+          "nn-NO",
+          "nb-NO",
+          "ms-MY",
+          "pl-PL",
+          "ro-RO",
+          "sv-SE"
+        ],
+        "text": "项目结算单\n合同金额\n一百万元\n中文识别测试\nSOLIDIFY OCR CHECK\n",
+        "usesCPUOnly": true,
+        "usesLanguageCorrection": false
+      },
+      "sourceSha256": "993068393b6e8849c12117ca273cbe3ca680f0160d53ac4c7333bb22bedd6848",
+      "stderr": "",
+      "strictImprovement": true,
+      "strictRegression": false,
+      "workEmpty": true
+    },
+    {
+      "amountExact": true,
+      "durationMs": 9606,
+      "expected": {
+        "amount": "壹佰万元整",
+        "amountStyle": "financial",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "STHeitiSC-Light",
+        "fontSize": 52,
+        "id": "f2-table-financial-sharp",
+        "layout": "table"
+      },
+      "file": "f2-table-financial-sharp.png",
+      "inputSha256": "f52068c4fb1cfb29fd238be6ae53126eb520fbc5e42266577087ed1dd59484a0",
+      "missingControlLines": [],
+      "payload": {
+        "automaticallyDetectsLanguage": false,
+        "durationMs": 9577,
+        "engine": "Apple Vision",
+        "inputEncoding": "png-data",
+        "minimumTextHeight": 0,
+        "modelSource": "OS-managed Vision assets; independent model hash unavailable",
+        "observations": [
+          {
+            "boundingBox": [
+              0.06395349036127135,
+              0.767142856188654,
+              0.1613372039794922,
+              0.08003322328839979
+            ],
+            "confidence": 1,
+            "text": "项目结算单"
+          },
+          {
+            "boundingBox": [
+              0.06104651333271985,
+              0.5880398669884316,
+              0.13226743698120116,
+              0.07973421914236889
+            ],
+            "confidence": 1,
+            "text": "合同金额"
+          },
+          {
+            "boundingBox": [
+              0.2819144873350694,
+              0.5873704036505605,
+              0.16291521072387694,
+              0.08107314518519804
+            ],
+            "confidence": 1,
+            "text": "壹佰万元整"
+          },
+          {
+            "boundingBox": [
+              0.0639534914609498,
+              0.4085714279549883,
+              0.1947674369812011,
+              0.08312292371477392
+            ],
+            "confidence": 1,
+            "text": "中文识别测试"
+          },
+          {
+            "boundingBox": [
+              0.06104651648460213,
+              0.2385714280532817,
+              0.34011627197265626,
+              0.07428571428571429
+            ],
+            "confidence": 0.5,
+            "text": "SOLIDIFY OCR CHECK"
+          }
+        ],
+        "osVersion": "Version 26.6.2 (Build 25G83)",
+        "recognitionLanguages": [
+          "zh-Hans",
+          "en-US"
+        ],
+        "recognitionLevel": "accurate",
+        "requestRevision": 3,
+        "schemaVersion": 1,
+        "success": true,
+        "supportedLanguages": [
+          "en-US",
+          "fr-FR",
+          "it-IT",
+          "de-DE",
+          "es-ES",
+          "pt-BR",
+          "zh-Hans",
+          "zh-Hant",
+          "yue-Hans",
+          "yue-Hant",
+          "ko-KR",
+          "ja-JP",
+          "ru-RU",
+          "uk-UA",
+          "th-TH",
+          "vi-VT",
+          "ar-SA",
+          "ars-SA",
+          "tr-TR",
+          "id-ID",
+          "cs-CZ",
+          "da-DK",
+          "nl-NL",
+          "no-NO",
+          "nn-NO",
+          "nb-NO",
+          "ms-MY",
+          "pl-PL",
+          "ro-RO",
+          "sv-SE"
+        ],
+        "text": "项目结算单\n合同金额\n壹佰万元整\n中文识别测试\nSOLIDIFY OCR CHECK\n",
+        "usesCPUOnly": true,
+        "usesLanguageCorrection": false
+      },
+      "sourceSha256": "f52068c4fb1cfb29fd238be6ae53126eb520fbc5e42266577087ed1dd59484a0",
+      "stderr": "",
+      "strictImprovement": true,
+      "strictRegression": false,
+      "workEmpty": true
+    },
+    {
+      "amountExact": true,
+      "durationMs": 9373,
+      "expected": {
+        "amount": "1,234,567.89元",
+        "amountStyle": "decimal",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "STHeitiSC-Light",
+        "fontSize": 52,
+        "id": "f2-table-decimal-sharp",
+        "layout": "table"
+      },
+      "file": "f2-table-decimal-sharp.png",
+      "inputSha256": "838ed1b12ce8c536943058d8b418e0dfbe6711fd1f70bc6462199d3bed1e09d8",
+      "missingControlLines": [],
+      "payload": {
+        "automaticallyDetectsLanguage": false,
+        "durationMs": 9343,
+        "engine": "Apple Vision",
+        "inputEncoding": "png-data",
+        "minimumTextHeight": 0,
+        "modelSource": "OS-managed Vision assets; independent model hash unavailable",
+        "observations": [
+          {
+            "boundingBox": [
+              0.06395349041298201,
+              0.7671428562035615,
+              0.16133720397949222,
+              0.08003322328839979
+            ],
+            "confidence": 1,
+            "text": "项目结算单"
+          },
+          {
+            "boundingBox": [
+              0.06104651333271985,
+              0.5880398669884316,
+              0.13226743698120116,
+              0.07973421914236889
+            ],
+            "confidence": 1,
+            "text": "合同金额"
+          },
+          {
+            "boundingBox": [
+              0.2815498114686714,
+              0.5785887183203771,
+              0.22178409576416017,
+              0.09863651820591524
+            ],
+            "confidence": 1,
+            "text": "1,234,567.89元"
+          },
+          {
+            "boundingBox": [
+              0.0639534914609498,
+              0.4085714279549883,
+              0.1947674369812011,
+              0.08312292371477392
+            ],
+            "confidence": 1,
+            "text": "中文识别测试"
+          },
+          {
+            "boundingBox": [
+              0.06104651295470184,
+              0.2385714273523216,
+              0.34011627197265626,
+              0.07428571428571429
+            ],
+            "confidence": 0.5,
+            "text": "SOLIDIFY OCR CHECK"
+          }
+        ],
+        "osVersion": "Version 26.6.2 (Build 25G83)",
+        "recognitionLanguages": [
+          "zh-Hans",
+          "en-US"
+        ],
+        "recognitionLevel": "accurate",
+        "requestRevision": 3,
+        "schemaVersion": 1,
+        "success": true,
+        "supportedLanguages": [
+          "en-US",
+          "fr-FR",
+          "it-IT",
+          "de-DE",
+          "es-ES",
+          "pt-BR",
+          "zh-Hans",
+          "zh-Hant",
+          "yue-Hans",
+          "yue-Hant",
+          "ko-KR",
+          "ja-JP",
+          "ru-RU",
+          "uk-UA",
+          "th-TH",
+          "vi-VT",
+          "ar-SA",
+          "ars-SA",
+          "tr-TR",
+          "id-ID",
+          "cs-CZ",
+          "da-DK",
+          "nl-NL",
+          "no-NO",
+          "nn-NO",
+          "nb-NO",
+          "ms-MY",
+          "pl-PL",
+          "ro-RO",
+          "sv-SE"
+        ],
+        "text": "项目结算单\n合同金额\n1,234,567.89元\n中文识别测试\nSOLIDIFY OCR CHECK\n",
+        "usesCPUOnly": true,
+        "usesLanguageCorrection": false
+      },
+      "sourceSha256": "838ed1b12ce8c536943058d8b418e0dfbe6711fd1f70bc6462199d3bed1e09d8",
+      "stderr": "",
+      "strictImprovement": false,
+      "strictRegression": false,
+      "workEmpty": true
+    },
+    {
+      "amountExact": false,
+      "durationMs": 9079,
+      "expected": {
+        "amount": "￥98,765.40",
+        "amountStyle": "currency",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "STHeitiSC-Light",
+        "fontSize": 52,
+        "id": "f2-table-currency-sharp",
+        "layout": "table"
+      },
+      "file": "f2-table-currency-sharp.png",
+      "inputSha256": "08d15f6afcf3042f7f66ad1974226bae115a600f911a3f4a1e68eb841c1a6582",
+      "missingControlLines": [],
+      "payload": {
+        "automaticallyDetectsLanguage": false,
+        "durationMs": 9044,
+        "engine": "Apple Vision",
+        "inputEncoding": "png-data",
+        "minimumTextHeight": 0,
+        "modelSource": "OS-managed Vision assets; independent model hash unavailable",
+        "observations": [
+          {
+            "boundingBox": [
+              0.06395349036127135,
+              0.767142856188654,
+              0.1613372039794922,
+              0.08003322328839979
+            ],
+            "confidence": 1,
+            "text": "项目结算单"
+          },
+          {
+            "boundingBox": [
+              0.06104651340620173,
+              0.588039866973666,
+              0.13226743698120116,
+              0.07973421914236889
+            ],
+            "confidence": 1,
+            "text": "合同金额"
+          },
+          {
+            "boundingBox": [
+              0.2847632151736947,
+              0.5834279939663475,
+              0.17465961456298829,
+              0.08895796639578678
+            ],
+            "confidence": 1,
+            "text": "¥98,765.40"
+          },
+          {
+            "boundingBox": [
+              0.0639534914609498,
+              0.4085714279549883,
+              0.1947674369812011,
+              0.08312292371477392
+            ],
+            "confidence": 1,
+            "text": "中文识别测试"
+          },
+          {
+            "boundingBox": [
+              0.06104651672244565,
+              0.23857142805560505,
+              0.34011627197265626,
+              0.07428571428571429
+            ],
+            "confidence": 0.5,
+            "text": "SOLIDIFY OCR CHECK"
+          }
+        ],
+        "osVersion": "Version 26.6.2 (Build 25G83)",
+        "recognitionLanguages": [
+          "zh-Hans",
+          "en-US"
+        ],
+        "recognitionLevel": "accurate",
+        "requestRevision": 3,
+        "schemaVersion": 1,
+        "success": true,
+        "supportedLanguages": [
+          "en-US",
+          "fr-FR",
+          "it-IT",
+          "de-DE",
+          "es-ES",
+          "pt-BR",
+          "zh-Hans",
+          "zh-Hant",
+          "yue-Hans",
+          "yue-Hant",
+          "ko-KR",
+          "ja-JP",
+          "ru-RU",
+          "uk-UA",
+          "th-TH",
+          "vi-VT",
+          "ar-SA",
+          "ars-SA",
+          "tr-TR",
+          "id-ID",
+          "cs-CZ",
+          "da-DK",
+          "nl-NL",
+          "no-NO",
+          "nn-NO",
+          "nb-NO",
+          "ms-MY",
+          "pl-PL",
+          "ro-RO",
+          "sv-SE"
+        ],
+        "text": "项目结算单\n合同金额\n¥98,765.40\n中文识别测试\nSOLIDIFY OCR CHECK\n",
+        "usesCPUOnly": true,
+        "usesLanguageCorrection": false
+      },
+      "sourceSha256": "08d15f6afcf3042f7f66ad1974226bae115a600f911a3f4a1e68eb841c1a6582",
+      "stderr": "",
+      "strictImprovement": false,
+      "strictRegression": false,
+      "workEmpty": true
+    }
+  ],
+  "runCount": 32,
+  "schemaVersion": 1,
+  "scriptSha256": "100f61adf2fdfc9ddea8fe4182b920b0710f40bbbd43b5a5bc09d16fbb79c863",
+  "strictImprovements": 17,
+  "strictRegressions": 0
+}

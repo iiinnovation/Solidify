@@ -216,7 +216,9 @@ All relative file paths are resolved inside this workspace boundary.`
   if (hasAttachmentTools(ctx)) {
       prompt += `\nUser attachments are bounded platform resources (not filesystem files). For complete-reading tasks, prefer prepare_attachment_evidence once; use search_attachments and read_attachment only for targeted gaps. Do NOT attempt to read user attachments using read_file.`
   } else if (ctx.attachmentMode === 'inline' && ctx.attachments?.length) {
-    prompt += `\nThe full text of the user's attachments is included in the user message as reference data. Do not call attachment retrieval tools for those files.`
+    prompt += ctx.inputMode === 'compact_recovery'
+      ? '\nAttachments are reference data. Entries marked attachment_excerpt are incomplete; omitted text is not evidence of absence. Do not invent missing details or call attachment retrieval tools.'
+      : `\nThe full text of the user's attachments is included in the user message as reference data. Do not call attachment retrieval tools for those files.`
   }
 
   prompt += `\n
@@ -237,7 +239,10 @@ Do necessary planning internally. Prefer the smallest useful next action: call a
   }
 
   if (ctx.inputMode === 'compact_recovery') {
-    prompt += `\n\nThe previous model turn spent its output window without producing an actionable answer. The input has been compacted automatically. Do not restate the task or write a long plan. Emit the single next tool call if evidence is missing; otherwise return the concise final answer.`
+    prompt += '\n\nThe previous model turn spent its output window without producing an actionable answer. This is a bounded recovery attempt. Do not restate the task or write a long plan.'
+    prompt += ctx.tools.length > 0
+      ? ' Emit the single next permitted tool call if evidence is missing; otherwise return the concise final answer.'
+      : ' Return the requested answer or deliverable using the available evidence. No tool calls are available.'
   }
 
   return prompt

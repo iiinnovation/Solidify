@@ -40,12 +40,24 @@ export function parseSnapshotLine(line: string): TurnSnapshot | null {
     }
     if (parsed.version !== undefined && parsed.version !== 2) return null
     if (parsed.version === 2 && (!isRunPlan(parsed.runPlan) || !isPhaseState(parsed.phaseState))) return null
+    if (parsed.folderTaskState !== undefined && !isFolderTaskState(parsed.folderTaskState)) return null
     return parsed
   } catch {
     return null
   }
 }
 
+function isFolderTaskState(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const state = value as Record<string, unknown>
+  return typeof state.batchOpen === 'boolean'
+    && typeof state.decisionPauseAllowed === 'boolean'
+    && Number.isInteger(state.checkpointReminders)
+    && Number(state.checkpointReminders) >= 0
+    && (state.stage === undefined || FOLDER_TASK_STAGES.has(String(state.stage)))
+}
+
+const FOLDER_TASK_STAGES = new Set(['context', 'plan', 'claim', 'batch', 'decision', 'review', 'terminal'])
 const RUN_MODES = new Set(['direct', 'agent', 'staged-delivery'])
 const RUN_PHASES = new Set(['preparing', 'retrieving', 'generating', 'validating', 'repairing', 'completed', 'failed', 'exhausted'])
 

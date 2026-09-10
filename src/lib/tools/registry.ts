@@ -35,6 +35,7 @@ export class ToolRegistry implements IToolRegistry {
     const available: Tool[] = []
 
     for (const tool of this.tools.values()) {
+      if (FOLDER_TASK_TOOLS.has(tool.name) && !ctx.folderTaskActive) continue
       // read_handle is a continuation capability that must remain reachable
       // even when a prior tool result is temporarily hidden.
       const runtimeRequired = tool.name === 'read_handle'

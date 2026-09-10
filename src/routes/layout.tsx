@@ -9,6 +9,8 @@ import { isEnabled } from '@/lib/harness/flags'
 import { cn } from '@/lib/utils'
 import { ProjectRail } from '@/components/layout/project-rail'
 import { isTauri } from '@/lib/tauri'
+import { FolderTaskAutoRunner } from '@/components/agent/folder-task-auto-runner'
+import { ShutdownStatus } from '@/components/layout/shutdown-status'
 
 export function MainLayout() {
   const { sidebarOpen, sidebarWidth, toggleSidebar } = useUIStore()
@@ -38,6 +40,8 @@ export function MainLayout() {
 
   return (
     <div className="h-full flex flex-col">
+      <FolderTaskAutoRunner />
+      <ShutdownStatus />
       <Header />
       <div className="relative flex flex-1 overflow-hidden">
         {!focusedTaskView && <button

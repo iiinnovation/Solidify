@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "platform": "macOS 26.6.2 (25G83)",
+  "architecture": "x86_64",
+  "source": "Selected fields from local Apple DiagnosticReports; personal identifiers and unrelated process data omitted",
+  "reports": [
+    {
+      "inputMode": "png-url",
+      "reportSha256": "0185765f6da074c48e0b7772c4cec45185276564b541aa7b770995a7d5e38416",
+      "exception": "EXC_BAD_ACCESS",
+      "signal": "SIGSEGV",
+      "frames": ["_CFGetNonObjCTypeID", "CFBundleGetInfoDictionary", "ApplicationOptIn()", "__IIOIsOOPEnabled_block_invoke", "IIOIsOOPEnabled", "IIOXPCClient::CanCheckTrustedURL()"]
+    },
+    {
+      "inputMode": "png-data",
+      "reportSha256": "70b5381f4a0e1939abdc426e21a2c66ac4ed347aff074d837878da81ffd97351",
+      "exception": "EXC_BAD_ACCESS",
+      "signal": "SIGSEGV",
+      "frames": ["_CFGetNonObjCTypeID", "CFBundleGetInfoDictionary", "ApplicationOptIn()", "__IIOIsOOPEnabled_block_invoke", "IIOIsOOPEnabled", "IIOXPCClient::useServerForCall(IIOImageRead*, IIO_Reader*, IIORequest, IIO_XPC_ID, bool)"]
+    },
+    {
+      "inputMode": "rgba8-1600x700",
+      "reportSha256": "67ad39a2ffe17c574c0668fc10c4cdc5df67db927d38393c49be5c7103f3946b",
+      "exception": "EXC_BAD_ACCESS",
+      "signal": "SIGSEGV",
+      "frames": ["_CFGetNonObjCTypeID", "CFBundleGetInfoDictionary", "CFBundleGetIdentifier", "-[NSUserDefaults(NSUserDefaults) _initWithSuiteName:container:]", "CI_NO_CM", "-[CIImage _initNaiveWithCGImage:options:]"]
+    }
+  ],
+  "interpretation": "All three attempts failed during framework initialization before a recognition result. These stacks do not establish the specific missing permission or a safe policy change."
+}

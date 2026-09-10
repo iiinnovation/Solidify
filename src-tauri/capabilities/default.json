@@ -55,8 +55,6 @@
     "notification:allow-notify",
     "updater:default",
     "updater:allow-check",
-    "updater:allow-download-and-install",
-    "process:default",
-    "process:allow-restart"
+    "updater:allow-download-and-install"
   ]
 }

@@ -96,6 +96,9 @@ export async function* streamModel(
     temperature: ctx.model.temperature,
     maxTokens: ctx.limits.maxOutputTokens,
     stream: true,
+    // Document planning and batch prefills can be silent longer than ordinary
+    // chat. Keep a finite task budget for both connection and chunk waits.
+    ...(ctx.folderTaskId ? { timeout: 180_000, stallTimeoutMs: 120_000 } : {}),
     ...(provider.metadata.supportsPromptCache
       ? {
           promptCache: {
@@ -123,6 +126,8 @@ export async function* streamModel(
     stream: request.stream,
     toolChoice: request.toolChoice,
     promptCache: request.promptCache,
+    timeout: request.timeout,
+    stallTimeoutMs: request.stallTimeoutMs,
   }, contextStats)
 
   // Stream from provider

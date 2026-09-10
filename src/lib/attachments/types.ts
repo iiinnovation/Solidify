@@ -73,10 +73,15 @@ export function chooseAttachmentContextMode(input: AttachmentRoutingInput): 'inl
 export function formatInlineAttachments(resources: readonly AttachmentResource[]): string {
   const entries = resources
     .filter((resource) => resource.text?.trim())
-    .map((resource) => `<attachment_full_text id="${escapeXmlAttribute(resource.id)}" name="${escapeXmlAttribute(resource.name)}">\n${resource.text}\n</attachment_full_text>`)
+    .map((resource) => formatAttachmentTextEntry(resource, resource.text!))
   return entries.length > 0
     ? `\n\n<attachments_inline>\n${entries.join('\n\n')}\n</attachments_inline>`
     : ''
+}
+
+export function formatAttachmentTextEntry(resource: AttachmentResource, text: string, excerpt = false): string {
+  const tag = excerpt ? 'attachment_excerpt' : 'attachment_full_text'
+  return `<${tag} id="${escapeXmlAttribute(resource.id)}" name="${escapeXmlAttribute(resource.name)}"${excerpt ? ' truncated="true"' : ''}>\n${text}\n</${tag}>`
 }
 
 function escapeXmlAttribute(value: string): string {

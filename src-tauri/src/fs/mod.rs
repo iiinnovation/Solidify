@@ -3,6 +3,7 @@ pub mod folder_tasks;
 pub mod index;
 pub mod persistence;
 pub mod sandbox;
+pub mod sandbox_exec;
 pub mod snapshots;
 pub mod tools;
 pub mod tree;

@@ -44,10 +44,18 @@ const DEFAULT_LIMITS: RunLimits = {
     // or claim capability must not revoke the read/checkpoint capabilities that
     // are required by the next workflow stage.
     'folder-task-context': { maxCalls: 1, softThreshold: 1, hardThreshold: 1 },
+    // Semantic plan validation is intentionally strict. Reserve bounded repair
+    // attempts so a model can correct a rejected category/field contract in
+    // the same run instead of leaving the task permanently awaiting a plan.
+    'folder-task-plan': { maxCalls: 3, softThreshold: 2, hardThreshold: 3 },
     'folder-task-claim': { maxCalls: 1, softThreshold: 1, hardThreshold: 1 },
     'folder-task-read': { maxCalls: 45, softThreshold: 36, hardThreshold: 45 },
+    'folder-task-extract': { maxCalls: 20, softThreshold: 16, hardThreshold: 20 },
     'folder-task-checkpoint': { maxCalls: 2, softThreshold: 2, hardThreshold: 2 },
-    'folder-task-decision': { maxCalls: 1, softThreshold: 1, hardThreshold: 1 },
+    'folder-task-decision': { maxCalls: 2, softThreshold: 2, hardThreshold: 2 },
+    'folder-task-results': { maxCalls: 5, softThreshold: 3, hardThreshold: 5 },
+    'folder-task-review': { maxCalls: 10, softThreshold: 6, hardThreshold: 10 },
+    'folder-task-output': { maxCalls: 2, softThreshold: 2, hardThreshold: 2 },
   },
 }
 
@@ -104,7 +112,12 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
   const resolvedTools = runToolsActive
     ? toolRegistry.resolve({
         // A real root is mandatory before exposing desktop filesystem tools.
-        platform: platform === 'tauri' && workspaceRoot ? 'tauri' : 'web',
+        // FolderTask commands are scoped by the trusted task ID and enforce
+        // their own persisted root in Rust. Legacy task conversations may not
+        // have stored workspaceRoot, but must still receive their dedicated
+        // Tauri-only capability lease or the durable task remains `running`
+        // without any way for the Agent to claim its next batch.
+        platform: platform === 'tauri' && (workspaceRoot || folderTaskActive) ? 'tauri' : 'web',
         skillAllowedTools: skill?.metadata.allowedTools,
         skillActive: skillV2Enabled && Boolean(skill),
         minimalUnselected: skillV2Enabled && !skill,
@@ -116,7 +129,7 @@ export function createChatQueryContext(options: ChatQueryContextOptions): QueryC
       })
     : []
   const scopedTools = folderTaskActive
-    ? resolvedTools.filter((tool) => FOLDER_TASK_TOOL_NAMES.has(tool.name))
+    ? resolvedTools.filter((tool) => FOLDER_TASK_TOOL_NAMES.has(tool.name) || tool.name === 'read_handle')
     : !skill && attachmentRetrievalActive
       ? resolvedTools.filter((tool) => ATTACHMENT_ONLY_TOOL_NAMES.has(tool.name))
       : resolvedTools
@@ -190,9 +203,15 @@ function folderTaskHarnessContext(taskId: string): string {
   return [
     `FolderTask: ${taskId}`,
     'This is a durable folder-processing run. The FolderTask database is the source of truth.',
-    'Call get_folder_task_context first. Claim at most one batch in this run and read only files returned by that claim.',
-    'Before ending, checkpoint every claimed item exactly once with update_folder_task_batch.',
+    'Call get_folder_task_context first. If status is awaiting_plan_confirmation, derive a specific semantic contract from the user goal and call prepare_folder_task_plan before claiming work.',
+    'Once running, claim exactly one batch in this run and retain its leaseToken.',
+    'Pass the leaseToken as batchToken to every file read, decision, and checkpoint. Read only files returned by that claim.',
+    'Before ending, checkpoint every claimed item exactly once with update_folder_task_batch. Partial complete checkpoints are rejected.',
     'When a high-impact ambiguity affects similar files, create one grouped decision and stop. Never ask one question per file.',
+    'If the task has a pending business decision, ask about it naturally. Only after the user answers, map that reply to an offered option with resolve_folder_task_decision; never decide for the user.',
+    'When processing reaches reviewing, summarize the AI results and output. Call complete_folder_task only after the user explicitly confirms those results in a later message.',
+    'During reviewing, use list_folder_task_results to inspect persisted results. If the user requests a correction or retry, apply it with revise_folder_task_result instead of asking them to edit a task form.',
+    'After a correction, ensure the current deterministic output exists; use write_folder_task_output if automatic regeneration did not succeed.',
     'Do not claim a second batch, use arbitrary filesystem paths, or attempt to bypass the dedicated FolderTask tools.',
   ].join('\n')
 }

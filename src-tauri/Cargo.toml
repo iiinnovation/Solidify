@@ -6,6 +6,7 @@ authors = ["Solidify Team"]
 license = ""
 repository = ""
 edition = "2021"
+default-run = "solidify"
 rust-version = "1.77.2"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -33,3 +34,11 @@ tauri-plugin-process = "2"
 ignore = "0.4"
 notify = "6.1"
 rusqlite = { version = "0.32", features = ["bundled"] }
+uuid = { version = "1", features = ["v4"] }
+sha2 = "0.10"
+minisign-verify = "=0.2.4"
+image = { version = "0.24.9", default-features = false, features = ["png", "jpeg"] }
+zip = { version = "4.6", default-features = false, features = ["deflate"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

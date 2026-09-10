@@ -1,0 +1,25 @@
+{
+  "amountExactCount": 0,
+  "baselineSha256": "06eafa5f18a06f0e57d6b4b7bc1b14b778cde4739f6b6ca512261aeca5dff6ca",
+  "binarySha256": "3875406a0ff360c8ef97a05bfc6dff287c46ebdafd168789f0ffb9ca6de70349",
+  "completed": false,
+  "durationMs": 27601,
+  "engine": "Apple Vision",
+  "experimentSha256": "c7a94d13ad6f4e55a3901b478b9cb92f0f2e9dae82a4eb242c78d5915038c3dd",
+  "generatorSha256": "b357acb069339fe9c6ff21d7641b135074c57f46fd903af8722cdcd3dd1c3cc6",
+  "isolation": "existing-seatbelt-policy",
+  "manifestSha256": "3b7a7beafcd79d70deb56ffba9a46e2362581ca9f524059529e192ead2a10a6c",
+  "processFailure": {
+    "exitCode": null,
+    "file": "f0-lines-han-sharp.png",
+    "payload": null,
+    "stderr": "",
+    "stdout": ""
+  },
+  "rows": [],
+  "runCount": 0,
+  "schemaVersion": 1,
+  "scriptSha256": "a3d7483749d45ea95f992ea6804c2d5e3e72dd6805384fc176f1db0e80717310",
+  "strictImprovements": 0,
+  "strictRegressions": 0
+}

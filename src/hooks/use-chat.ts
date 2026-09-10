@@ -24,6 +24,7 @@ import { isTauri } from '@/lib/tauri'
 import { modelContextWindow } from '@/lib/model/capabilities'
 import { buildAttachmentEvidencePack, chooseAttachmentContextMode, createAttachmentResourceId, formatAttachmentManifest, formatInlineAttachments, type AttachmentResource } from '@/lib/attachments/types'
 import { loadAttachmentResource, loadAttachmentResources, saveAttachmentResource } from '@/lib/attachments/store'
+import { folderTaskClient, shouldAutoContinueFolderTask } from '@/lib/folder-tasks'
 import {
   abortChatRun,
   cancelChatRun,
@@ -38,6 +39,22 @@ import {
 
 function genId() {
   return newId('msg')
+}
+
+const POST_RUN_SYNC_TIMEOUT_MS = 15_000
+
+async function withPostRunTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label}超时，请稍后重试`)), POST_RUN_SYNC_TIMEOUT_MS)
+      }),
+    ])
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
 }
 
 interface ResumeRunOptions {
@@ -175,6 +192,13 @@ export function isDiscardableEmptyAssistant(message: Message, hasArtifact = fals
 export function useChat(conversationId?: string) {
   const workspaceRoot = useWorkspaceStore((state) => state.workspaceRoot)
   const workspaceProjectionVersion = useWorkspaceStore((state) => state.projectionVersion)
+  const durableConversation = useChatStore((state) => {
+    const conversation = state.conversations.find((item) => item.id === conversationId)
+    return conversation && conversationBelongsToWorkspace(conversation, workspaceRoot)
+      ? conversation
+      : undefined
+  })
+  const durableConversationMessages = durableConversation?.messages
   const [messages, setMessages] = useState<Message[]>([])
   const [error, setError] = useState<Error | null>(null)
   useSyncExternalStore(subscribeChatRuns, getChatRunsRevision, getChatRunsRevision)
@@ -182,6 +206,7 @@ export function useChat(conversationId?: string) {
   const messagesOwnerRef = useRef<string | undefined>(conversationId)
   const messagesWorkspaceRef = useRef<string | null>(workspaceRoot)
   const resumedConversationsRef = useRef(new Set<string>())
+  const autoRunTurnsRef = useRef(new Set<string>())
   const navigate = useNavigate()
 
   const addArtifact = useChatStore((s) => s.addArtifact)
@@ -244,9 +269,14 @@ export function useChat(conversationId?: string) {
       historyOverride?: Message[],
       skillId?: string,
       skillName?: string,
+      options?: { transcriptHidden?: boolean; conversationId?: string },
     ) => {
       if (!content.trim() && !resume) return
-      const requestedConversationId = resume?.conversationId ?? convIdRef.current
+      // Automatic FolderTask dispatch waits for an asynchronous durable-state
+      // read. During that wait the background runner can stop owning the route.
+      // Keep the captured task conversation as the destination instead of
+      // falling through to a new generic conversation.
+      const requestedConversationId = resume?.conversationId ?? options?.conversationId ?? convIdRef.current
       if (getActiveChatRun(requestedConversationId)) return
       const unrecoverableAttachment = composerAttachments?.find((att) => !isComposerAttachmentRecoverable(att))
       if (unrecoverableAttachment) {
@@ -287,7 +317,7 @@ export function useChat(conversationId?: string) {
       }
 
       // 确定对话 ID —— 没有则新建
-      let currentConvId = resume?.conversationId ?? convIdRef.current
+      let currentConvId = requestedConversationId
       const selectedRoot = useWorkspaceStore.getState().workspaceRoot
       let storedConversation = currentConvId
         ? useChatStore.getState().conversations.find((item) =>
@@ -313,6 +343,9 @@ export function useChat(conversationId?: string) {
       const resumeWorkspaceRoot = resume?.assistantMessage.agentContext?.workspaceRoot
       const folderTaskId = resume?.assistantMessage.agentContext?.folderTaskId
         ?? storedConversation?.folderTaskId
+      if (folderTaskId && !resume) {
+        useChatStore.getState().setFolderTaskAutoRun(currentConvId, true)
+      }
       if (folderTaskId && (
         !isTauri
         || !isEnabled('agentLoop')
@@ -374,6 +407,7 @@ export function useChat(conversationId?: string) {
         id: userMessageId,
         role: 'user',
         content,
+        ...(options?.transcriptHidden ? { transcriptHidden: true } : {}),
         skill: skillObj,
         requestContext: {
           skillSystemPrompt,
@@ -403,9 +437,10 @@ export function useChat(conversationId?: string) {
         }
       const abortController = new AbortController()
       const initialMessages = resume ? requestHistory : [...requestHistory, userMsg, assistantMsg]
+      const runWorkspaceRoot = taskWorkspaceRoot ?? selectedWorkspace.workspaceRoot
       const requestToken = startChatRun({
         conversationId: currentConvId,
-        workspaceRoot: selectedWorkspace.workspaceRoot,
+        workspaceRoot: runWorkspaceRoot,
         controller: abortController,
         messages: initialMessages,
       })
@@ -760,6 +795,7 @@ ${result.content}
       const materializeRunId = assistantMsg.agentRun?.runId ?? newId('run')
       const workspaceRoot = taskWorkspaceRoot
       const useFileDocuments = isEnabled('workbenchV2') && isEnabled('localWorkspace') && isTauri && Boolean(workspaceRoot)
+      let folderTaskFinishStarted = false
       let observedAssistantOutput = false
       let completedArtifactCount = resume
         ? processStreamingContent(assistantMsg.agentRun?.text ?? '').completeArtifacts.length
@@ -913,8 +949,19 @@ ${result.content}
       }
 
       const flushMaterializations = async () => {
-        await Promise.all(pendingMaterializations)
+        if (pendingMaterializations.length > 0) {
+          await withPostRunTimeout(Promise.all(pendingMaterializations), '保存交付物')
+        }
         if (isCurrentRequest() && documentRefs.length > 0) patchAssistantMessage({ documents: [...documentRefs] })
+      }
+
+      const finalizeFolderTaskRun = async (outcome: 'completed' | 'failed' | 'aborted', reason?: string) => {
+        if (!folderTaskId) throw new Error('FolderTask conversation is missing its task binding')
+        folderTaskFinishStarted = true
+        return withPostRunTimeout(
+          folderTaskClient.finishRun(folderTaskId, initialRunId, outcome, reason),
+          '同步文档任务状态',
+        )
       }
 
       try {
@@ -1164,6 +1211,35 @@ ${result.content}
             return
           }
           patchAssistantMessage(finalPatch)
+          if (folderTaskId) {
+            const outcome = run.status === 'completed'
+              ? 'completed'
+              : run.status === 'aborted'
+                ? 'aborted'
+                : 'failed'
+            const task = await finalizeFolderTaskRun(outcome, run.error)
+            const durableRun = task?.recentRuns?.find((candidate) => candidate.runId === runId)
+            if (task && (
+              task.status === 'failed'
+              || durableRun?.status === 'failed'
+              || durableRun?.status === 'expired'
+              || durableRun?.status === 'aborted'
+            )) {
+              const message = durableRun?.error ?? '文档任务后台收尾失败'
+              const failureEvent: QueryEvent = {
+                type: 'run.failed',
+                error: { kind: durableRun?.status === 'aborted' ? 'aborted' : 'internal', message },
+                usage: run.usage,
+              }
+              runEvents.push(failureEvent)
+              run = applyRunEvent(run, failureEvent)
+              patchAssistantMessage({ agentRun: run, metrics: run.metrics, runEvents: [...runEvents] })
+              if (ownsRunView()) setError(new Error(message))
+            }
+            if (!shouldAutoContinueFolderTask(task)) {
+              useChatStore.getState().setFolderTaskAutoRun(currentConvId, false)
+            }
+          }
           return
         }
 
@@ -1175,7 +1251,7 @@ ${result.content}
           const before = currentAssistant()
           if (!before?.agentRun) return
           const content = consumeArtifactContent(before.agentRun.text, true)
-          await flushMaterializations()
+          await flushMaterializations().catch(() => undefined)
           const latest = currentAssistant() ?? before
           patchAssistantMessage({
             content: content || latest.content,
@@ -1189,6 +1265,12 @@ ${result.content}
             error: { kind: 'aborted', message: '用户已停止运行' },
           })
           discardAssistantPlaceholder()
+          if (folderTaskId) {
+            if (!folderTaskFinishStarted) {
+              await finalizeFolderTaskRun('aborted', '用户已停止运行').catch(() => undefined)
+            }
+            useChatStore.getState().setFolderTaskAutoRun(currentConvId, false)
+          }
           return
         }
         const error = err instanceof Error ? err : new Error('未知错误')
@@ -1197,6 +1279,12 @@ ${result.content}
           error: { kind: 'internal', message: error.message },
         })
         if (ownsRunView()) setError(error)
+        if (folderTaskId) {
+          if (!folderTaskFinishStarted) {
+            await finalizeFolderTaskRun('failed', error.message).catch(() => undefined)
+          }
+          useChatStore.getState().setFolderTaskAutoRun(currentConvId, false)
+        }
         // New requests discard an empty placeholder. A resumed run retains
         // its persisted assistant message so the user can retry recovery.
         if (resume) return
@@ -1251,6 +1339,67 @@ ${result.content}
       { conversationId, assistantMessage },
     )
   }, [conversationId, workspaceRoot, workspaceProjectionVersion, sendMessage])
+
+  useEffect(() => {
+    if (!conversationId || isStreaming || getActiveChatRun(conversationId)) return
+    const store = useChatStore.getState()
+    const conversation = store.conversations.find((item) => item.id === conversationId)
+    if (!conversation?.folderTaskId || !conversation.folderTaskAutoRun) return
+    const last = conversation.messages.at(-1)
+    if (last?.role === 'user') {
+      if (!last.transcriptHidden) return
+      // A hidden user turn is an internal continuation prompt. It should
+      // always have an assistant partner; if the placeholder disappeared
+      // during preparation, abort, or Fast Refresh, keeping it would make
+      // the runner wait forever for a human reply that will never arrive.
+      store.removeMessageFromConversation(conversation.id, last.id)
+      setMessages((current) => current.filter((message) => message.id !== last.id))
+      return
+    }
+    if (last?.role === 'assistant' && !['completed', 'failed', 'aborted', 'exhausted'].includes(last.agentRun?.status ?? '')) return
+    const turnKey = `${conversation.id}:${last?.id ?? 'initial'}`
+    // An empty durable conversation is proof that its initial turn was never
+    // published. Do not let a stale in-memory marker (for example after a
+    // cancelled hydration read or Fast Refresh) suppress recovery forever.
+    if (!last) autoRunTurnsRef.current.delete(turnKey)
+    if (autoRunTurnsRef.current.has(turnKey)) return
+    let cancelled = false
+    void folderTaskClient.get(conversation.folderTaskId).then((task) => {
+      if (cancelled) return
+      if (!shouldAutoContinueFolderTask(task)) {
+        store.setFolderTaskAutoRun(conversation.id, false)
+        return
+      }
+      // Mark the turn only when it is actually being dispatched. On an empty
+      // conversation the hydration effect replaces `messages` with a new
+      // array, which cleans up this effect while get() is still pending. If we
+      // mark it before that read resolves, the replacement effect believes the
+      // initial turn already ran and the durable task stays idle forever.
+      if (autoRunTurnsRef.current.has(turnKey)) return
+      autoRunTurnsRef.current.add(turnKey)
+      const initialTurn = conversation.messages.length === 0
+      const automaticPrompt = initialTurn || task.status === 'awaiting_plan_confirmation'
+        ? `请开始处理我选择的文档。任务目标：${task.goal}\n先读取任务状态，用一句话说明你识别到的文档范围和处理方式。${task.status === 'awaiting_plan_confirmation' ? '根据我的目标生成具体的字段、审查规则或分类，调用 prepare_folder_task_plan 绑定语义计划；计划成功后' : ''}领取并完整处理第一个批次。无法解析的文件只作为技术异常记录，不要让我代替你人工阅读。每个结果必须符合当前 Recipe Contract，并保存完整检查点。`
+        : '继续当前文档任务。读取持久化状态，领取并完整处理下一个批次；每个结果必须符合当前 Recipe Contract，然后保存完整检查点。'
+      void sendMessage(
+        automaticPrompt,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { transcriptHidden: true, conversationId: conversation.id },
+      )
+    }).catch((cause) => {
+      if (!cancelled) {
+        store.setFolderTaskAutoRun(conversation.id, false)
+        setError(cause instanceof Error ? cause : new Error(String(cause)))
+      }
+    })
+    return () => { cancelled = true }
+  }, [conversationId, isStreaming, messages, sendMessage])
 
   const stopStreaming = useCallback(() => {
     abortChatRun(conversationId)
@@ -1445,11 +1594,24 @@ ${result.content}
         artifacts.some((artifact) => artifact.messageId === message.id),
       ))
     : []
+  const durableMessages = durableConversationMessages?.filter((message) => !isDiscardableEmptyAssistant(
+    message,
+    artifacts.some((artifact) => artifact.messageId === message.id),
+  ))
   const activeRun = getActiveChatRun(conversationId)
-  const visibleStreaming = activeRun?.workspaceRoot === workspaceRoot
-  const runtimeMessages = visibleStreaming ? activeRun.messages : undefined
+  const visibleStreaming = Boolean(activeRun && (
+    durableConversation?.folderTaskId
+      ? !durableConversation.workspaceRoot || activeRun.workspaceRoot === durableConversation.workspaceRoot
+      : activeRun.workspaceRoot === workspaceRoot
+  ))
+  const runtimeMessages = visibleStreaming ? activeRun?.messages : undefined
   return {
-    messages: runtimeMessages ?? visibleMessages,
+    // A FolderTask run may start in the background runner and finish after the
+    // visible chat takes ownership. The local state of that second hook then
+    // contains the last running frame. Once the registry entry disappears,
+    // render the authoritative persisted terminal state instead of reviving
+    // the stale "generating" frame.
+    messages: runtimeMessages ?? durableMessages ?? visibleMessages,
     isStreaming: visibleStreaming,
     error,
     sendMessage,

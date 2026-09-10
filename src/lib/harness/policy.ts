@@ -1,5 +1,6 @@
 import type { Tool, ToolCall, PermissionScope, ToolUseContext } from '../tools/types'
 import type { SkillResourceResolver } from '../skills/types'
+import { extractDocumentTextTool } from '../tools/builtin/folder-tasks'
 
 export type PolicySource = 'default' | 'project' | 'user' | 'session' | 'guard'
 export type PolicyEffect = 'allow' | 'ask' | 'deny'
@@ -29,6 +30,8 @@ export interface PolicyContext extends Pick<ToolUseContext, 'workspace' | 'platf
 }
 
 function effectFor<I>(source: Partial<Record<string, PolicyEffect>> | undefined, tool: Tool<I>): PolicyEffect | undefined {
+  if ([tool.name, ...tool.permissions].some((key) => source?.[key] === 'deny')) return 'deny'
+  if ([tool.name, ...tool.permissions].some((key) => source?.[key] === 'ask')) return 'ask'
   return source?.[tool.name] ?? source?.[tool.permissions[0] ?? '']
 }
 
@@ -62,7 +65,10 @@ export class PolicyEngine {
     const permission = tool.permissions.find((scope) => ctx.permissions.get(scope)?.status === 'denied')
     if (permission) return { kind: 'deny', reason: `权限 ${permission} 已被拒绝。`, source: 'user' }
     const permissionPrompt = tool.permissions.some((scope) => ctx.permissions.get(scope)?.status === 'prompt')
-    if (tool.permissions.includes('process:spawn')) {
+    const fixedExtraction = Object.is(tool, extractDocumentTextTool)
+      && ctx.platform === 'tauri' && Boolean(ctx.toolContext?.folderTaskId)
+      && ctx.toolContext?.sandboxCapabilities?.some((item) => item.method === call.input?.method && item.available)
+    if (tool.permissions.includes('process:spawn') && !fixedExtraction) {
       return { kind: 'deny', reason: '默认策略禁止启动外部进程；请改用受约束的内置工具。', source: 'default' }
     }
     const projectEffect = effectFor(this.input.project, tool)

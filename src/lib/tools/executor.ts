@@ -18,6 +18,7 @@ import type {
 import type { Platform } from '../harness/types'
 import type { JSONSchema } from '../types/json-schema'
 import { HANDLE_THRESHOLD, handleizeLargeResult } from '../engine/context-budget'
+import { extractDocumentTextTool } from './builtin/folder-tasks'
 
 // ============================================================================
 // Step ③: Input schema validation
@@ -312,10 +313,13 @@ async function executeOnce(
   }, timeoutMs)
 
   try {
-    const result = await raceWithAbort(
-      tool.execute(call.input, opts.ctx, attempt.signal, opts.onProgress),
-      attempt.signal,
-    )
+    const execution = tool.execute(call.input, opts.ctx, attempt.signal, opts.onProgress)
+    // Only this trusted pipeline promises to cancel and await worker reaping.
+    // Do not turn UI abort into an early release of its durable batch lease.
+    const result = tool === extractDocumentTextTool
+      ? await execution
+      : await raceWithAbort(execution, attempt.signal)
+    if (attempt.signal.aborted) throw new Error('Tool execution aborted')
     return withDuration(result, started)
   } catch (err) {
     const durationMs = Date.now() - started

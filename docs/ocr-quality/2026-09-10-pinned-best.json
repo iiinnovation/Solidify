@@ -1,0 +1,1138 @@
+{
+  "amountExactCount": 10,
+  "architecture": "x86_64",
+  "durationMs": 140787,
+  "failedPages": 27,
+  "generatorSha256": "b357acb069339fe9c6ff21d7641b135074c57f46fd903af8722cdcd3dd1c3cc6",
+  "manifestSha256": "3b7a7beafcd79d70deb56ffba9a46e2362581ca9f524059529e192ead2a10a6c",
+  "modelSet": "pinned-best",
+  "pageCount": 35,
+  "pages": [
+    {
+      "amountExact": false,
+      "documentDurationMs": 15097,
+      "expected": {
+        "amount": "一百万元",
+        "amountStyle": "han",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "PingFangSC-Regular",
+        "fontSize": 52,
+        "id": "f0-lines-han-sharp",
+        "layout": "lines"
+      },
+      "file": "f0-lines-han-sharp.png",
+      "languageVersions": [
+        "chi_sim:sha256:4fef2d1306c8e87616d4d3e4c6c67faf5d44be3342290cf8f2f0f6e3aa7e735b",
+        "eng:sha256:8280aed0782fe27257a68ea10fe7ef324ca0f8d85bd2fd145d1c2b560bcb66ba"
+      ],
+      "missingControlLines": [],
+      "page": 1,
+      "parserVersion": "5.5.3",
+      "sourceSha256": "70d58930a5138b8ce58b8781e21ae43006247bb3082bd781c7eaeab4d01cf528",
+      "text": "项 目 结算 单\n合同 金额 一 自 万 元\n中 文 识别 测试\n\nSOLIDIFY OCR CHECK\n",
+      "warnings": [
+        "OCR 转换器返回诊断信息，请审阅识别结果",
+        "OCR 文本可能存在识别误差，请结合原文审阅"
+      ]
+    },
+    {
+      "amountExact": true,
+      "documentDurationMs": 2148,
+      "expected": {
+        "amount": "一百万元",
+        "amountStyle": "han",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "blur-binomial-7",
+        "font": "PingFangSC-Regular",
+        "fontSize": 52,
+        "id": "f0-lines-han-blur-binomial-7",
+        "layout": "lines"
+      },
+      "file": "f0-lines-han-blur-binomial-7.png",
+      "languageVersions": [
+        "chi_sim:sha256:4fef2d1306c8e87616d4d3e4c6c67faf5d44be3342290cf8f2f0f6e3aa7e735b",
+        "eng:sha256:8280aed0782fe27257a68ea10fe7ef324ca0f8d85bd2fd145d1c2b560bcb66ba"
+      ],
+      "missingControlLines": [],
+      "page": 1,
+      "parserVersion": "5.5.3",
+      "sourceSha256": "d87fce4fc3872100c5bbdd486c4a11edf061d3e8acba7c4529c0302b34f4da2c",
+      "text": "项 目 结算 单\n合同 金额 一 百 万 元\n中 文 识 别 测 试\n\nSOLIDIFY OCR CHECK\n",
+      "warnings": [
+        "OCR 转换器返回诊断信息，请审阅识别结果",
+        "OCR 文本可能存在识别误差，请结合原文审阅"
+      ]
+    },
+    {
+      "amountExact": false,
+      "documentDurationMs": 2271,
+      "expected": {
+        "amount": "壹佰万元整",
+        "amountStyle": "financial",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "PingFangSC-Regular",
+        "fontSize": 52,
+        "id": "f0-lines-financial-sharp",
+        "layout": "lines"
+      },
+      "file": "f0-lines-financial-sharp.png",
+      "languageVersions": [
+        "chi_sim:sha256:4fef2d1306c8e87616d4d3e4c6c67faf5d44be3342290cf8f2f0f6e3aa7e735b",
+        "eng:sha256:8280aed0782fe27257a68ea10fe7ef324ca0f8d85bd2fd145d1c2b560bcb66ba"
+      ],
+      "missingControlLines": [],
+      "page": 1,
+      "parserVersion": "5.5.3",
+      "sourceSha256": "a6ca5bdaceeacfa84f93ad21bfa2ea766fb5f260ed6e7cc0e7789b79e8315bcf",
+      "text": "项 目 结算 单\n合同 金额 索 个 万 元 整\n中 文 识别 测试\n\nSOLIDIFY OCR CHECK\n",
+      "warnings": [
+        "OCR 转换器返回诊断信息，请审阅识别结果",
+        "OCR 文本可能存在识别误差，请结合原文审阅"
+      ]
+    },
+    {
+      "amountExact": true,
+      "documentDurationMs": 2112,
+      "expected": {
+        "amount": "壹佰万元整",
+        "amountStyle": "financial",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "blur-binomial-7",
+        "font": "PingFangSC-Regular",
+        "fontSize": 52,
+        "id": "f0-lines-financial-blur-binomial-7",
+        "layout": "lines"
+      },
+      "file": "f0-lines-financial-blur-binomial-7.png",
+      "languageVersions": [
+        "chi_sim:sha256:4fef2d1306c8e87616d4d3e4c6c67faf5d44be3342290cf8f2f0f6e3aa7e735b",
+        "eng:sha256:8280aed0782fe27257a68ea10fe7ef324ca0f8d85bd2fd145d1c2b560bcb66ba"
+      ],
+      "missingControlLines": [],
+      "page": 1,
+      "parserVersion": "5.5.3",
+      "sourceSha256": "3be8aaf13777a446433fedfce20996684a58efef06c06badcc7c12167ba62ca9",
+      "text": "项 目 结算 单\n合同 金额 壹 佰 万 元 整\n中 文 识 别 测 试\n\nSOLIDIFY OCR CHECK\n",
+      "warnings": [
+        "OCR 转换器返回诊断信息，请审阅识别结果",
+        "OCR 文本可能存在识别误差，请结合原文审阅"
+      ]
+    },
+    {
+      "amountExact": true,
+      "documentDurationMs": 2246,
+      "expected": {
+        "amount": "1,234,567.89元",
+        "amountStyle": "decimal",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "PingFangSC-Regular",
+        "fontSize": 52,
+        "id": "f0-lines-decimal-sharp",
+        "layout": "lines"
+      },
+      "file": "f0-lines-decimal-sharp.png",
+      "languageVersions": [
+        "chi_sim:sha256:4fef2d1306c8e87616d4d3e4c6c67faf5d44be3342290cf8f2f0f6e3aa7e735b",
+        "eng:sha256:8280aed0782fe27257a68ea10fe7ef324ca0f8d85bd2fd145d1c2b560bcb66ba"
+      ],
+      "missingControlLines": [],
+      "page": 1,
+      "parserVersion": "5.5.3",
+      "sourceSha256": "bb73b4dad0dcd3bdc63fd280d8de17985c371ef61b8bd310272fa822c86252e4",
+      "text": "项 目 结算 单\n合同 金额 1,234,567.89 元\n中 文 识别 测试\n\nSOLIDIFY OCR CHECK\n",
+      "warnings": [
+        "OCR 转换器返回诊断信息，请审阅识别结果",
+        "OCR 文本可能存在识别误差，请结合原文审阅"
+      ]
+    },
+    {
+      "amountExact": true,
+      "documentDurationMs": 2033,
+      "expected": {
+        "amount": "1,234,567.89元",
+        "amountStyle": "decimal",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "blur-binomial-7",
+        "font": "PingFangSC-Regular",
+        "fontSize": 52,
+        "id": "f0-lines-decimal-blur-binomial-7",
+        "layout": "lines"
+      },
+      "file": "f0-lines-decimal-blur-binomial-7.png",
+      "languageVersions": [
+        "chi_sim:sha256:4fef2d1306c8e87616d4d3e4c6c67faf5d44be3342290cf8f2f0f6e3aa7e735b",
+        "eng:sha256:8280aed0782fe27257a68ea10fe7ef324ca0f8d85bd2fd145d1c2b560bcb66ba"
+      ],
+      "missingControlLines": [],
+      "page": 1,
+      "parserVersion": "5.5.3",
+      "sourceSha256": "9f041572bb722a73f62c785365e0b650e53ea30406e7ff3efc3de527117883ef",
+      "text": "项 目 结算 单\n合同 金额 1,234,567.89 元\n中 文 识 别 测 试\n\nSOLIDIFY OCR CHECK\n",
+      "warnings": [
+        "OCR 转换器返回诊断信息，请审阅识别结果",
+        "OCR 文本可能存在识别误差，请结合原文审阅"
+      ]
+    },
+    {
+      "amountExact": false,
+      "documentDurationMs": 2073,
+      "expected": {
+        "amount": "￥98,765.40",
+        "amountStyle": "currency",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "PingFangSC-Regular",
+        "fontSize": 52,
+        "id": "f0-lines-currency-sharp",
+        "layout": "lines"
+      },
+      "file": "f0-lines-currency-sharp.png",
+      "languageVersions": [
+        "chi_sim:sha256:4fef2d1306c8e87616d4d3e4c6c67faf5d44be3342290cf8f2f0f6e3aa7e735b",
+        "eng:sha256:8280aed0782fe27257a68ea10fe7ef324ca0f8d85bd2fd145d1c2b560bcb66ba"
+      ],
+      "missingControlLines": [],
+      "page": 1,
+      "parserVersion": "5.5.3",
+      "sourceSha256": "d5ca075b5e7181103c19281f27adb0eee5093aec4703a31825b25f89e94eef1a",
+      "text": "项 目 结算 单\n合同 金额 ¥ 98,765.40\n中 文 识别 测试\n\nSOLIDIFY OCR CHECK\n",
+      "warnings": [
+        "OCR 转换器返回诊断信息，请审阅识别结果",
+        "OCR 文本可能存在识别误差，请结合原文审阅"
+      ]
+    },
+    {
+      "amountExact": false,
+      "documentDurationMs": 1945,
+      "expected": {
+        "amount": "￥98,765.40",
+        "amountStyle": "currency",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "blur-binomial-7",
+        "font": "PingFangSC-Regular",
+        "fontSize": 52,
+        "id": "f0-lines-currency-blur-binomial-7",
+        "layout": "lines"
+      },
+      "file": "f0-lines-currency-blur-binomial-7.png",
+      "languageVersions": [
+        "chi_sim:sha256:4fef2d1306c8e87616d4d3e4c6c67faf5d44be3342290cf8f2f0f6e3aa7e735b",
+        "eng:sha256:8280aed0782fe27257a68ea10fe7ef324ca0f8d85bd2fd145d1c2b560bcb66ba"
+      ],
+      "missingControlLines": [],
+      "page": 1,
+      "parserVersion": "5.5.3",
+      "sourceSha256": "3c7e8f73e088641f5bd9048e6b3d178a6ed07638aa853568a1450b1aea081827",
+      "text": "项 目 结算 单\n合同 金额 ¥ 98,765.40\n中 文 识 别 测 试\n\nSOLIDIFY OCR CHECK\n",
+      "warnings": [
+        "OCR 转换器返回诊断信息，请审阅识别结果",
+        "OCR 文本可能存在识别误差，请结合原文审阅"
+      ]
+    },
+    {
+      "amountExact": false,
+      "documentDurationMs": 1885,
+      "expected": {
+        "amount": "一百万元",
+        "amountStyle": "han",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "PingFangSC-Regular",
+        "fontSize": 52,
+        "id": "f0-table-han-sharp",
+        "layout": "table"
+      },
+      "file": "f0-table-han-sharp.png",
+      "languageVersions": [
+        "chi_sim:sha256:4fef2d1306c8e87616d4d3e4c6c67faf5d44be3342290cf8f2f0f6e3aa7e735b",
+        "eng:sha256:8280aed0782fe27257a68ea10fe7ef324ca0f8d85bd2fd145d1c2b560bcb66ba"
+      ],
+      "missingControlLines": [],
+      "page": 1,
+      "parserVersion": "5.5.3",
+      "sourceSha256": "96274e670da450e0dfeb8f0990f34cf98f91a9835160f9b5125a87bc2686e017",
+      "text": "项 目 结算 单\n\n合同 金额 一 自 万 元\n\n中 文 识别 测试\n\nSOLIDIFY OCR CHECK\n\n",
+      "warnings": [
+        "OCR 转换器返回诊断信息，请审阅识别结果",
+        "OCR 文本可能存在识别误差，请结合原文审阅"
+      ]
+    },
+    {
+      "amountExact": false,
+      "documentDurationMs": 1910,
+      "expected": {
+        "amount": "一百万元",
+        "amountStyle": "han",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "blur-binomial-7",
+        "font": "PingFangSC-Regular",
+        "fontSize": 52,
+        "id": "f0-table-han-blur-binomial-7",
+        "layout": "table"
+      },
+      "file": "f0-table-han-blur-binomial-7.png",
+      "languageVersions": [
+        "chi_sim:sha256:4fef2d1306c8e87616d4d3e4c6c67faf5d44be3342290cf8f2f0f6e3aa7e735b",
+        "eng:sha256:8280aed0782fe27257a68ea10fe7ef324ca0f8d85bd2fd145d1c2b560bcb66ba"
+      ],
+      "missingControlLines": [],
+      "page": 1,
+      "parserVersion": "5.5.3",
+      "sourceSha256": "a90ebdd7722e41edfc3ecb857ed7fb865708fc3a256dbaa1087763b0b1f01ab5",
+      "text": "项 目 结算 单\n合同 金额\n\n中 文 识 别 测 试\n\nSOLIDIFY OCR CHECK\n\n",
+      "warnings": [
+        "OCR 转换器返回诊断信息，请审阅识别结果",
+        "OCR 文本可能存在识别误差，请结合原文审阅"
+      ]
+    },
+    {
+      "amountExact": false,
+      "documentDurationMs": 2298,
+      "expected": {
+        "amount": "壹佰万元整",
+        "amountStyle": "financial",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "PingFangSC-Regular",
+        "fontSize": 52,
+        "id": "f0-table-financial-sharp",
+        "layout": "table"
+      },
+      "file": "f0-table-financial-sharp.png",
+      "languageVersions": [
+        "chi_sim:sha256:4fef2d1306c8e87616d4d3e4c6c67faf5d44be3342290cf8f2f0f6e3aa7e735b",
+        "eng:sha256:8280aed0782fe27257a68ea10fe7ef324ca0f8d85bd2fd145d1c2b560bcb66ba"
+      ],
+      "missingControlLines": [],
+      "page": 1,
+      "parserVersion": "5.5.3",
+      "sourceSha256": "2ad0e0dd604126d8179ba9e2e430651a026f39730ffa6ff744d4a59b1902ddb2",
+      "text": "项 目 结算 单\n\n合同 金额 过 个 万 元 整\n\n中 文 识别 测试\n\nSOLIDIFY OCR CHECK\n\n",
+      "warnings": [
+        "OCR 转换器返回诊断信息，请审阅识别结果",
+        "OCR 文本可能存在识别误差，请结合原文审阅"
+      ]
+    },
+    {
+      "amountExact": false,
+      "documentDurationMs": 1946,
+      "expected": {
+        "amount": "壹佰万元整",
+        "amountStyle": "financial",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "blur-binomial-7",
+        "font": "PingFangSC-Regular",
+        "fontSize": 52,
+        "id": "f0-table-financial-blur-binomial-7",
+        "layout": "table"
+      },
+      "file": "f0-table-financial-blur-binomial-7.png",
+      "languageVersions": [
+        "chi_sim:sha256:4fef2d1306c8e87616d4d3e4c6c67faf5d44be3342290cf8f2f0f6e3aa7e735b",
+        "eng:sha256:8280aed0782fe27257a68ea10fe7ef324ca0f8d85bd2fd145d1c2b560bcb66ba"
+      ],
+      "missingControlLines": [],
+      "page": 1,
+      "parserVersion": "5.5.3",
+      "sourceSha256": "65ea7a5ed3ad72cf24d4b8631e15fdd9069bc5381d1e1345a336cd857349d45d",
+      "text": "项 目 结算 单\n合同 金额 喜 佰 万 元 整\n\n中 文 识 别 测 试\n\nSOLIDIFY OCR CHECK\n\n",
+      "warnings": [
+        "OCR 转换器返回诊断信息，请审阅识别结果",
+        "OCR 文本可能存在识别误差，请结合原文审阅"
+      ]
+    },
+    {
+      "amountExact": false,
+      "documentDurationMs": 1982,
+      "expected": {
+        "amount": "1,234,567.89元",
+        "amountStyle": "decimal",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "PingFangSC-Regular",
+        "fontSize": 52,
+        "id": "f0-table-decimal-sharp",
+        "layout": "table"
+      },
+      "file": "f0-table-decimal-sharp.png",
+      "languageVersions": [
+        "chi_sim:sha256:4fef2d1306c8e87616d4d3e4c6c67faf5d44be3342290cf8f2f0f6e3aa7e735b",
+        "eng:sha256:8280aed0782fe27257a68ea10fe7ef324ca0f8d85bd2fd145d1c2b560bcb66ba"
+      ],
+      "missingControlLines": [],
+      "page": 1,
+      "parserVersion": "5.5.3",
+      "sourceSha256": "d3069a8549db9d564f91365b8f16a6e0caa2134b8352a70a76ece85986b988ce",
+      "text": "项 目 结算 单\n\n合同 金额 1234,567.89 元\n\n中 文 识别 测试\n\nSOLIDIFY OCR CHECK\n\n",
+      "warnings": [
+        "OCR 转换器返回诊断信息，请审阅识别结果",
+        "OCR 文本可能存在识别误差，请结合原文审阅"
+      ]
+    },
+    {
+      "amountExact": false,
+      "documentDurationMs": 2149,
+      "expected": {
+        "amount": "1,234,567.89元",
+        "amountStyle": "decimal",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "blur-binomial-7",
+        "font": "PingFangSC-Regular",
+        "fontSize": 52,
+        "id": "f0-table-decimal-blur-binomial-7",
+        "layout": "table"
+      },
+      "file": "f0-table-decimal-blur-binomial-7.png",
+      "languageVersions": [
+        "chi_sim:sha256:4fef2d1306c8e87616d4d3e4c6c67faf5d44be3342290cf8f2f0f6e3aa7e735b",
+        "eng:sha256:8280aed0782fe27257a68ea10fe7ef324ca0f8d85bd2fd145d1c2b560bcb66ba"
+      ],
+      "missingControlLines": [],
+      "page": 1,
+      "parserVersion": "5.5.3",
+      "sourceSha256": "0168c856a26b526b3c95ce2c357e0edf0144497765880715a5b3b0426d3f9bec",
+      "text": "项 目 结算 单\n\n合同 金额 1234,567.89 元\n\n中 文 识 别 测 试\n\nSOLIDIFY OCR CHECK\n\n",
+      "warnings": [
+        "OCR 转换器返回诊断信息，请审阅识别结果",
+        "OCR 文本可能存在识别误差，请结合原文审阅"
+      ]
+    },
+    {
+      "amountExact": false,
+      "documentDurationMs": 2327,
+      "expected": {
+        "amount": "￥98,765.40",
+        "amountStyle": "currency",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "PingFangSC-Regular",
+        "fontSize": 52,
+        "id": "f0-table-currency-sharp",
+        "layout": "table"
+      },
+      "file": "f0-table-currency-sharp.png",
+      "languageVersions": [
+        "chi_sim:sha256:4fef2d1306c8e87616d4d3e4c6c67faf5d44be3342290cf8f2f0f6e3aa7e735b",
+        "eng:sha256:8280aed0782fe27257a68ea10fe7ef324ca0f8d85bd2fd145d1c2b560bcb66ba"
+      ],
+      "missingControlLines": [],
+      "page": 1,
+      "parserVersion": "5.5.3",
+      "sourceSha256": "9a454c4dc2a0bde1898f04198d45858a34e40cc8f23601b50a214feca56d5352",
+      "text": "项 目 结算 单\n\n合同 金额 ¥ 98,765.40\n\n中 文 识别 测试\n\nSOLIDIFY OCR CHECK\n\n",
+      "warnings": [
+        "OCR 转换器返回诊断信息，请审阅识别结果",
+        "OCR 文本可能存在识别误差，请结合原文审阅"
+      ]
+    },
+    {
+      "amountExact": false,
+      "documentDurationMs": 1945,
+      "expected": {
+        "amount": "￥98,765.40",
+        "amountStyle": "currency",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "blur-binomial-7",
+        "font": "PingFangSC-Regular",
+        "fontSize": 52,
+        "id": "f0-table-currency-blur-binomial-7",
+        "layout": "table"
+      },
+      "file": "f0-table-currency-blur-binomial-7.png",
+      "languageVersions": [
+        "chi_sim:sha256:4fef2d1306c8e87616d4d3e4c6c67faf5d44be3342290cf8f2f0f6e3aa7e735b",
+        "eng:sha256:8280aed0782fe27257a68ea10fe7ef324ca0f8d85bd2fd145d1c2b560bcb66ba"
+      ],
+      "missingControlLines": [],
+      "page": 1,
+      "parserVersion": "5.5.3",
+      "sourceSha256": "a3fb44ce0a726838627bf7927058874c90240c7f0e1196f91d68654ffc4ca0bc",
+      "text": "项 目 结算 单\n合同 金额 ¥ 98,765.40\n\n中 文 识 别 测 试\n\nSOLIDIFY OCR CHECK\n\n",
+      "warnings": [
+        "OCR 转换器返回诊断信息，请审阅识别结果",
+        "OCR 文本可能存在识别误差，请结合原文审阅"
+      ]
+    },
+    {
+      "amountExact": true,
+      "documentDurationMs": 1980,
+      "expected": {
+        "amount": "一百万元",
+        "amountStyle": "han",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "STSongti-SC-Regular",
+        "fontSize": 52,
+        "id": "f1-lines-han-sharp",
+        "layout": "lines"
+      },
+      "file": "f1-lines-han-sharp.png",
+      "languageVersions": [
+        "chi_sim:sha256:4fef2d1306c8e87616d4d3e4c6c67faf5d44be3342290cf8f2f0f6e3aa7e735b",
+        "eng:sha256:8280aed0782fe27257a68ea10fe7ef324ca0f8d85bd2fd145d1c2b560bcb66ba"
+      ],
+      "missingControlLines": [],
+      "page": 1,
+      "parserVersion": "5.5.3",
+      "sourceSha256": "989bd97cfd529d5302f4513d2ef2d8b17bb604f48f0375850545a1351a2efb6d",
+      "text": "项 目 结算 单\n合同 金额 一 百 万 元\n中 文 识 别 测试\n\nSOLIDIFY OCR CHECK\n",
+      "warnings": [
+        "OCR 转换器返回诊断信息，请审阅识别结果",
+        "OCR 文本可能存在识别误差，请结合原文审阅"
+      ]
+    },
+    {
+      "amountExact": false,
+      "documentDurationMs": 2014,
+      "expected": {
+        "amount": "壹佰万元整",
+        "amountStyle": "financial",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "STSongti-SC-Regular",
+        "fontSize": 52,
+        "id": "f1-lines-financial-sharp",
+        "layout": "lines"
+      },
+      "file": "f1-lines-financial-sharp.png",
+      "languageVersions": [
+        "chi_sim:sha256:4fef2d1306c8e87616d4d3e4c6c67faf5d44be3342290cf8f2f0f6e3aa7e735b",
+        "eng:sha256:8280aed0782fe27257a68ea10fe7ef324ca0f8d85bd2fd145d1c2b560bcb66ba"
+      ],
+      "missingControlLines": [],
+      "page": 1,
+      "parserVersion": "5.5.3",
+      "sourceSha256": "4d3b6f86b5387d2caacfd18f14f3b8098274b0754afd8af8500af2705a8de024",
+      "text": "项 目 结算 单\n合同 金额 SE uk\n中 文 识 别 测试\n\nSOLIDIFY OCR CHECK\n",
+      "warnings": [
+        "OCR 转换器返回诊断信息，请审阅识别结果",
+        "OCR 文本可能存在识别误差，请结合原文审阅"
+      ]
+    },
+    {
+      "amountExact": false,
+      "documentDurationMs": 2798,
+      "expected": {
+        "amount": "1,234,567.89元",
+        "amountStyle": "decimal",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "STSongti-SC-Regular",
+        "fontSize": 52,
+        "id": "f1-lines-decimal-sharp",
+        "layout": "lines"
+      },
+      "file": "f1-lines-decimal-sharp.png",
+      "languageVersions": [
+        "chi_sim:sha256:4fef2d1306c8e87616d4d3e4c6c67faf5d44be3342290cf8f2f0f6e3aa7e735b",
+        "eng:sha256:8280aed0782fe27257a68ea10fe7ef324ca0f8d85bd2fd145d1c2b560bcb66ba"
+      ],
+      "missingControlLines": [],
+      "page": 1,
+      "parserVersion": "5.5.3",
+      "sourceSha256": "d065e0bad6cdcb4911904c611cd30757a18fc2e91c4b6033fdd8fdd385ad22e0",
+      "text": "项 目 结算 单\n合同 金额 1.234,567.89 元\n中 文 识 别 测试\n\nSOLIDIFY OCR CHECK\n",
+      "warnings": [
+        "OCR 转换器返回诊断信息，请审阅识别结果",
+        "OCR 文本可能存在识别误差，请结合原文审阅"
+      ]
+    },
+    {
+      "amountExact": false,
+      "documentDurationMs": 2826,
+      "expected": {
+        "amount": "￥98,765.40",
+        "amountStyle": "currency",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "STSongti-SC-Regular",
+        "fontSize": 52,
+        "id": "f1-lines-currency-sharp",
+        "layout": "lines"
+      },
+      "file": "f1-lines-currency-sharp.png",
+      "languageVersions": [
+        "chi_sim:sha256:4fef2d1306c8e87616d4d3e4c6c67faf5d44be3342290cf8f2f0f6e3aa7e735b",
+        "eng:sha256:8280aed0782fe27257a68ea10fe7ef324ca0f8d85bd2fd145d1c2b560bcb66ba"
+      ],
+      "missingControlLines": [],
+      "page": 1,
+      "parserVersion": "5.5.3",
+      "sourceSha256": "c2eb9e62eeb9461ce9b699664dad6349488544792826ae368526913915003af1",
+      "text": "项 目 结算 单\n合同 金额 立 98,765.40\n中 文 识 别 测试\n\nSOLIDIFY OCR CHECK\n",
+      "warnings": [
+        "OCR 转换器返回诊断信息，请审阅识别结果",
+        "OCR 文本可能存在识别误差，请结合原文审阅"
+      ]
+    },
+    {
+      "amountExact": true,
+      "documentDurationMs": 2895,
+      "expected": {
+        "amount": "一百万元",
+        "amountStyle": "han",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "STSongti-SC-Regular",
+        "fontSize": 52,
+        "id": "f1-table-han-sharp",
+        "layout": "table"
+      },
+      "file": "f1-table-han-sharp.png",
+      "languageVersions": [
+        "chi_sim:sha256:4fef2d1306c8e87616d4d3e4c6c67faf5d44be3342290cf8f2f0f6e3aa7e735b",
+        "eng:sha256:8280aed0782fe27257a68ea10fe7ef324ca0f8d85bd2fd145d1c2b560bcb66ba"
+      ],
+      "missingControlLines": [],
+      "page": 1,
+      "parserVersion": "5.5.3",
+      "sourceSha256": "c33da996cfb871d92267b8b71a0f4458a82167ef9d381b15c084cf79fcbb28cf",
+      "text": "项 目 结算 单\n\n合同 金额 一 百 万 元\n\n中 文 识 别 测试\n\nSOLIDIFY OCR CHECK\n\n",
+      "warnings": [
+        "OCR 转换器返回诊断信息，请审阅识别结果",
+        "OCR 文本可能存在识别误差，请结合原文审阅"
+      ]
+    },
+    {
+      "amountExact": false,
+      "documentDurationMs": 2824,
+      "expected": {
+        "amount": "壹佰万元整",
+        "amountStyle": "financial",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "STSongti-SC-Regular",
+        "fontSize": 52,
+        "id": "f1-table-financial-sharp",
+        "layout": "table"
+      },
+      "file": "f1-table-financial-sharp.png",
+      "languageVersions": [
+        "chi_sim:sha256:4fef2d1306c8e87616d4d3e4c6c67faf5d44be3342290cf8f2f0f6e3aa7e735b",
+        "eng:sha256:8280aed0782fe27257a68ea10fe7ef324ca0f8d85bd2fd145d1c2b560bcb66ba"
+      ],
+      "missingControlLines": [],
+      "page": 1,
+      "parserVersion": "5.5.3",
+      "sourceSha256": "03470bf0120cec3501f7e66e50a0214c88ae0fe88a036aeed945be682ee2e785",
+      "text": "项 目 结算 单\n\n合同 金额 SAAT\n\n中 文 识 别 测试\n\nSOLIDIFY OCR CHECK\n\n",
+      "warnings": [
+        "OCR 转换器返回诊断信息，请审阅识别结果",
+        "OCR 文本可能存在识别误差，请结合原文审阅"
+      ]
+    },
+    {
+      "amountExact": false,
+      "documentDurationMs": 3042,
+      "expected": {
+        "amount": "1,234,567.89元",
+        "amountStyle": "decimal",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "STSongti-SC-Regular",
+        "fontSize": 52,
+        "id": "f1-table-decimal-sharp",
+        "layout": "table"
+      },
+      "file": "f1-table-decimal-sharp.png",
+      "languageVersions": [
+        "chi_sim:sha256:4fef2d1306c8e87616d4d3e4c6c67faf5d44be3342290cf8f2f0f6e3aa7e735b",
+        "eng:sha256:8280aed0782fe27257a68ea10fe7ef324ca0f8d85bd2fd145d1c2b560bcb66ba"
+      ],
+      "missingControlLines": [],
+      "page": 1,
+      "parserVersion": "5.5.3",
+      "sourceSha256": "e6f74558f1881b97d721b8e2b2a3e2f12b98ad2b6db983824865853aa5722e2e",
+      "text": "项 目 结算 单\n\n合同 金额 1.234,.567.89 元\n\n中 文 识 别 测试\n\nSOLIDIFY OCR CHECK\n\n",
+      "warnings": [
+        "OCR 转换器返回诊断信息，请审阅识别结果",
+        "OCR 文本可能存在识别误差，请结合原文审阅"
+      ]
+    },
+    {
+      "amountExact": false,
+      "documentDurationMs": 2861,
+      "expected": {
+        "amount": "￥98,765.40",
+        "amountStyle": "currency",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "STSongti-SC-Regular",
+        "fontSize": 52,
+        "id": "f1-table-currency-sharp",
+        "layout": "table"
+      },
+      "file": "f1-table-currency-sharp.png",
+      "languageVersions": [
+        "chi_sim:sha256:4fef2d1306c8e87616d4d3e4c6c67faf5d44be3342290cf8f2f0f6e3aa7e735b",
+        "eng:sha256:8280aed0782fe27257a68ea10fe7ef324ca0f8d85bd2fd145d1c2b560bcb66ba"
+      ],
+      "missingControlLines": [],
+      "page": 1,
+      "parserVersion": "5.5.3",
+      "sourceSha256": "5854d2099369a96a448826cad1ec448720a290ae0c737d7da6933ebb61f39698",
+      "text": "项 目 结算 单\n\n合同 金额 Y 98,765.40\n\n中 文 识 别 测试\n\nSOLIDIFY OCR CHECK\n\n",
+      "warnings": [
+        "OCR 转换器返回诊断信息，请审阅识别结果",
+        "OCR 文本可能存在识别误差，请结合原文审阅"
+      ]
+    },
+    {
+      "amountExact": true,
+      "documentDurationMs": 2625,
+      "expected": {
+        "amount": "一百万元",
+        "amountStyle": "han",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "STHeitiSC-Light",
+        "fontSize": 52,
+        "id": "f2-lines-han-sharp",
+        "layout": "lines"
+      },
+      "file": "f2-lines-han-sharp.png",
+      "languageVersions": [
+        "chi_sim:sha256:4fef2d1306c8e87616d4d3e4c6c67faf5d44be3342290cf8f2f0f6e3aa7e735b",
+        "eng:sha256:8280aed0782fe27257a68ea10fe7ef324ca0f8d85bd2fd145d1c2b560bcb66ba"
+      ],
+      "missingControlLines": [],
+      "page": 1,
+      "parserVersion": "5.5.3",
+      "sourceSha256": "95df921e5bb399a4487e437bc41eab62fa5546490b86e4d3e5b223a066aea3c5",
+      "text": "项 目 结算 单\n合同 金额 一 百 万 元\n\n中 文 识 别 测试\nSOLIDIFY OCR CHECK\n",
+      "warnings": [
+        "OCR 转换器返回诊断信息，请审阅识别结果",
+        "OCR 文本可能存在识别误差，请结合原文审阅"
+      ]
+    },
+    {
+      "amountExact": false,
+      "documentDurationMs": 2732,
+      "expected": {
+        "amount": "壹佰万元整",
+        "amountStyle": "financial",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "STHeitiSC-Light",
+        "fontSize": 52,
+        "id": "f2-lines-financial-sharp",
+        "layout": "lines"
+      },
+      "file": "f2-lines-financial-sharp.png",
+      "languageVersions": [
+        "chi_sim:sha256:4fef2d1306c8e87616d4d3e4c6c67faf5d44be3342290cf8f2f0f6e3aa7e735b",
+        "eng:sha256:8280aed0782fe27257a68ea10fe7ef324ca0f8d85bd2fd145d1c2b560bcb66ba"
+      ],
+      "missingControlLines": [],
+      "page": 1,
+      "parserVersion": "5.5.3",
+      "sourceSha256": "6b21498abec106c64a909e0d8f0d3f40fbe875b249ee08e1b8861d6fb49a41f0",
+      "text": "项 目 结算 单\n\n合同 金额 喜 佰 万 元 整\n中 文 识 别 测试\nSOLIDIFY OCR CHECK\n",
+      "warnings": [
+        "OCR 转换器返回诊断信息，请审阅识别结果",
+        "OCR 文本可能存在识别误差，请结合原文审阅"
+      ]
+    },
+    {
+      "amountExact": false,
+      "documentDurationMs": 2874,
+      "expected": {
+        "amount": "1,234,567.89元",
+        "amountStyle": "decimal",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "STHeitiSC-Light",
+        "fontSize": 52,
+        "id": "f2-lines-decimal-sharp",
+        "layout": "lines"
+      },
+      "file": "f2-lines-decimal-sharp.png",
+      "languageVersions": [
+        "chi_sim:sha256:4fef2d1306c8e87616d4d3e4c6c67faf5d44be3342290cf8f2f0f6e3aa7e735b",
+        "eng:sha256:8280aed0782fe27257a68ea10fe7ef324ca0f8d85bd2fd145d1c2b560bcb66ba"
+      ],
+      "missingControlLines": [],
+      "page": 1,
+      "parserVersion": "5.5.3",
+      "sourceSha256": "4b271dbba9f8fd495eb04d3db0479e71dfa2e1b633c1a017bd9bb78c13c7c648",
+      "text": "项 目 结算 单\n\n合同 金额 1,.234,567.89 元\n中 文 识别 测试\nSOLIDIFY OCR CHECK\n",
+      "warnings": [
+        "OCR 转换器返回诊断信息，请审阅识别结果",
+        "OCR 文本可能存在识别误差，请结合原文审阅"
+      ]
+    },
+    {
+      "amountExact": false,
+      "documentDurationMs": 2898,
+      "expected": {
+        "amount": "￥98,765.40",
+        "amountStyle": "currency",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "STHeitiSC-Light",
+        "fontSize": 52,
+        "id": "f2-lines-currency-sharp",
+        "layout": "lines"
+      },
+      "file": "f2-lines-currency-sharp.png",
+      "languageVersions": [
+        "chi_sim:sha256:4fef2d1306c8e87616d4d3e4c6c67faf5d44be3342290cf8f2f0f6e3aa7e735b",
+        "eng:sha256:8280aed0782fe27257a68ea10fe7ef324ca0f8d85bd2fd145d1c2b560bcb66ba"
+      ],
+      "missingControlLines": [],
+      "page": 1,
+      "parserVersion": "5.5.3",
+      "sourceSha256": "9c563c11b1feda87b9c3ae442d7861d5b9115343417f99536622e0d98cfffc93",
+      "text": "项 目 结算 单\n\n合同 金额 ¥ 98,765.40\n中 文 识别 测试\nSOLIDIFY OCR CHECK\n",
+      "warnings": [
+        "OCR 转换器返回诊断信息，请审阅识别结果",
+        "OCR 文本可能存在识别误差，请结合原文审阅"
+      ]
+    },
+    {
+      "amountExact": false,
+      "documentDurationMs": 2791,
+      "expected": {
+        "amount": "一百万元",
+        "amountStyle": "han",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "STHeitiSC-Light",
+        "fontSize": 52,
+        "id": "f2-table-han-sharp",
+        "layout": "table"
+      },
+      "file": "f2-table-han-sharp.png",
+      "languageVersions": [
+        "chi_sim:sha256:4fef2d1306c8e87616d4d3e4c6c67faf5d44be3342290cf8f2f0f6e3aa7e735b",
+        "eng:sha256:8280aed0782fe27257a68ea10fe7ef324ca0f8d85bd2fd145d1c2b560bcb66ba"
+      ],
+      "missingControlLines": [],
+      "page": 1,
+      "parserVersion": "5.5.3",
+      "sourceSha256": "993068393b6e8849c12117ca273cbe3ca680f0160d53ac4c7333bb22bedd6848",
+      "text": "项 目 结算 单\n\n合同 金额 一 自 万 元\n\n中 文 识别 测试\n\nSOLIDIFY OCR CHECK\n\n",
+      "warnings": [
+        "OCR 转换器返回诊断信息，请审阅识别结果",
+        "OCR 文本可能存在识别误差，请结合原文审阅"
+      ]
+    },
+    {
+      "amountExact": false,
+      "documentDurationMs": 2735,
+      "expected": {
+        "amount": "壹佰万元整",
+        "amountStyle": "financial",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "STHeitiSC-Light",
+        "fontSize": 52,
+        "id": "f2-table-financial-sharp",
+        "layout": "table"
+      },
+      "file": "f2-table-financial-sharp.png",
+      "languageVersions": [
+        "chi_sim:sha256:4fef2d1306c8e87616d4d3e4c6c67faf5d44be3342290cf8f2f0f6e3aa7e735b",
+        "eng:sha256:8280aed0782fe27257a68ea10fe7ef324ca0f8d85bd2fd145d1c2b560bcb66ba"
+      ],
+      "missingControlLines": [],
+      "page": 1,
+      "parserVersion": "5.5.3",
+      "sourceSha256": "f52068c4fb1cfb29fd238be6ae53126eb520fbc5e42266577087ed1dd59484a0",
+      "text": "项 目 结算 单\n\n合同 金额 过 佰 万 元 整\n\n中 文 识别 测试\n\nSOLIDIFY OCR CHECK\n\n",
+      "warnings": [
+        "OCR 转换器返回诊断信息，请审阅识别结果",
+        "OCR 文本可能存在识别误差，请结合原文审阅"
+      ]
+    },
+    {
+      "amountExact": true,
+      "documentDurationMs": 2743,
+      "expected": {
+        "amount": "1,234,567.89元",
+        "amountStyle": "decimal",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "STHeitiSC-Light",
+        "fontSize": 52,
+        "id": "f2-table-decimal-sharp",
+        "layout": "table"
+      },
+      "file": "f2-table-decimal-sharp.png",
+      "languageVersions": [
+        "chi_sim:sha256:4fef2d1306c8e87616d4d3e4c6c67faf5d44be3342290cf8f2f0f6e3aa7e735b",
+        "eng:sha256:8280aed0782fe27257a68ea10fe7ef324ca0f8d85bd2fd145d1c2b560bcb66ba"
+      ],
+      "missingControlLines": [],
+      "page": 1,
+      "parserVersion": "5.5.3",
+      "sourceSha256": "838ed1b12ce8c536943058d8b418e0dfbe6711fd1f70bc6462199d3bed1e09d8",
+      "text": "项 目 结算 单\n\n合同 金额 1,234,567.89 元\n\n中 文 识别 测试\n\nSOLIDIFY OCR CHECK\n\n",
+      "warnings": [
+        "OCR 转换器返回诊断信息，请审阅识别结果",
+        "OCR 文本可能存在识别误差，请结合原文审阅"
+      ]
+    },
+    {
+      "amountExact": false,
+      "documentDurationMs": 2805,
+      "expected": {
+        "amount": "￥98,765.40",
+        "amountStyle": "currency",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "STHeitiSC-Light",
+        "fontSize": 52,
+        "id": "f2-table-currency-sharp",
+        "layout": "table"
+      },
+      "file": "f2-table-currency-sharp.png",
+      "languageVersions": [
+        "chi_sim:sha256:4fef2d1306c8e87616d4d3e4c6c67faf5d44be3342290cf8f2f0f6e3aa7e735b",
+        "eng:sha256:8280aed0782fe27257a68ea10fe7ef324ca0f8d85bd2fd145d1c2b560bcb66ba"
+      ],
+      "missingControlLines": [],
+      "page": 1,
+      "parserVersion": "5.5.3",
+      "sourceSha256": "08d15f6afcf3042f7f66ad1974226bae115a600f911a3f4a1e68eb841c1a6582",
+      "text": "项 目 结算 单\n\n合同 金额 ¥ 98,765.40\n\n中 文 识别 测试\n\nSOLIDIFY OCR CHECK\n\n",
+      "warnings": [
+        "OCR 转换器返回诊断信息，请审阅识别结果",
+        "OCR 文本可能存在识别误差，请结合原文审阅"
+      ]
+    },
+    {
+      "amountExact": false,
+      "documentDurationMs": 29098,
+      "expected": {
+        "amount": "一百万元",
+        "amountStyle": "han",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "PingFangSC-Regular",
+        "fontSize": 52,
+        "id": "f0-lines-han-sharp",
+        "layout": "lines"
+      },
+      "file": "font-controls.pdf",
+      "languageVersions": [
+        "chi_sim:sha256:4fef2d1306c8e87616d4d3e4c6c67faf5d44be3342290cf8f2f0f6e3aa7e735b",
+        "eng:sha256:8280aed0782fe27257a68ea10fe7ef324ca0f8d85bd2fd145d1c2b560bcb66ba"
+      ],
+      "missingControlLines": [],
+      "page": 1,
+      "parserVersion": "poppler:26.09.0;tesseract:5.5.3",
+      "sourceSha256": "f4b1d138f81302cf9663a6e1baa84a21183d818368db4c655f30795b1846458a",
+      "text": "项 目 结算 单\n合同 金额 一 正 万 元\n中 文 识别 测试\n\nSOLIDIFY OCR CHECK\n",
+      "warnings": [
+        "PDF 转换器返回诊断信息，请审阅结果",
+        "OCR 文本可能存在识别误差，请结合原文审阅"
+      ]
+    },
+    {
+      "amountExact": true,
+      "documentDurationMs": 29098,
+      "expected": {
+        "amount": "一百万元",
+        "amountStyle": "han",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "STSongti-SC-Regular",
+        "fontSize": 52,
+        "id": "f1-lines-han-sharp",
+        "layout": "lines"
+      },
+      "file": "font-controls.pdf",
+      "languageVersions": [
+        "chi_sim:sha256:4fef2d1306c8e87616d4d3e4c6c67faf5d44be3342290cf8f2f0f6e3aa7e735b",
+        "eng:sha256:8280aed0782fe27257a68ea10fe7ef324ca0f8d85bd2fd145d1c2b560bcb66ba"
+      ],
+      "missingControlLines": [
+        "中文识别测试"
+      ],
+      "page": 2,
+      "parserVersion": "poppler:26.09.0;tesseract:5.5.3",
+      "sourceSha256": "f4b1d138f81302cf9663a6e1baa84a21183d818368db4c655f30795b1846458a",
+      "text": "项 目 结算 单\n合同 金额 一 百 万 元\nCIR\n\nSOLIDIFY OCR CHECK\n\nhui\n\n",
+      "warnings": [
+        "PDF 转换器返回诊断信息，请审阅结果",
+        "OCR 文本可能存在识别误差，请结合原文审阅"
+      ]
+    },
+    {
+      "amountExact": true,
+      "documentDurationMs": 29098,
+      "expected": {
+        "amount": "一百万元",
+        "amountStyle": "han",
+        "controlLines": [
+          "项目结算单",
+          "中文识别测试",
+          "SOLIDIFY OCR CHECK"
+        ],
+        "degradation": "sharp",
+        "font": "STHeitiSC-Light",
+        "fontSize": 52,
+        "id": "f2-lines-han-sharp",
+        "layout": "lines"
+      },
+      "file": "font-controls.pdf",
+      "languageVersions": [
+        "chi_sim:sha256:4fef2d1306c8e87616d4d3e4c6c67faf5d44be3342290cf8f2f0f6e3aa7e735b",
+        "eng:sha256:8280aed0782fe27257a68ea10fe7ef324ca0f8d85bd2fd145d1c2b560bcb66ba"
+      ],
+      "missingControlLines": [
+        "中文识别测试"
+      ],
+      "page": 3,
+      "parserVersion": "poppler:26.09.0;tesseract:5.5.3",
+      "sourceSha256": "f4b1d138f81302cf9663a6e1baa84a21183d818368db4c655f30795b1846458a",
+      "text": "项 目 结算 单\n合同 金额 一 百 万 元\n\nhb 文 识 别 测试\nSOLIDIFY OCR CHECK\n\nhm\n\n",
+      "warnings": [
+        "PDF 转换器返回诊断信息，请审阅结果",
+        "OCR 文本可能存在识别误差，请结合原文审阅"
+      ]
+    }
+  ],
+  "platform": "macos",
+  "schemaVersion": 1
+}

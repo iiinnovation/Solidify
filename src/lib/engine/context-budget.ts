@@ -511,7 +511,7 @@ function sampledText(text: string, keepCharacters: number, marker: string): stri
   const middle = Math.ceil(keepCharacters * 0.2)
   const tail = Math.max(0, keepCharacters - head - middle)
   const middleStart = Math.max(0, Math.floor(chars.length / 2 - middle / 2))
-  return `${chars.slice(0, head).join('')}${marker}${chars.slice(middleStart, middleStart + middle).join('')}${marker}${chars.slice(-tail).join('')}`
+  return `${chars.slice(0, head).join('')}${marker}${chars.slice(middleStart, middleStart + middle).join('')}${marker}${tail > 0 ? chars.slice(-tail).join('') : ''}`
 }
 
 function fitPrefix(text: string, maxTokens: number): string {

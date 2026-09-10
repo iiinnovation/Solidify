@@ -74,6 +74,26 @@ describe('chat store truncation', () => {
     })
   })
 
+  it('enables automatic execution only for a FolderTask conversation', () => {
+    const taskId = useChatStore.getState().createConversation('Folder task', { folderTaskId: 'folder-task-1' })
+    const chatId = useChatStore.getState().createConversation('Chat')
+    useChatStore.getState().setFolderTaskAutoRun(taskId, true)
+    useChatStore.getState().setFolderTaskAutoRun(chatId, true)
+
+    expect(useChatStore.getState().conversations.find((item) => item.id === taskId)?.folderTaskAutoRun).toBe(true)
+    expect(useChatStore.getState().conversations.find((item) => item.id === chatId)?.folderTaskAutoRun).toBeUndefined()
+  })
+
+  it('keeps exactly one automatic scheduler owner per FolderTask', () => {
+    const first = useChatStore.getState().createConversation('First', { folderTaskId: 'folder-task-1' })
+    const second = useChatStore.getState().createConversation('Second', { folderTaskId: 'folder-task-1' })
+    useChatStore.getState().setFolderTaskAutoRun(first, true)
+    useChatStore.getState().setFolderTaskAutoRun(second, true)
+
+    const owners = useChatStore.getState().conversations.filter((item) => item.folderTaskId === 'folder-task-1' && item.folderTaskAutoRun)
+    expect(owners.map((item) => item.id)).toEqual([second])
+  })
+
   it('removes artifacts owned by truncated messages and clears the active artifact', () => {
     useChatStore.setState({
       conversations: [{

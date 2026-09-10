@@ -1,10 +1,12 @@
 # Agent Runtime 分阶段工作流重构方案
 
-> 状态：Proposal，待评审后实施
+> 状态：控制流模块化已实施（2026-08-25）；真实 Provider 发布矩阵仍待执行
 >
 > 范围：`src/lib/engine/`、`src/lib/tools/`、Artifact 交付合约、Harness 账本与相关测试
 >
 > 不包含：更换模型、禁止模型思考、引入 LangGraph 等外部运行时、重写 UI、重写 Provider Adapter
+
+2026-09-10 恢复缺口修复：用户台账暴露 `compact_recovery` 未精简 inline 附件的问题。现已增加来源绑定的累计附件摘录预算、实际精简统计，以及续写/格式修复时的输入保持；原附件本地复放从 24,378 降为 5,313 个附件 token 估算值，112 个标题保留。304 项相关测试通过，真实 `deepseek-flash` 出图仍待复测，不能据此将真实 Provider 发布矩阵标为完成。详见 [修复记录](drawio-inline-recovery.md)。
 
 ## 1. 执行摘要
 
@@ -266,6 +268,7 @@ src/lib/engine/
 ├── phase-controller.ts            阶段状态与转换规则
 ├── capability-policy.ts           解析每阶段 CapabilityLease
 ├── agent-loop.ts                  开放式 Agent Loop
+├── loop-runtime.ts                两类入口共享的有界传输、工具执行与账本骨架
 ├── staged-delivery.ts             固定交付工作流
 ├── recovery.ts                    通用 max-token / compact recovery
 └── deliverables/

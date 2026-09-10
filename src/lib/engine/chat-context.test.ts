@@ -130,13 +130,27 @@ describe('chat Agent workspace context', () => {
     expect(context.folderTaskId).toBe('folder-task-1')
     expect(context.tools.map((tool) => tool.name).sort()).toEqual([
       'claim_folder_task_batch',
+      'complete_folder_task',
+      'extract_document_text',
       'get_folder_task_context',
+      'list_folder_task_results',
+      'prepare_folder_task_plan',
       'read_folder_task_file',
+      'read_handle',
       'request_folder_task_decision',
+      'resolve_folder_task_decision',
+      'revise_folder_task_result',
       'update_folder_task_batch',
+      'write_folder_task_output',
     ])
     expect(context.tools.map((tool) => tool.name)).not.toContain('read_file')
-    expect(context.harnessContext?.join('\n')).toContain('Claim at most one batch')
+    expect(context.harnessContext?.join('\n')).toContain('claim exactly one batch')
+    expect(context.harnessContext?.join('\n')).toContain('leaseToken')
+    expect(context.limits.toolLoopBudgets?.['folder-task-plan']).toEqual({
+      maxCalls: 3,
+      softThreshold: 2,
+      hardThreshold: 3,
+    })
   })
 
   it('ignores a selected Skill inside a FolderTask capability lease', () => {
@@ -157,6 +171,21 @@ describe('chat Agent workspace context', () => {
 
     expect(context.skill).toBeUndefined()
     expect(context.tools.map((tool) => tool.name)).not.toContain('generate_pptd')
+  })
+
+  it('keeps the FolderTask capability available for legacy conversations without a stored root', () => {
+    const context = createChatQueryContext({
+      runId: 'run-folder-task-legacy',
+      conversationId: 'conversation-folder-task-legacy',
+      messages: [{ role: 'user', content: '继续任务' }],
+      provider,
+      signal: new AbortController().signal,
+      folderTaskId: 'folder-task-1',
+    })
+
+    expect(context.platform).toBe('tauri')
+    expect(context.tools.map((tool) => tool.name)).toContain('claim_folder_task_batch')
+    expect(context.tools.map((tool) => tool.name)).not.toContain('read_file')
   })
 
   it('does not inject discovery tools into an unselected canonical run', () => {

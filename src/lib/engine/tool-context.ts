@@ -33,6 +33,7 @@ export function buildToolUseContext(
     attachments: ctx.attachments,
     messages: ctx.messages,
     folderTaskId: ctx.folderTaskId,
+    sandboxCapabilities: ctx.sandboxCapabilities,
   }
 }
 

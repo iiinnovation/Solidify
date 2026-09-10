@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { DEFAULT_STALL_TIMEOUT_MS, iterateWithStallTimeout, resolveStallTimeout } from '../stream-watchdog'
 
 describe('resolveStallTimeout', () => {
@@ -18,6 +18,37 @@ describe('resolveStallTimeout', () => {
 })
 
 describe('iterateWithStallTimeout', () => {
+  it('allows a task chunk after 30 seconds but still aborts at its finite budget', async () => {
+    vi.useFakeTimers()
+    try {
+      const abort = vi.fn()
+      const source: AsyncIterable<string> = {
+        [Symbol.asyncIterator]() {
+          let first = true
+          return {
+            next: () => {
+              if (!first) return new Promise<IteratorResult<string>>(() => {})
+              first = false
+              return new Promise<IteratorResult<string>>((resolve) => setTimeout(() => resolve({ done: false, value: 'ready' }), 40_000))
+            },
+            return: async () => ({ done: true as const, value: undefined }),
+          }
+        },
+      }
+      const iterator = iterateWithStallTimeout(source, 120_000, abort)
+      const first = iterator.next()
+      await vi.advanceTimersByTimeAsync(40_000)
+      expect(await first).toEqual({ done: false, value: 'ready' })
+      expect(abort).not.toHaveBeenCalled()
+      const stalled = expect(iterator.next()).rejects.toThrow('120s')
+      await vi.advanceTimersByTimeAsync(120_000)
+      await stalled
+      expect(abort).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('passes chunks through untouched while they keep arriving', async () => {
     async function* source() {
       yield 'a'

@@ -1,10 +1,13 @@
 import type { QueryContext } from './types'
 import { buildMessages } from './messages'
-import { estimateTokens } from './context-budget'
+import { calculateBudget, estimateTokens } from './context-budget'
+import { compactInlineAttachments, MAX_RECOVERY_INLINE_TOKENS, type InlineRecoveryStats } from './inline-attachment-recovery'
 import { assertContextBudgetSnapshot } from './context-budget-gate'
 import type { ToolDefinition } from '../model'
 
 export interface CompiledContextStats {
+  inputMode: 'standard' | 'compact_recovery'
+  inlineRecovery: InlineRecoveryStats | null
   slots: {
     systemTokens: number
     fixedSystemTokens: number
@@ -42,7 +45,11 @@ export interface CompiledContext {
  * engine owns the slot budget and stable-prefix identity.
  */
 export async function compileContext(ctx: QueryContext): Promise<CompiledContext> {
-  const { system, fixedSystemTokens, messages, skillTokens } = await buildMessages(ctx)
+  const recovery = ctx.inputMode === 'compact_recovery'
+    ? compactInlineAttachments(ctx.messages, ctx.attachments ?? [], Math.max(512,
+      Math.min(MAX_RECOVERY_INLINE_TOKENS, Math.floor(calculateBudget(ctx).available * 0.12))))
+    : undefined
+  const { system, fixedSystemTokens, messages, skillTokens } = await buildMessages(recovery ? { ...ctx, messages: recovery.messages } : ctx)
   const tools: ToolDefinition[] = ctx.tools.map((tool) => ({
     name: tool.name,
     description: tool.description,
@@ -70,6 +77,8 @@ export async function compileContext(ctx: QueryContext): Promise<CompiledContext
     ctx.skill?.content ?? '',
   ].join('\n\u0000'))
   const stats: CompiledContextStats = {
+    inputMode: ctx.inputMode ?? 'standard',
+    inlineRecovery: recovery?.stats ?? null,
     slots: {
       systemTokens: estimateTokens(system),
       fixedSystemTokens,
@@ -107,7 +116,7 @@ function estimateAttachmentTokens(text: string): number {
   // caller supplies them without the standard container.
   const body = containers.length > 0
     ? containers
-    : text.match(/<attachment_full_text\b[^>]*>[\s\S]*?<\/attachment_full_text>/g) ?? []
+    : text.match(/<(attachment_full_text|attachment_excerpt|attachment_recovery_notice)\b[^>]*>[\s\S]*?<\/\1>/g) ?? []
   return body.reduce((sum, item) => sum + estimateTokens(item), 0)
 }
 

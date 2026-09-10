@@ -216,10 +216,22 @@ export class ToolLoopGuard {
   }
 
   private budgetMessage(group: string, maxCalls: number): string {
+    if (group === 'folder-task-plan') {
+      return `FolderTask 计划修复预算已用尽（最多 ${maxCalls} 次）。不要在计划未确认时领取批次；请结束本轮并说明最后的校验错误，自动续跑会在下一轮重试。`
+    }
+    if (group === 'folder-task-claim') {
+      return `FolderTask 本轮的批次领取机会已用尽（最多 ${maxCalls} 次）。不要处理未领取的文件；请结束本轮，由自动续跑开启下一批。`
+    }
+    if (!group.startsWith('attachment-')) {
+      return `${group} 工具调用预算已用尽（最多 ${maxCalls} 次）。请停止调用该工具组，根据已有状态结束本轮。`
+    }
     return `${group} 检索预算已用尽（最多 ${maxCalls} 次）。请停止读取附件，依据已获得证据直接生成结果。`
   }
 
   private closedMessage(group: string): string {
+    if (!group.startsWith('attachment-')) {
+      return `${group} 工具阶段已关闭。请不要继续调用该工具组，根据已有状态结束本轮。`
+    }
     return `${group} 检索阶段已关闭。请不要继续调用该组工具，依据已有证据直接生成结果。`
   }
 

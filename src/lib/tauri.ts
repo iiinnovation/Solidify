@@ -9,14 +9,49 @@
 
 import type {
   FolderTaskDecision,
+  FolderTaskBatchClaim,
   FolderTaskDetail,
   FolderTaskFileBytes,
   FolderTaskItem,
   FolderTaskItemUpdate,
   FolderTaskPlan,
+  FolderTaskPlanPreview,
+  FolderTaskReviewUpdate,
   FolderTaskSummary,
   NewFolderTaskDecision,
 } from '@/lib/folder-tasks/types'
+import type { SandboxExtractedDocument, SandboxExtractionRequest, SandboxMethodCapability, SandboxDocumentProgress } from '@/lib/folder-tasks/sandbox'
+import type { OcrInstallationSnapshot, OcrPackageSelection } from '@/lib/ocr-installation'
+
+export function ocrInstallationStatus(): Promise<OcrInstallationSnapshot> { return invokeCommand('ocr_installation_status', {}) }
+export function ocrPreparePackage(selection: OcrPackageSelection): Promise<string> { return invokeCommand('ocr_prepare_package', { selection }) }
+export function ocrCancelPreparation(jobId: string): Promise<void> { return invokeCommand('ocr_cancel_preparation', { jobId }) }
+export function ocrRetryPreparationCleanup(jobId: string): Promise<void> { return invokeCommand('ocr_retry_preparation_cleanup', { jobId }) }
+
+export function sandboxExecutionProgress(taskId: string): Promise<SandboxDocumentProgress[]> {
+  return invokeCommand('sandbox_execution_progress', { taskId })
+}
+
+export type AppShutdownStatus = 'idle' | 'stopping' | 'delayed' | 'failed' | 'ready'
+export function appShutdownStatus(): Promise<AppShutdownStatus> { return invokeCommand('app_shutdown_status', {}) }
+
+export function sandboxCapabilities(): Promise<SandboxMethodCapability[]> {
+  return invokeCommand('sandbox_capabilities', {})
+}
+
+export function sandboxExtractText(input: SandboxExtractionRequest): Promise<SandboxExtractedDocument> {
+  return invokeCommand('sandbox_extract_text', { ...input })
+}
+
+export function sandboxCancelExecution(input: SandboxExtractionRequest): Promise<void> {
+  return invokeCommand('sandbox_cancel_execution', { ...input })
+}
+
+export async function listenFolderTaskExecutionStopping(callback: (event: { taskId: string; delayed: boolean }) => void): Promise<() => void> {
+  if (!isTauri) return () => {}
+  const { listen } = await import('@tauri-apps/api/event')
+  return listen<{ taskId: string; delayed: boolean }>('folder-task-execution-stopping', ({ payload }) => callback(payload))
+}
 
 /** 是否运行在 Tauri 桌面端 */
 export const isTauri = '__TAURI_INTERNALS__' in window
@@ -209,6 +244,7 @@ export function createFolderTask(input: {
   name: string
   goal: string
   recipe: string
+  sourceMode?: 'documents' | 'folder'
 }): Promise<FolderTaskDetail | null> {
   return invokeCommand('create_folder_task', input)
 }
@@ -230,31 +266,44 @@ export function listFolderTaskItems(
   return invokeCommand('list_folder_task_items', { taskId, status, offset, limit })
 }
 
-export function confirmFolderTaskPlan(
+export function previewFolderTaskPlan(
   taskId: string,
   plan: FolderTaskPlan,
   expectedRevision: number,
-): Promise<FolderTaskDetail> {
-  return invokeCommand('confirm_folder_task_plan', { taskId, plan, expectedRevision })
+): Promise<FolderTaskPlanPreview> {
+  return invokeCommand('preview_folder_task_plan', { taskId, plan, expectedRevision })
 }
 
-export function claimFolderTaskBatch(taskId: string, limit?: number): Promise<FolderTaskItem[]> {
-  return invokeCommand('claim_folder_task_batch', { taskId, limit })
+export function confirmFolderTaskPlan(
+  taskId: string,
+  confirmationToken: string,
+  expectedRevision: number,
+): Promise<FolderTaskDetail> {
+  return invokeCommand('confirm_folder_task_plan', { taskId, confirmationToken, expectedRevision })
+}
+
+export function claimFolderTaskBatch(taskId: string, runId: string, limit?: number): Promise<FolderTaskBatchClaim> {
+  return invokeCommand('claim_folder_task_batch', { taskId, runId, limit })
 }
 
 export function updateFolderTaskBatch(
   taskId: string,
+  runId: string,
+  batchToken: string,
   updates: FolderTaskItemUpdate[],
   checkpointNote?: string,
+  checkpointMode: 'complete' | 'interrupted' = 'complete',
 ): Promise<FolderTaskDetail> {
-  return invokeCommand('update_folder_task_batch', { taskId, updates, checkpointNote })
+  return invokeCommand('update_folder_task_batch', { taskId, runId, batchToken, updates, checkpointNote, checkpointMode })
 }
 
 export function requestFolderTaskDecision(
   taskId: string,
+  runId: string,
+  batchToken: string,
   request: NewFolderTaskDecision,
 ): Promise<FolderTaskDecision> {
-  return invokeCommand('request_folder_task_decision', { taskId, request })
+  return invokeCommand('request_folder_task_decision', { taskId, runId, batchToken, request })
 }
 
 export function resolveFolderTaskDecision(input: {
@@ -278,9 +327,36 @@ export function setFolderTaskStatus(
 
 export function readFolderTaskFileBytes(
   taskId: string,
+  runId: string,
+  batchToken: string,
   relativePath: string,
 ): Promise<FolderTaskFileBytes> {
-  return invokeCommand('read_folder_task_file_bytes', { taskId, relativePath })
+  return invokeCommand('read_folder_task_file_bytes', { taskId, runId, batchToken, relativePath })
+}
+
+export function finishFolderTaskRun(
+  taskId: string,
+  runId: string,
+  outcome: 'completed' | 'failed' | 'aborted',
+  error?: string,
+): Promise<FolderTaskDetail> {
+  return invokeCommand('finish_folder_task_run', { taskId, runId, outcome, error })
+}
+
+export function reviewFolderTaskItems(
+  taskId: string,
+  updates: FolderTaskReviewUpdate[],
+  expectedRevision: number,
+): Promise<FolderTaskDetail> {
+  return invokeCommand('review_folder_task_items', { taskId, updates, expectedRevision })
+}
+
+export function writeFolderTaskOutput(taskId: string, expectedRevision: number): Promise<FolderTaskDetail> {
+  return invokeCommand('write_folder_task_output', { taskId, expectedRevision })
+}
+
+export function deleteFolderTask(taskId: string, expectedRevision: number): Promise<void> {
+  return invokeCommand('delete_folder_task', { taskId, expectedRevision })
 }
 
 /** 当前操作系统平台 */
@@ -512,8 +588,7 @@ export async function downloadAndInstallUpdate(): Promise<boolean> {
     if (update) {
       await update.downloadAndInstall()
       // 安装后需要重启应用
-      const { relaunch } = await import('@tauri-apps/plugin-process')
-      await relaunch()
+      await invokeCommand('restart_after_cleanup', {})
       return true
     }
     return false

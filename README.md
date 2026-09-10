@@ -120,15 +120,15 @@ supabase functions deploy chat
 
 ## 桌面端端口排查
 
-Tauri 开发配置固定连接 `http://127.0.0.1:5173`。如果出现 `Port 5173 is already in use`，先检查占用进程：
+Tauri 开发配置固定连接 `http://127.0.0.1:5174`，避开其他项目常用的 5173 端口。如果出现 `Port 5174 is already in use`，先检查占用进程：
 
 ```bash
-lsof -nP -iTCP:5173 -sTCP:LISTEN
+lsof -nP -iTCP:5174 -sTCP:LISTEN
 kill <PID>
 npm run tauri:dev
 ```
 
-不要同时启动两份 Vite。若需要保留占用 5173 的进程，应同步修改 `src-tauri/tauri.conf.json` 中的 `devUrl` 和 Vite 启动端口，保证两者一致。
+不要同时启动两份本项目的 Vite。若需要保留占用 5174 的进程，应同步修改 `src-tauri/tauri.conf.json` 中的 `devUrl` 和 `vite.config.ts` 中的 `server.port`，保证两者一致。
 
 ## 内置 Skill
 

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { SendHorizonal, Square, FileText, Code, Presentation, GitGraph, ChevronDown, Settings2, Copy, RefreshCw, X, Paperclip, FileIcon, AlertCircle, BookOpen, Sparkles, FolderOpen, Undo2, Zap, Gauge, ListTodo } from 'lucide-react'
+import { SendHorizonal, Square, FileText, Code, Presentation, GitGraph, ChevronDown, Settings2, Copy, RefreshCw, X, Paperclip, FileIcon, AlertCircle, BookOpen, Sparkles, FolderOpen, Undo2, Zap, Gauge } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { cn, formatDuration } from '@/lib/utils'
 import { MarkdownRenderer } from '@/components/artifacts/markdown-renderer'
@@ -26,6 +26,7 @@ import { ConfirmDialog } from '@/components/agent/confirm-dialog'
 import { answerApproval, approvalsForRun, subscribeApprovals } from '@/lib/harness/approval-channel'
 import type { ApprovalRequest } from '@/lib/harness/approval'
 import { loadAttachmentResource } from '@/lib/attachments/store'
+import { FolderTaskChatStatus } from '@/components/agent/folder-task-chat-status'
 
 
 const typeIcons: Record<ArtifactType, typeof FileText> = {
@@ -575,35 +576,33 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
     }
   }
 
+  const transcriptMessages = messages.filter((message) => !message.transcriptHidden)
+
   return (
     <div className="h-full flex flex-col bg-background">
       <ConfirmDialog request={visibleApprovalRequests} onAnswer={answerApproval} />
       {folderTaskId && (
-        <button
-          type="button"
-          onClick={() => navigate(`/folder-tasks/${folderTaskId}`)}
-          className="flex shrink-0 items-center justify-center gap-2 border-b border-accent/15 bg-accent-light px-4 py-2 text-xs font-medium text-accent hover:bg-accent/15"
-        >
-          <ListTodo size={14} />
-          文件夹任务模式：本会话仅能访问任务已登记的文件和检查点
-        </button>
+        <FolderTaskChatStatus
+          taskId={folderTaskId}
+          onOpen={() => navigate(`/folder-tasks/${folderTaskId}`)}
+        />
       )}
       {/* 消息列表 */}
       <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-3xl space-y-8 px-5 py-8 sm:px-8 sm:py-10">
-          {messages.length === 0 && !isStreaming && (
+          {transcriptMessages.length === 0 && !isStreaming && (
             <div className="flex min-h-[46vh] items-center justify-center">
               <div className="max-w-sm space-y-3 text-center">
                 <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-xl bg-accent-subtle text-accent">
                   <Sparkles size={20} strokeWidth={1.7} />
                 </div>
-                <p className="text-lg font-semibold text-text-primary">有什么可以帮你的？</p>
-                <p className="text-sm leading-relaxed text-text-tertiary">描述你的项目需求，我来帮你分析和生成方案</p>
+                <p className="text-lg font-semibold text-text-primary">{folderTaskId ? '正在准备文档任务' : '有什么可以帮你的？'}</p>
+                <p className="text-sm leading-relaxed text-text-tertiary">{folderTaskId ? '我会先说明识别到的文档范围，然后自动开始处理。你可以随时在这里补充要求。' : '描述你的项目需求，我来帮你分析和生成方案'}</p>
               </div>
             </div>
           )}
 
-          {messages.map((msg, index) => (
+          {transcriptMessages.map((msg, index) => (
             <div
               key={msg.id}
               className={cn(
@@ -679,7 +678,7 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
                       <MarkdownRenderer content={msg.content} />
                     ) : (
                       isStreaming
-                        && index === messages.length - 1
+                        && index === transcriptMessages.length - 1
                         && (!agentUiEnabled || !msg.agentRun)
                         && <StreamingIndicator />
                     )}
@@ -697,7 +696,7 @@ export function ChatPanel({ conversationId }: { conversationId?: string }) {
               <div className="pointer-events-auto absolute -bottom-6 w-full opacity-100 transition-opacity sm:pointer-events-none sm:opacity-0 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100">
                 <MessageActions
                   message={msg}
-                  isLast={index === messages.length - 1}
+                  isLast={index === transcriptMessages.length - 1}
                   onRegenerate={regenerate}
                   onRecall={msg.role === 'user' ? () => handleRecall(msg.id) : undefined}
                   isStreaming={isStreaming}
